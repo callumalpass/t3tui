@@ -18,7 +18,7 @@ import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
 import { firstLine, truncate } from "./text.ts";
-import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
+import { colors, toneColor, useMarkdownStyle } from "./theme.ts";
 
 /** What a right-click in the conversation was on. */
 export type ConversationTarget =
@@ -165,6 +165,7 @@ const Row = memo(function Row(props: {
   readonly mouse: ConversationMouse;
 }) {
   const { row, workspaceRoot, mouse } = props;
+  const markdownStyle = useMarkdownStyle();
   switch (row.kind) {
     case "message": {
       const { message } = row;
@@ -178,7 +179,7 @@ const Row = memo(function Row(props: {
       if (message.role === "system") return <text marginTop={1} fg={colors.muted} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>{message.text}</text>;
       return (
         <box marginTop={1} flexDirection="column" onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
-          <markdown content={message.text || "…"} syntaxStyle={getMarkdownStyle()} streaming={message.streaming} conceal />
+          <markdown content={message.text || "…"} syntaxStyle={markdownStyle} streaming={message.streaming} conceal />
           {summary && summary.files.length > 0 ? <ChangedFiles summary={summary} onOpenTurnDiff={mouse.openTurnDiff} /> : null}
           {props.footer ? <text marginTop={1} fg={colors.faint}>{props.footer}</text> : null}
         </box>
@@ -228,7 +229,7 @@ const Row = memo(function Row(props: {
           <text fg={colors.plan}>
             <strong>Plan</strong>
           </text>
-          <markdown content={row.proposedPlan.planMarkdown} syntaxStyle={getMarkdownStyle()} conceal />
+          <markdown content={row.proposedPlan.planMarkdown} syntaxStyle={markdownStyle} conceal />
         </box>
       );
     case "event":

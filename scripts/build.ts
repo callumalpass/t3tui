@@ -13,7 +13,8 @@ const builds = [
   join(root, "node_modules/@opentui/core/parser.worker.js"),
 ];
 for (const entrypoint of builds) {
-  const result = await Bun.build({ entrypoints: [entrypoint], outdir, target: "bun", minify: true });
+  // OpenTUI's native library comes from a package per platform, found in node_modules at run time.
+  const result = await Bun.build({ entrypoints: [entrypoint], outdir, target: "bun", minify: true, external: ["@opentui/core-*"] });
   if (!result.success) {
     for (const log of result.logs) console.error(log);
     process.exit(1);

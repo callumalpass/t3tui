@@ -16,13 +16,13 @@
     "postinstall": "bun run scripts/link-vendor.ts && bun run scripts/build.ts"
   },
   "dependencies": {
-    "@opentui/core": "0.2.7",
-    "@opentui/react": "0.2.7",
+    "@opentui/core": "0.8.1",
+    "@opentui/react": "0.8.1",
     "diff": "9.0.0",
     "effect": "4.0.5",
     "mdast-util-directive": "^3.2.0",
     "micromark-extension-directive": "^4.0.0",
-    "react": "19",
+    "react": "^19.2.0",
     "remark-parse": "^11.0.0",
     "zustand": "5.0.11"
   },

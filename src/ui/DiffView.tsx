@@ -4,7 +4,7 @@ import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
 import type { RefObject } from "react";
 
 import { isLeftClick, useHover } from "./Button.tsx";
-import { colors, getMarkdownStyle } from "./theme.ts";
+import { colors, useMarkdownStyle } from "./theme.ts";
 
 export interface DiffState {
   readonly cwd: string;
@@ -21,6 +21,7 @@ export interface DiffState {
 /** Working-tree or checkpoint changes through the same unified diff renderer. */
 export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: RefObject<ScrollBoxRenderable | null>; readonly selected: number; readonly expanded: Readonly<Record<string, { patch?: string; error?: string }>>; readonly onFile: (index: number) => void }) {
   const { diff } = props;
+  const markdownStyle = useMarkdownStyle();
   const files = diff.patch ? splitPatch(diff.patch) : [];
   return (
     <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={2} paddingRight={1} backgroundColor={colors.bg}>
@@ -45,7 +46,7 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
               diff={props.expanded[file.path]?.patch ?? file.patch}
               view="unified"
               {...(filetypeOf(file.path) ? { filetype: filetypeOf(file.path)! } : {})}
-              syntaxStyle={getMarkdownStyle()}
+              syntaxStyle={markdownStyle}
               showLineNumbers
               wrapMode="none"
               fg={colors.text}

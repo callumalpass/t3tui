@@ -1,4 +1,5 @@
-import { SyntaxStyle, type ThemeMode } from "@opentui/core";
+import { type NativeResourceOwner, SyntaxStyle, type ThemeMode } from "@opentui/core";
+import { useRenderer } from "@opentui/react";
 
 import type { StatusTone } from "../model/threads.ts";
 import type { Tone } from "../model/transcript.ts";
@@ -69,7 +70,7 @@ export const colors: Palette = { ...DARK };
 
 export function applyTheme(mode: ThemeMode): void {
   Object.assign(colors, mode === "light" ? LIGHT : DARK);
-  markdownStyle = undefined;
+  markdownStyles = new WeakMap();
 }
 
 const STATUS_COLORS: Record<StatusTone, keyof Palette> = { info: "info", muted: "muted", warn: "warn", input: "input", bad: "bad", good: "good" };
@@ -78,11 +79,14 @@ export const statusColor = (tone: StatusTone): string => colors[STATUS_COLORS[to
 const TONE_COLORS: Record<Tone, keyof Palette> = { normal: "text", muted: "muted", good: "good", bad: "bad", warn: "warn" };
 export const toneColor = (tone: Tone): string => colors[TONE_COLORS[tone]];
 
-let markdownStyle: SyntaxStyle | undefined;
+let markdownStyles = new WeakMap<NativeResourceOwner, SyntaxStyle>();
 
-/** Created lazily: SyntaxStyle needs the native renderer library loaded. */
-export function getMarkdownStyle(): SyntaxStyle {
-  markdownStyle ??= SyntaxStyle.fromStyles({
+/** One per renderer: a SyntaxStyle belongs to the renderer's native scene that created it. */
+export function useMarkdownStyle(): SyntaxStyle {
+  const owner = useRenderer().nativeScene;
+  let style = markdownStyles.get(owner);
+  if (style) return style;
+  style = SyntaxStyle.fromStyles({
     default: { fg: colors.text },
     "markup.heading": { fg: colors.text, bold: true },
     "markup.strong": { fg: colors.text, bold: true },
@@ -96,6 +100,7 @@ export function getMarkdownStyle(): SyntaxStyle {
     "markup.quote": { fg: colors.muted, italic: true },
     "markup.raw": { fg: colors.plan },
     "markup.raw.block": { fg: colors.text },
-  });
-  return markdownStyle;
+  }, owner);
+  markdownStyles.set(owner, style);
+  return style;
 }
