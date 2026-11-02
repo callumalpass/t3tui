@@ -971,7 +971,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const detailsColumn = panel.show && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
   const detailsInPlace = panel.show && !detailsColumn;
   // The block's height: a row of padding on top, the text, then the model line inside it.
-  const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 2;
+  // Padding row, text, a blank row, then the model line.
+  const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 3;
   const placeholder =
     mode !== "input"
       ? "Press i to type"
@@ -1168,7 +1169,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             </box>
           ) : null}
           {threadId || draft ? (
-            <box flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1}>
+            <box flexDirection="column" flexShrink={0} marginTop={1} marginLeft={1} marginRight={1}>
               <box
                 border={["left"]}
                 customBorderChars={BAR}
@@ -1212,6 +1213,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                   flexDirection="row"
                   height={1}
                   flexShrink={0}
+                  marginTop={1}
                   onMouseDown={(event: MouseEvent) => {
                     event.stopPropagation();
                     models.open();
