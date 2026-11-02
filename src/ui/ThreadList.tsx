@@ -1,4 +1,6 @@
 import { needsAttention, relativeTime, rowTime, SECTION_LABELS, statusLabel, type Section, type ThreadRow } from "../model/threads.ts";
+import type { ThreadId } from "@t3tools/contracts";
+
 import { colors, statusColor } from "./theme.ts";
 
 /**
@@ -15,11 +17,17 @@ export function ThreadList(props: {
   readonly width: number;
   readonly height: number;
   readonly filter: string;
+  /** The filter box is open and has the keyboard. */
+  readonly filtering: boolean;
   readonly now: number;
+  readonly onFilter: (value: string) => void;
+  readonly onFilterDone: () => void;
+  readonly onPick: (threadId: ThreadId) => void;
+  readonly onUnfold: () => void;
 }) {
   const { rows, selected, focused, width, height, now } = props;
   // Rows take two lines plus a header per section; keep the selection in view.
-  const visibleCount = Math.max(1, Math.floor((height - 6) / 2));
+  const visibleCount = Math.max(1, Math.floor((height - (props.filtering ? 9 : 6)) / 2));
   const start = Math.max(0, Math.min(selected - Math.floor(visibleCount / 2), rows.length - visibleCount));
   const windowRows = rows.slice(start, start + visibleCount);
   const inner = Math.max(8, width - 3);
@@ -42,7 +50,14 @@ export function ThreadList(props: {
     const recede = !isSelected && (row.status === "working" || row.status === "waiting" || (row.status === "ready" && !row.unread));
     const title = truncate(row.thread.title || "New thread", inner);
     lines.push(
-      <box key={row.thread.id} flexDirection="column" paddingLeft={1} paddingRight={1} backgroundColor={isSelected ? (focused ? colors.selectedBg : colors.panel) : "transparent"}>
+      <box
+        key={row.thread.id}
+        flexDirection="column"
+        paddingLeft={1}
+        paddingRight={1}
+        backgroundColor={isSelected ? (focused ? colors.selectedBg : colors.panel) : "transparent"}
+        onMouseDown={() => props.onPick(row.thread.id)}
+      >
         <box flexDirection="row">
           <text fg={colors.faint}>{left}</text>
           <box flexGrow={1} />
@@ -55,11 +70,17 @@ export function ThreadList(props: {
   const collapsed = [...props.collapsed].filter(([, count]) => count > 0);
   return (
     <box border={["right"]} borderColor={colors.border} width={width} flexShrink={0} overflow="hidden" flexDirection="column">
-      {props.filter ? <text fg={colors.accent}>{` /${props.filter}`}</text> : null}
+      {props.filtering ? (
+        <box border borderStyle="rounded" borderColor={colors.borderFocused} height={3} flexShrink={0}>
+          <input focused placeholder="Filter threads…" value={props.filter} onInput={props.onFilter} onSubmit={props.onFilterDone} />
+        </box>
+      ) : props.filter ? (
+        <text fg={colors.accent}>{` /${props.filter}`}</text>
+      ) : null}
       {rows.length === 0 ? <text fg={colors.muted}>{props.filter ? " no matches" : " no threads"}</text> : lines}
       <box flexGrow={1} />
       {collapsed.map(([section, count]) => (
-        <text key={section} fg={colors.faint}>{` › ${SECTION_LABELS[section]} ${count}`}</text>
+        <text key={section} fg={colors.faint} onMouseDown={props.onUnfold}>{` › ${SECTION_LABELS[section]} ${count}`}</text>
       ))}
     </box>
   );

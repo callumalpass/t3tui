@@ -11,6 +11,14 @@ import {
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ThreadId,
+  type DiscoveredLocalServer,
+  type GitActionProgressEvent,
+  type GitRunStackedActionResult,
+  type GitStackedAction,
+  type ProjectId,
+  type ReviewDiffPreviewSource,
+  type ScheduledTask,
+  type ScheduledTaskId,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   WS_METHODS,
@@ -66,6 +74,22 @@ export interface VcsState {
   readonly error?: string;
 }
 
+/** A server-wide list that streams whole: local servers or scheduled tasks. */
+export interface FeedState<T> {
+  readonly status: "loading" | "live" | "error";
+  readonly items: readonly T[];
+  readonly error?: string;
+}
+
+export interface GitActionRequest {
+  readonly cwd: string;
+  readonly action: GitStackedAction;
+  /** Left out, the server writes one with a model. */
+  readonly commitMessage?: string;
+  readonly threadId?: ThreadId;
+  readonly projectId?: ProjectId;
+}
+
 type Listener<T> = (value: T) => void;
 
 /** Streaming deltas arrive far faster than a terminal can usefully redraw. */
@@ -85,9 +109,11 @@ export function debugLog(message: string): void {
 
 const decodeHistoryPage = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage));
 
-interface VcsEntry {
-  state: VcsState;
-  readonly listeners: Set<Listener<VcsState>>;
+/** A subscription shared by every listener of the same key, restarted after reconnects. */
+interface FeedEntry {
+  state: unknown;
+  readonly listeners: Set<Listener<unknown>>;
+  readonly stream: () => Effect.Effect<unknown, unknown>;
   fiber: Fiber.Fiber<unknown, unknown> | null;
   lingerTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -115,7 +141,7 @@ export class T3Session {
   private shell: ShellState = { status: { type: "connecting" }, snapshot: null, serverUrl: null };
   private readonly shellListeners = new Set<Listener<ShellState>>();
   private readonly threads = new Map<ThreadId, ThreadEntry>();
-  private readonly vcs = new Map<string, VcsEntry>();
+  private readonly feeds = new Map<string, FeedEntry>();
 
   async start(): Promise<void> {
     const scope = Effect.runSync(Scope.make());
@@ -133,7 +159,7 @@ export class T3Session {
     this.setShell({ serverUrl: this.connection.target.httpBaseUrl });
     this.runInScope(this.shellStream());
     for (const [threadId, entry] of this.threads) entry.fiber = this.runInScope(this.threadStream(threadId));
-    for (const [cwd, entry] of this.vcs) entry.fiber = this.runInScope(this.vcsStream(cwd));
+    for (const entry of this.feeds.values()) entry.fiber = this.runInScope(entry.stream());
   }
 
   async stop(): Promise<void> {
@@ -184,26 +210,85 @@ export class T3Session {
 
   /** Subscribes to a working directory's git status: branch, changes, and the remote's ahead/behind and PR. */
   watchVcs(cwd: string, listener: Listener<VcsState>): () => void {
-    let entry = this.vcs.get(cwd);
-    if (!entry) {
-      entry = { state: { status: "loading", local: null, remote: null }, listeners: new Set(), fiber: null, lingerTimer: null };
-      this.vcs.set(cwd, entry);
-      if (this.connection) entry.fiber = this.runInScope(this.vcsStream(cwd));
-    }
-    if (entry.lingerTimer) clearTimeout(entry.lingerTimer);
-    entry.lingerTimer = null;
-    entry.listeners.add(listener);
-    listener(entry.state);
-    const watched = entry;
-    return () => {
-      watched.listeners.delete(listener);
-      if (watched.listeners.size > 0) return;
-      watched.lingerTimer = setTimeout(() => {
-        if (watched.listeners.size > 0 || this.vcs.get(cwd) !== watched) return;
-        this.vcs.delete(cwd);
-        if (watched.fiber) Effect.runFork(Fiber.interrupt(watched.fiber));
-      }, THREAD_LINGER_MS);
-    };
+    return this.watchFeed<VcsState>(`vcs:${cwd}`, { status: "loading", local: null, remote: null }, listener, (update) =>
+      this.requireConnection()
+        .rpc[WS_METHODS.subscribeVcsStatus]({ cwd, includeRemote: true })
+        .pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              switch (event._tag) {
+                case "snapshot":
+                  return update({ status: "live", local: event.local, remote: event.remote });
+                case "localUpdated":
+                  return update({ status: "live", local: event.local });
+                case "remoteUpdated":
+                  return update({ remote: event.remote });
+              }
+            }),
+          ),
+        ),
+    );
+  }
+
+  /** Local servers the server has discovered, across all threads; each says which thread started it. */
+  watchServers(listener: Listener<FeedState<DiscoveredLocalServer>>): () => void {
+    return this.watchFeed<FeedState<DiscoveredLocalServer>>("servers", { status: "loading", items: [] }, listener, (update) =>
+      this.requireConnection()
+        .rpc[WS_METHODS.subscribeDiscoveredLocalServers]({})
+        .pipe(Stream.runForEach((list) => Effect.sync(() => update({ status: "live", items: list.servers })))),
+    );
+  }
+
+  /** Every scheduled task (automation); each names its thread, if any. */
+  watchAutomations(listener: Listener<FeedState<ScheduledTask>>): () => void {
+    return this.watchFeed<FeedState<ScheduledTask>>("automations", { status: "loading", items: [] }, listener, (update) =>
+      this.requireConnection()
+        .rpc[WS_METHODS.scheduledTasksSubscribe]({})
+        .pipe(Stream.runForEach((list) => Effect.sync(() => update({ status: "live", items: list.tasks })))),
+    );
+  }
+
+  /** The uncommitted diff (git diff HEAD, untracked files included), for one file or the whole tree. */
+  async workingTreeDiff(cwd: string, path?: string): Promise<ReviewDiffPreviewSource | null> {
+    const rpc = this.requireConnection().rpc;
+    const result = await Effect.runPromise(
+      rpc[WS_METHODS.reviewGetDiffPreview]({ cwd, ...(path ? { file: { path, previousPath: null, sourceKind: "working-tree" as const } } : {}) }),
+    );
+    return result.sources.find((source) => source.kind === "working-tree") ?? null;
+  }
+
+  /** Runs a commit / push / PR action, reporting progress as it goes. Rejects with the server's message on failure. */
+  async runGitAction(request: GitActionRequest, onProgress: Listener<GitActionProgressEvent>): Promise<GitRunStackedActionResult> {
+    const rpc = this.requireConnection().rpc;
+    let result: GitRunStackedActionResult | null = null;
+    let failure: string | null = null;
+    await Effect.runPromise(
+      rpc[WS_METHODS.gitRunStackedAction]({ actionId: crypto.randomUUID(), ...request }).pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            onProgress(event);
+            if (event.kind === "action_finished") result = event.result;
+            if (event.kind === "action_failed") failure = event.message;
+          }),
+        ),
+      ),
+    );
+    if (failure) throw new Error(failure);
+    if (!result) throw new Error("The git action ended without a result.");
+    return result;
+  }
+
+  setAutomationEnabled(id: ScheduledTaskId, enabled: boolean): Promise<unknown> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.scheduledTasksSetEnabled]({ id, enabled }));
+  }
+
+  runAutomationNow(id: ScheduledTaskId): Promise<unknown> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.scheduledTasksRunNow]({ id }));
+  }
+
+  stopServer(server: Pick<DiscoveredLocalServer, "pid" | "port">): Promise<unknown> {
+    if (server.pid === null) return Promise.reject(new Error("The server's process is unknown."));
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.previewStopLocalServer]({ pid: server.pid, port: server.port }));
   }
 
   /** Fetches the next page of older turns and prepends it. Resolves false when there was nothing to load. */
@@ -353,35 +438,52 @@ export class T3Session {
     );
   }
 
-  private vcsStream(cwd: string) {
-    const rpc = this.requireConnection().rpc;
-    return rpc[WS_METHODS.subscribeVcsStatus]({ cwd, includeRemote: true }).pipe(
-      Stream.runForEach((event) =>
-        Effect.sync(() => {
-          switch (event._tag) {
-            case "snapshot":
-              return this.setVcs(cwd, { status: "live", local: event.local, remote: event.remote });
-            case "localUpdated":
-              return this.setVcs(cwd, { status: "live", local: event.local });
-            case "remoteUpdated":
-              return this.setVcs(cwd, { remote: event.remote });
-          }
-        }),
-      ),
-      Effect.catchCause((cause) =>
-        Effect.sync(() => {
-          const message = prettyCause(cause);
-          if (!isSocketFailure(message)) this.setVcs(cwd, { status: "error", error: message });
-        }),
-      ),
-    );
-  }
-
-  private setVcs(cwd: string, patch: Partial<VcsState>): void {
-    const entry = this.vcs.get(cwd);
-    if (!entry) return;
-    entry.state = { ...entry.state, ...patch };
-    for (const listener of entry.listeners) listener(entry.state);
+  /**
+   * Shares one stream per key among listeners and keeps it THREAD_LINGER_MS after the last
+   * leaves. `stream` applies updates through the callback it's given.
+   */
+  private watchFeed<S extends { readonly status: string; readonly error?: string }>(
+    key: string,
+    initial: S,
+    listener: Listener<S>,
+    stream: (update: (patch: Partial<S>) => void) => Effect.Effect<unknown, unknown>,
+  ): () => void {
+    let entry = this.feeds.get(key);
+    if (!entry) {
+      const update = (patch: Partial<S>) => {
+        const current = this.feeds.get(key);
+        if (!current) return;
+        current.state = { ...(current.state as S), ...patch };
+        for (const notify of current.listeners) notify(current.state);
+      };
+      const run = () =>
+        stream(update).pipe(
+          Effect.catchCause((cause) =>
+            Effect.sync(() => {
+              const message = prettyCause(cause);
+              if (!isSocketFailure(message)) update({ status: "error", error: message } as Partial<S>);
+            }),
+          ),
+        );
+      entry = { state: initial, listeners: new Set(), stream: run, fiber: null, lingerTimer: null };
+      this.feeds.set(key, entry);
+      if (this.connection) entry.fiber = this.runInScope(run());
+    }
+    if (entry.lingerTimer) clearTimeout(entry.lingerTimer);
+    entry.lingerTimer = null;
+    const untyped = listener as Listener<unknown>;
+    entry.listeners.add(untyped);
+    listener(entry.state as S);
+    const watched = entry;
+    return () => {
+      watched.listeners.delete(untyped);
+      if (watched.listeners.size > 0) return;
+      watched.lingerTimer = setTimeout(() => {
+        if (watched.listeners.size > 0 || this.feeds.get(key) !== watched) return;
+        this.feeds.delete(key);
+        if (watched.fiber) Effect.runFork(Fiber.interrupt(watched.fiber));
+      }, THREAD_LINGER_MS);
+    };
   }
 
   private connectionLost(message: string): void {
@@ -407,7 +509,7 @@ export class T3Session {
     this.scope = null;
     this.connection = null;
     for (const entry of this.threads.values()) entry.fiber = null;
-    for (const entry of this.vcs.values()) entry.fiber = null;
+    for (const entry of this.feeds.values()) entry.fiber = null;
     if (scope) await Effect.runPromise(Scope.close(scope, Exit.void));
   }
 

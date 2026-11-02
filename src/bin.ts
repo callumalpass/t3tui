@@ -130,7 +130,8 @@ async function runUi(attachNeedle?: string) {
   const { createRoot } = await import("@opentui/react");
   const { createElement } = await import("react");
   const { App } = await import("./ui/App.tsx");
-  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  // The kitty keyboard protocol lets terminals that support it send shift+enter, for newlines.
+  const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, useKittyKeyboard: {} });
   createRoot(renderer).render(createElement(App, { session, ...(attachThreadId ? { attachThreadId } : {}) }));
 }
 

@@ -2,8 +2,11 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-/** Scopes tui3 asks for: read threads, and send/approve/interrupt them. */
-export const TUI3_SCOPES = ["orchestration:read", "orchestration:operate"] as const;
+/**
+ * Scopes tui3 asks for: read and operate threads, read diffs, run git actions
+ * (commit, push, open a PR), and stop a thread's local servers.
+ */
+export const TUI3_SCOPES = ["orchestration:read", "orchestration:operate", "filesystem:read", "source-control:write", "terminal:operate"] as const;
 
 export interface ServerTarget {
   /** e.g. http://127.0.0.1:3773 */
@@ -15,6 +18,8 @@ export interface StoredCredential {
   readonly httpBaseUrl: string;
   readonly bearerToken: string;
   readonly issuedAt: string;
+  /** Absent on credentials from before scopes were recorded. */
+  readonly scopes?: readonly string[];
 }
 
 const t3Home = () => process.env.T3CODE_HOME ?? join(homedir(), ".t3");
@@ -50,7 +55,9 @@ export async function readCredential(target: ServerTarget): Promise<StoredCreden
   }
   try {
     const all: StoredCredential[] = JSON.parse(await readFile(credentialPath(), "utf8"));
-    return all.find((c) => c.httpBaseUrl === target.httpBaseUrl);
+    const stored = all.find((c) => c.httpBaseUrl === target.httpBaseUrl);
+    // A credential from an older tui3 lacks newer scopes; issue a fresh one.
+    return stored && TUI3_SCOPES.every((scope) => stored.scopes?.includes(scope)) ? stored : undefined;
   } catch {
     return undefined;
   }
@@ -86,7 +93,7 @@ export async function issueLocalCredential(target: ServerTarget): Promise<Stored
   if (code !== 0 || !token) {
     throw new Error(`\`t3 auth session issue\` failed (exit ${code}): ${stderr.trim() || stdout.trim()}`);
   }
-  const credential = { httpBaseUrl: target.httpBaseUrl, bearerToken: token, issuedAt: new Date().toISOString() };
+  const credential = { httpBaseUrl: target.httpBaseUrl, bearerToken: token, issuedAt: new Date().toISOString(), scopes: [...TUI3_SCOPES] };
   await writeCredential(credential);
   return credential;
 }

@@ -1,4 +1,5 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
+import type { ThreadId } from "@t3tools/contracts";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, type RefObject } from "react";
@@ -20,6 +21,10 @@ export function ThreadView(props: {
   readonly workspaceRoot: string | undefined;
   readonly now: number;
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
+  /** For a subagent or fork: the thread it came from, shown as a link in the header. */
+  readonly parent?: { readonly title: string; readonly threadId: ThreadId } | undefined;
+  /** Opens another thread: a subagent from its work row, or the parent from the header. Keep it stable; rows are memoized on it. */
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { timeline, history } = props;
   const pendingIds = new Set<string>(timeline?.pending.approvals.map((approval) => approval.requestId) ?? []);
@@ -33,6 +38,11 @@ export function ThreadView(props: {
         <box flexGrow={1} />
         <text fg={colors.faint}>{props.detail}</text>
       </box>
+      {props.parent ? (
+        <box flexShrink={0} height={1} onMouseDown={() => props.onOpenThread(props.parent!.threadId)}>
+          <text fg={colors.accent}>{`↰ ${props.parent.title} (u)`}</text>
+        </box>
+      ) : null}
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
@@ -45,6 +55,7 @@ export function ThreadView(props: {
             workspaceRoot={props.workspaceRoot}
             now={row.kind === "working" ? props.now : 0}
             workStartedAt={timeline.workStartedAt}
+            onOpenThread={props.onOpenThread}
           />
         ))}
       </scrollbox>
@@ -78,6 +89,7 @@ const Row = memo(function Row(props: {
   readonly workspaceRoot: string | undefined;
   readonly now: number;
   readonly workStartedAt: string | null;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { row, workspaceRoot } = props;
   switch (row.kind) {
@@ -109,7 +121,7 @@ const Row = memo(function Row(props: {
       return (
         <box marginTop={row.continuesWorkLog ? 0 : 1} flexDirection="column">
           {row.groupedEntries.map((entry) => (
-            <WorkEntry key={entry.id} entry={entry} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} />
+            <WorkEntry key={entry.id} entry={entry} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} onOpenThread={props.onOpenThread} />
           ))}
         </box>
       );
@@ -117,7 +129,9 @@ const Row = memo(function Row(props: {
       return (
         <box marginTop={1} flexDirection="column">
           {row.thought?.detail ? <text fg={colors.faint}>{`∴ ${liveThoughtLine(row.thought.detail)}`}</text> : null}
-          <text fg={row.active ? colors.info : colors.muted}>{`${row.active ? "◐" : glyphFor(row.entry)} ${liveWorkEntryLabel(row.entry, workspaceRoot, row.active)}`}</text>
+          <box onMouseDown={() => openChild(row.entry, props.onOpenThread)}>
+            <text fg={row.active ? colors.info : colors.muted}>{`${row.active ? "◐" : glyphFor(row.entry)} ${liveWorkEntryLabel(row.entry, workspaceRoot, row.active)}${childThreadOf(row.entry) ? "  ↗" : ""}`}</text>
+          </box>
         </box>
       );
     case "working": {
@@ -166,10 +180,23 @@ function UserMessage({ text }: { readonly text: string }) {
   );
 }
 
-function WorkEntry({ entry, label }: { readonly entry: WorkLogEntry; readonly label: string }) {
+function WorkEntry({ entry, label, onOpenThread }: { readonly entry: WorkLogEntry; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void }) {
   const failed = workEntryDisplayIndicatesToolFailure(entry);
-  const tone = failed || entry.tone === "error" ? colors.bad : entry.tone === "thinking" ? colors.faint : colors.muted;
-  return <text fg={tone}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}`}</text>;
+  const child = childThreadOf(entry);
+  const tone = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : entry.tone === "thinking" ? colors.faint : colors.muted;
+  const text = <text fg={tone}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}${child ? "  ↗" : ""}`}</text>;
+  return child ? <box onMouseDown={() => onOpenThread(child)}>{text}</box> : text;
+}
+
+/** The thread a subagent work row ran in, when it has its own. */
+export function childThreadOf(entry: WorkLogEntry): ThreadId | null {
+  const item = entry.structuredPayload;
+  return item?.type === "subagent" ? (item.childThreadId ?? null) : null;
+}
+
+function openChild(entry: WorkLogEntry, onOpenThread: (threadId: ThreadId) => void): void {
+  const child = childThreadOf(entry);
+  if (child) onOpenThread(child);
 }
 
 function EventRow({ item, pending }: { readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {

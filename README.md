@@ -27,11 +27,12 @@ Any mode:
 
 | Key | Action |
 | --- | --- |
+| `ctrl+k` | command palette: every action below, plus thread search |
 | `ctrl+n` / `ctrl+p` (or `alt+↓`/`alt+↑`) | next / previous thread |
 | `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation |
 | `ctrl+c` | quit |
 
-Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` or `ctrl+j` adds a newline.
+Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` or `ctrl+j` adds a newline (`shift+enter` needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines.
 
 Navigation:
 
@@ -44,17 +45,27 @@ Navigation:
 | `e` | expand all folded turns and work groups |
 | `o` | load earlier turns |
 | `d` | show or hide thread details |
+| `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `t` turns an automation on or off, `esc` comes back |
+| `u` | go to the parent thread (from a fork or subagent) |
+| `:` | command palette |
 | `z` | show the Settled and Snoozed sections |
-| `/` | filter threads by title or project |
+| `/` | filter threads by title or project (the box opens at the top of the thread list) |
 | `S` | stop the thread |
 | `g` / `G` | top / bottom of the conversation |
-| `q` | quit |
+| `esc` / `q` | close the diff; otherwise `q` quits |
 
 The layout follows T3 Code's web app, and much of it uses the web app's own code (vendored from upstream):
 
 - **Sidebar:** the same sections (Pinned, Active, Working, then Snoozed and Settled folded to a count) and the same status words: `Working 2m`, `Waiting`, `Approval`, `Input`, `Request`, `Limited`, `Failed`, `Done`. Threads that need you are bold.
 - **Conversation:** built by the web app's timeline logic. Each finished turn's work folds into one line (`Worked for 3m 12s`), your messages are right-aligned, and a running turn shows its live step and `Working for 12s`.
 - **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation.
+- **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `j`/`k` scroll, `esc` closes.
+- **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
+- **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
+- **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents have no details, because the thread list leaves them out.
+- **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring; start with `>` for commands only.
+- **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
+- Threads open scrolled to the bottom.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
 
 Long threads load as a bounded window of recent turns; press `o` for older ones. If the connection drops, tui3 reconnects with backoff and resubscribes.
@@ -62,7 +73,7 @@ Long threads load as a bounded window of recent turns; press `o` for older ones.
 ## How it connects
 
 - It finds the local server from `~/.t3/userdata/server-runtime.json` (override with `TUI3_SERVER`).
-- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read` and `orchestration:operate`, and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. For a remote server, pass a token in `TUI3_TOKEN`.
+- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate`, `filesystem:read` (diffs), `source-control:write` (git actions) and `terminal:operate` (stopping servers), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
 - It speaks T3 Code's own WebSocket RPC protocol, typed by upstream's `@t3tools/contracts`, and applies thread updates with upstream's own reducers. Both come from `vendor/t3code`, a submodule pinned to the server version this was built against (`v0.1.6-nightly.20261030.3917`).
 
 Set `TUI3_DEBUG=/path/to/log` to log thread subscriptions and snapshots.
@@ -80,4 +91,4 @@ Type errors after a bump point at the protocol changes to adapt to.
 
 ## Not yet supported
 
-Starting new threads, editing queued messages, plan follow-ups, attachments, diffs, and the integrated terminal. Use the T3 Code app for those.
+Starting new threads, editing queued messages, plan follow-ups, attachments, reviewing or commenting on diffs, and the integrated terminal. Use the T3 Code app for those.
