@@ -1,0 +1,26 @@
+{
+  "name": "tui3",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "tui3": "./src/bin.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/bin.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "postinstall": "bun run scripts/link-vendor.ts"
+  },
+  "dependencies": {
+    "@opentui/core": "0.2.7",
+    "@opentui/react": "0.2.7",
+    "effect": "4.0.5",
+    "react": "19"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.3.0",
+    "typescript": "^5.9.0"
+  }
+}
