@@ -53,6 +53,9 @@ Navigation:
 | `c` | new thread (see below) |
 | `.` | thread actions (see below); a right-click on a thread opens them too |
 | `m` | model, options (reasoning, fast mode…) and access mode |
+| `T` | terminals: attach, new, close or clear |
+| `b` | branches and worktrees: switch, create, pull or remove |
+| `E` | open the workspace (or diff file) in the server's editor |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
 | `1`–`9` | pick an option when the agent asks a question (also in an empty message box) |
 | `x` | dismiss the agent's question |
@@ -110,6 +113,18 @@ Submenus open as their own list, and typing finds their items from the top (`thr
 ## Terminals
 
 `ctrl+j` attaches to the thread's terminal on the T3 server, the same one the app's terminal drawer shows. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. tui3 hands the whole screen to the terminal; `ctrl+j` or `ctrl+]` comes back. The terminal keeps running after you detach. The terminal's size is shared, so attaching resizes it for anyone else watching.
+
+`T` opens the terminal picker even with only one terminal. Choose `New terminal`, `Close terminal…` or `Clear terminal…`; typing `close` or `clear` also finds each terminal's action directly. Closing ends the shell and deletes its history; clearing clears its scrollback. These actions are also in the command palette.
+
+## Workspace
+
+`b` opens the web app's ref selector: local and remote refs, existing worktrees, `Create and switch ref…`, and `Pull`. Selecting a ref reuses its worktree if it has one; selecting the default branch returns to the project folder. `Create worktree…` asks for a new branch name and moves this thread there. `Remove worktree…` asks first, detaches this thread's provider session and removes the worktree only if no other thread uses it and Git permits it (no forced deletion). Moving folders detaches the provider session, as in the web app.
+
+Worktree preparation shows its current stage, percentage and detail above the message box, including failures. `Cancel worktree setup…` in the palette asks first.
+
+`E` opens the workspace in an editor on the server. In a single-file diff it opens that file; in a whole-tree diff it asks which file. It uses the web app's fallback order among the server's available editors: the browser's last-used editor preference isn't shared with tui3. The pinned RPC has no line argument.
+
+Server ready/restart, update outcomes and legacy-thread migration events flash on the bottom line. This server version doesn't publish update-available or shutting-down lifecycle events; connection loss uses the existing reconnect status.
 
 ## Alerts
 
