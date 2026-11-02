@@ -516,10 +516,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const workspace = useWorkspace({ session, renderer, live, thread: threadShell, project, serverConfig: serverConfig?.config ?? null, draft: draft !== null, diff, openPicker, confirm, run, say });
 
   /** The composer's text in $EDITOR. */
-  const openEditor = () => {
+  const openEditor = async () => {
     const composer = composerRef.current;
     if (!composer) return;
-    const edited = editInEditor(renderer, composer.plainText);
+    const edited = await editInEditor(renderer, composer.plainText);
     if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
     composer.setText(edited);
     composer.gotoBufferEnd();

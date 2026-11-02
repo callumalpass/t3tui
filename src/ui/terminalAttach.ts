@@ -22,13 +22,13 @@ export interface TerminalTarget {
  * keystrokes sent to it. Ctrl+J comes back. The terminal keeps running on the server.
  * Note that a terminal's size is shared by everyone attached, so attaching resizes it.
  */
-export function attachTerminal(renderer: CliRenderer, session: T3Session, target: TerminalTarget, onDone: (message?: string) => void): void {
+export async function attachTerminal(renderer: CliRenderer, session: T3Session, target: TerminalTarget, onDone: (message?: string) => void): Promise<void> {
   const stdin = process.stdin;
   const stdout = process.stdout;
   const size = () => ({ cols: stdout.columns || 80, rows: stdout.rows || 24 });
   let finished = false;
 
-  renderer.suspend();
+  await renderer.suspend();
   stdout.write("\x1b[?1049h\x1b[H\x1b[2J");
   stdout.write(`\x1b]2;t3tui · ${target.label} · ctrl+j to return\x07`);
   stdin.setRawMode?.(true);
@@ -83,8 +83,9 @@ export function attachTerminal(renderer: CliRenderer, session: T3Session, target
     stdout.off("resize", onResize);
     stdout.write(RESET);
     stdout.write("\x1b]2;t3tui\x07");
-    renderer.resume();
-    renderer.requestRender();
-    onDone(message);
+    void renderer.resume().then(() => {
+      renderer.requestRender();
+      onDone(message);
+    });
   }
 }

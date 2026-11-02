@@ -83,7 +83,7 @@ export function useWorkspace(input: {
       ...terminal,
       label: resolveTerminalSessionLabel(terminal.terminalId, terminal),
     };
-    attachTerminal(renderer, session, target, (message) => {
+    void attachTerminal(renderer, session, target, (message) => {
       if (message) say(message);
     });
   };

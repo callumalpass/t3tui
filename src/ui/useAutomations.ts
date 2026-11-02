@@ -25,8 +25,8 @@ export function useAutomations(deps: {
 }): Automations {
   const { session, renderer, projects, defaults, confirm, run, say } = deps;
 
-  const edit = (template: string, existing?: ScheduledTask) => {
-    const edited = editInEditor(renderer, template);
+  const edit = async (template: string, existing?: ScheduledTask) => {
+    const edited = await editInEditor(renderer, template);
     if (edited === null) return say("The editor exited with an error; the automation is unchanged.", true);
     const parsed = parseAutomation(edited, projects, existing);
     if (!parsed.ok) return say(parsed.error, true);

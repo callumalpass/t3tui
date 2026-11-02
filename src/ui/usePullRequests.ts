@@ -181,13 +181,13 @@ export function usePullRequests(deps: PullRequestDeps) {
     if (current) void load(current.link, current.reference);
   };
 
-  const comment = () => {
+  const comment = async () => {
     const current = loadedRef.current;
     const canComment = current?.detail?.capabilities.comment && current.detail.viewerPermissions.comment;
     if (!current?.detail || !canComment) {
       return deps.say("Commenting is not available on this pull request.", true);
     }
-    const edited = editInEditor(deps.renderer, "");
+    const edited = await editInEditor(deps.renderer, "");
     if (edited === null) return deps.say("The editor exited with an error; nothing was posted.", true);
     const body = edited.trim();
     if (!body) return deps.say("Nothing to post.", true);
@@ -215,8 +215,8 @@ export function usePullRequests(deps: PullRequestDeps) {
     });
     if (offered.length === 0) return deps.say("Reviewing is not available on this pull request.", true);
 
-    const writeReview = (verdict: (typeof VERDICTS)[number]) => {
-      const edited = editInEditor(deps.renderer, "");
+    const writeReview = async (verdict: (typeof VERDICTS)[number]) => {
+      const edited = await editInEditor(deps.renderer, "");
       if (edited === null) return deps.say("The editor exited with an error; the review was not submitted.", true);
       const body = edited;
       const summaryRequired = sourceControlClients.get(detail.provider).reviewSummaryRequired("request-changes");
