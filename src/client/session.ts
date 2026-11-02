@@ -20,6 +20,12 @@ import {
   type ScheduledTask,
   type ScheduledTaskId,
   type ServerConfig,
+  type ModelSelection,
+  type RuntimeMode,
+  type TerminalAttachStreamEvent,
+  type TerminalSummary,
+  type VcsRef,
+  type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadShell,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
@@ -366,7 +372,8 @@ export class T3Session {
    * Sends a message the way the web composer does: "auto" when idle, otherwise
    * "steer" (into the active run) or "queue" (after it). See resolveComposerDispatchMode.
    */
-  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto"): Promise<void> {
+  /** `modelSelection` switches the thread's model (and options) with this message, as the web composer does. */
+  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto", modelSelection?: ModelSelection): Promise<void> {
     const commandId = newCommandId();
     return this.dispatch({
       type: "message.dispatch",
@@ -375,6 +382,7 @@ export class T3Session {
       messageId: MessageId.make(commandId),
       text,
       attachments: [],
+      ...(modelSelection ? { modelSelection } : {}),
       ...(mode === "queue" ? { dispatchMode: { type: "queue_after_active" } } : { dispatchMode: { type: "start_immediately" }, deliveryIntent: mode }),
       createdBy: "user",
       creationSource: "web",
@@ -403,6 +411,81 @@ export class T3Session {
   /** Stops whatever the thread is running, the way the GUI's stop button does. */
   stopThread(threadId: ThreadId): Promise<void> {
     return this.dispatch({ type: "thread.stop", commandId: newCommandId(), threadId });
+  }
+
+  setRuntimeMode(threadId: ThreadId, runtimeMode: RuntimeMode): Promise<void> {
+    return this.dispatch({ type: "thread.runtime-mode.set", commandId: newCommandId(), threadId, runtimeMode });
+  }
+
+  /**
+   * Creates a thread and sends its first message in one call, as the web app does when a
+   * draft is first sent. Resolves with the new thread's id.
+   */
+  async launchThread(input: Omit<OrchestrationV2ThreadLaunchInput, "commandId" | "initialMessage"> & { readonly text: string }): Promise<ThreadId> {
+    const { text, ...rest } = input;
+    const commandId = newCommandId();
+    const result = await Effect.runPromise(
+      this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({ ...rest, commandId, initialMessage: { messageId: MessageId.make(commandId), text, attachments: [] } }),
+    );
+    return result.threadId;
+  }
+
+  /** Whether `cwd` is a repository, and its default branch (else the current one), for a new worktree's base. */
+  async defaultRef(cwd: string): Promise<{ readonly isRepo: boolean; readonly ref: VcsRef | null }> {
+    const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsListRefs]({ cwd, refKind: "local" }));
+    return { isRepo: result.isRepo, ref: result.refs.find((ref) => ref.isDefault) ?? result.refs.find((ref) => ref.current) ?? null };
+  }
+
+  /** Every open terminal on the server; filter by thread. */
+  watchTerminals(listener: Listener<FeedState<TerminalSummary>>): () => void {
+    return this.watchFeed<FeedState<TerminalSummary>>("terminals", { status: "loading", items: [] }, listener, (update) =>
+      this.requireConnection()
+        .rpc[WS_METHODS.subscribeTerminalMetadata]({})
+        .pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              const items = (this.feeds.get("terminals")?.state as FeedState<TerminalSummary> | undefined)?.items ?? [];
+              const same = (a: { threadId: string; terminalId: string }, b: { threadId: string; terminalId: string }) => a.threadId === b.threadId && a.terminalId === b.terminalId;
+              switch (event.type) {
+                case "snapshot":
+                  return update({ status: "live", items: event.terminals });
+                case "upsert":
+                  return update({ status: "live", items: [...items.filter((item) => !same(item, event.terminal)), event.terminal] });
+                case "remove":
+                  return update({ items: items.filter((item) => !same(item, event)) });
+              }
+            }),
+          ),
+        ),
+    );
+  }
+
+  /**
+   * Attaches to a terminal (opening it in `cwd` if it isn't running) and streams its events.
+   * Returns a function that detaches; the terminal keeps running.
+   */
+  attachTerminal(
+    input: { readonly threadId: ThreadId; readonly terminalId: string; readonly cwd: string; readonly worktreePath: string | null; readonly cols: number; readonly rows: number },
+    onEvent: Listener<TerminalAttachStreamEvent>,
+    onEnd: (error?: string) => void,
+  ): () => void {
+    const fiber = Effect.runFork(
+      this.requireConnection()
+        .rpc[WS_METHODS.terminalAttach]({ ...input, restartIfNotRunning: true })
+        .pipe(
+          Stream.runForEach((event) => Effect.sync(() => onEvent(event))),
+          Effect.match({ onFailure: (error) => onEnd(messageOf(error)), onSuccess: () => onEnd() }),
+        ),
+    );
+    return () => void Effect.runFork(Fiber.interrupt(fiber));
+  }
+
+  writeTerminal(threadId: ThreadId, terminalId: string, data: string): Promise<void> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.terminalWrite]({ threadId, terminalId, data }));
+  }
+
+  resizeTerminal(threadId: ThreadId, terminalId: string, cols: number, rows: number): Promise<void> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.terminalResize]({ threadId, terminalId, cols, rows }));
   }
 
   private async dispatch(command: OrchestrationV2Command): Promise<void> {

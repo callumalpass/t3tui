@@ -28,17 +28,20 @@ Any mode:
 | Key | Action |
 | --- | --- |
 | `ctrl+k` | command palette: every action below, plus thread search |
+| `ctrl+j` | attach to the thread's terminal (see below) |
 | `ctrl+n` / `ctrl+p` (or `alt+↓`/`alt+↑`) | next / previous thread |
 | `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation |
 | `ctrl+c` | quit |
 
-Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` or `ctrl+j` adds a newline (`shift+enter` needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines.
+Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`); save and quit to bring it back.
 
 Navigation:
 
 | Key | Action |
 | --- | --- |
 | `j`/`k`, arrows | next / previous thread (scroll, in `attach`) |
+| `c` | new thread (see below) |
+| `m` | model, options (reasoning, fast mode…) and access mode |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
 | `1`–`9` | pick an option when the agent asks a question (also in an empty message box) |
 | `x` | dismiss the agent's question |
@@ -52,7 +55,7 @@ Navigation:
 | `/` | filter threads by title or project (the box opens at the top of the thread list) |
 | `S` | stop the thread |
 | `g` / `G` | top / bottom of the conversation |
-| `esc` / `q` | close the diff; otherwise `q` quits |
+| `esc` / `q` | close the diff or cancel a new thread; otherwise `q` quits |
 
 The layout follows T3 Code's web app, and much of it uses the web app's own code (vendored from upstream):
 
@@ -68,6 +71,31 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - Threads open scrolled to the bottom.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
 
+## New threads
+
+`c` (or `New thread` in the palette) opens a draft in the current thread's project, with the defaults T3 Code would use: the server's default model and mode for new threads, and the project folder or a new worktree as the project settings say. In the draft, `p` picks the project, `m` the model and mode, and `w` switches between the project folder and a new worktree off the default branch. Write the first message and send it: that starts the thread, which T3 then titles. `esc` cancels.
+
+## Model, options and mode
+
+`m` (or a click on the model under the message box) opens a picker with the access mode, the model's options as the server describes them (reasoning effort, fast mode and whatever else the provider offers), and every model from the providers that are enabled and available. As in the web app:
+
+- A new model or option applies from the next message you send; the line under the box shows `· next message` until then.
+- The access mode changes at once.
+- Once a thread has run, it stays on its provider; you can still change models within it.
+
+## Terminals
+
+`ctrl+j` attaches to the thread's terminal on the T3 server, the same one the app's terminal drawer shows. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. tui3 hands the whole screen to the terminal; `ctrl+j` or `ctrl+]` comes back. The terminal keeps running after you detach. The terminal's size is shared, so attaching resizes it for anyone else watching.
+
+## Alerts
+
+tui3 alerts when a thread you aren't watching finishes or needs you (approval, input, a request, a failure or a usage limit), using T3 Code's own rules for when to alert. Subagents don't alert. Depending on `notificationMode`:
+
+- **Bell:** the terminal bell.
+- **Desktop notifications:** sent through the terminal (OSC 9, or OSC 99 in kitty), only when the terminal window isn't focused. Under tmux they need `set -g allow-passthrough on`.
+
+While the terminal is focused, alerts for other threads also show on the bottom line (`inAppNotificationsEnabled`).
+
 ## Settings
 
 Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a click changes one, and changes save to `~/.config/tui3/config.json`:
@@ -78,15 +106,17 @@ Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a clic
 | `sendShortcut` | `enter`, or `ctrl-enter` (then `enter` adds a line; needs the kitty keyboard protocol, and `alt+enter` also sends) | `enter` |
 | `timestampFormat` | `locale`, `12-hour`, `24-hour` | `locale` |
 | `diffIgnoreWhitespace` | `true`, `false` | `true` |
+| `notificationMode` | `off`, `sound` (bell), `notifications` (desktop), `notifications-and-sound` | `sound` |
+| `inAppNotificationsEnabled` | `true`, `false` | `true` |
 
-These use the web app's names and defaults. The web app keeps them in each browser, so tui3 can't read yours and keeps its own. The same view shows the server's settings that matter here (model and mode for new threads, auto-settle, rate-limited threads), read-only: change those in the app.
+These use the web app's names, and its defaults except for the two alert settings, which the web app leaves off. The web app keeps them in each browser, so tui3 can't read yours and keeps its own. The same view shows the server's settings that matter here (model and mode for new threads, auto-settle, rate-limited threads), read-only: change those in the app.
 
 Long threads load as a bounded window of recent turns; press `o` for older ones. If the connection drops, tui3 reconnects with backoff and resubscribes.
 
 ## How it connects
 
 - It finds the local server from `~/.t3/userdata/server-runtime.json` (override with `TUI3_SERVER`).
-- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate`, `filesystem:read` (diffs), `source-control:write` (git actions) and `terminal:operate` (stopping servers), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
+- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate`, `filesystem:read` (diffs), `source-control:write` (git actions), `terminal:read` and `terminal:operate` (terminals, stopping servers), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
 - It speaks T3 Code's own WebSocket RPC protocol, typed by upstream's `@t3tools/contracts`, and applies thread updates with upstream's own reducers. Both come from `vendor/t3code`, a submodule pinned to the server version this was built against (`v0.1.6-nightly.20261030.3917`).
 
 Set `TUI3_DEBUG=/path/to/log` to log thread subscriptions and snapshots.
@@ -104,4 +134,4 @@ Type errors after a bump point at the protocol changes to adapt to.
 
 ## Not yet supported
 
-Starting new threads, editing queued messages, plan follow-ups, attachments, reviewing or commenting on diffs, and the integrated terminal. Use the T3 Code app for those.
+Editing queued messages, plan follow-ups, attachments, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.

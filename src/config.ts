@@ -14,9 +14,13 @@ export interface Tui3Config {
   readonly sendShortcut: "enter" | "ctrl-enter";
   readonly timestampFormat: "locale" | "12-hour" | "24-hour";
   readonly diffIgnoreWhitespace: boolean;
+  /** As the web's notificationMode: sound is the terminal bell, notifications go through the terminal. */
+  readonly notificationMode: "off" | "notifications" | "sound" | "notifications-and-sound";
+  /** As the web's in-app toasts: a line at the bottom for threads you aren't looking at. */
+  readonly inAppNotificationsEnabled: boolean;
 }
 
-export const DEFAULT_CONFIG: Tui3Config = { followUpBehavior: "steer", sendShortcut: "enter", timestampFormat: "locale", diffIgnoreWhitespace: true };
+export const DEFAULT_CONFIG: Tui3Config = { followUpBehavior: "steer", sendShortcut: "enter", timestampFormat: "locale", diffIgnoreWhitespace: true, notificationMode: "sound", inAppNotificationsEnabled: true };
 
 /** Every setting with its choices in cycling order, for the settings view. */
 export const CONFIG_CHOICES: { readonly [K in keyof Tui3Config]: readonly Tui3Config[K][] } = {
@@ -24,6 +28,8 @@ export const CONFIG_CHOICES: { readonly [K in keyof Tui3Config]: readonly Tui3Co
   sendShortcut: ["enter", "ctrl-enter"],
   timestampFormat: ["locale", "12-hour", "24-hour"],
   diffIgnoreWhitespace: [true, false],
+  notificationMode: ["off", "sound", "notifications", "notifications-and-sound"],
+  inAppNotificationsEnabled: [true, false],
 };
 
 export const configPath = () => join(configDir(), "config.json");

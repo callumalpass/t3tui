@@ -8,23 +8,30 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
-import type { DiscoveredLocalServer, OrchestrationV2ThreadShell, ProviderApprovalDecision, ScheduledTask, ThreadId } from "@t3tools/contracts";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import { DEFAULT_TERMINAL_ID, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type TerminalSummary, type ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { FeedState, ServerConfigState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
+import { createAlerts, type Alert } from "../model/alerts.ts";
+import { draftDefaults, lockedProviderInstance, modelSummary, optionDescriptors, optionValue, optionValueLabel, providerName, RUNTIME_MODES, sameSelection, selectableProviders, withModel, withOption, type DraftThread } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
-import { paletteEntries, paletteGroups, type PaletteCommand } from "../model/palette.ts";
+import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type Picker, type PickerItem } from "../model/palette.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
 import { threadRows, type Section } from "../model/threads.ts";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
 import { DiffView, type DiffState } from "./DiffView.tsx";
+import { DraftView, type DraftLine } from "./DraftView.tsx";
+import { editInEditor } from "./editor.ts";
 import { Palette } from "./Palette.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
 import { SettingsView } from "./SettingsView.tsx";
+import { attachTerminal } from "./terminalAttach.ts";
+import { desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { ThreadView } from "./ThreadView.tsx";
@@ -34,7 +41,7 @@ import { ThreadView } from "./ThreadView.tsx";
  * "details": j/k move through the details panel. "settings": j/k move through settings.
  * The rest are overlays with their own input.
  */
-type Mode = "input" | "nav" | "filter" | "details" | "palette" | "confirm" | "settings";
+type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings";
 
 /** Holding j/k skims past threads; only subscribe to one you stop on. */
 const SUBSCRIBE_DELAY_MS = 120;
@@ -53,15 +60,15 @@ const COMPOSER_KEYS = {
   enter: [
     { name: "return", action: "submit" },
     { name: "return", shift: true, action: "newline" },
-    { name: "j", ctrl: true, action: "newline" },
   ],
   "ctrl-enter": [
     { name: "return", action: "newline" },
     { name: "return", ctrl: true, action: "submit" },
     { name: "return", shift: true, action: "newline" },
-    { name: "j", ctrl: true, action: "newline" },
   ],
 } as const;
+/** The composer's key while a new thread is being drafted. */
+const DRAFT_KEY = "draft";
 
 interface QuestionDraft {
   readonly index: number;
@@ -87,6 +94,14 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [config, setConfig] = useState(props.config);
   const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
   const [serverConfig, setServerConfig] = useState<ServerConfigState | null>(null);
+  /** A new thread before its first message; the composer sends it. */
+  const [draft, setDraft] = useState<DraftThread | null>(null);
+  const [picker, setPicker] = useState<Picker | null>(null);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [pickerIndex, setPickerIndex] = useState(0);
+  /** Model changes waiting for each thread's next message, as the web composer holds them. */
+  const [pendingModels, setPendingModels] = useState<ReadonlyMap<ThreadId, ModelSelection>>(new Map());
+  const [terminals, setTerminals] = useState<FeedState<TerminalSummary> | null>(null);
   /** Idle subagents the shell leaves out, fetched when you open one. */
   const [familyShells, setFamilyShells] = useState<ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>>(new Map());
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -105,6 +120,25 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const returnMode = useRef<Mode>("nav");
 
   useEffect(() => session.onShell(setShell), [session]);
+  // Alerts, from the shell as the web's notification coordinator computes them.
+  const onAlert = useRef<(alert: Alert) => void>(() => {});
+  const alerts = useMemo(() => createAlerts((alert) => onAlert.current(alert)), []);
+  useEffect(() => {
+    if (shell.status.type === "live" && shell.snapshot) alerts.observe(shell.snapshot);
+    else alerts.clear();
+  }, [alerts, shell.status.type, shell.snapshot]);
+  // Desktop notifications only while the terminal is in the background, as the web's need an unfocused window.
+  const terminalFocused = useRef(true);
+  useEffect(() => {
+    const onFocus = () => (terminalFocused.current = true);
+    const onBlur = () => (terminalFocused.current = false);
+    renderer.on("focus", onFocus);
+    renderer.on("blur", onBlur);
+    return () => {
+      renderer.off("focus", onFocus);
+      renderer.off("blur", onBlur);
+    };
+  }, [renderer]);
   // Drives "Working for 12s" and the sidebar's durations.
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1_000);
@@ -132,6 +166,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setSelectedId(id);
     setDiff(null);
     setSettingsIndex(null);
+    setDraft(null);
     setDetailsSelected(null);
     setMode((current) => (current === "details" || current === "settings" ? "nav" : current));
   }, []);
@@ -201,6 +236,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const vcsCwd = threadShell ? detailsCwd(threadShell, project) : null;
   const live = shell.status.type === "live";
   useEffect(() => (live ? session.watchServerConfig(setServerConfig) : undefined), [session, live]);
+  useEffect(() => (live ? session.watchTerminals(setTerminals) : undefined), [session, live]);
   // An idle subagent isn't in the shell; its family (root, forks, all subagents) is, on servers that serve it.
   const supportsFamilies = serverConfig?.config?.shellThreadFamilies === true;
   const unlisted = threadId !== undefined && !threadShell;
@@ -275,6 +311,17 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       (error) => say(`${label} failed: ${messageOf(error)}`, true),
     );
   };
+  onAlert.current = (alert) => {
+    const mode = config.notificationMode;
+    if (mode === "sound" || mode === "notifications-and-sound") ring();
+    const viewing = alert.thread.id === threadId;
+    if (terminalFocused.current) {
+      if (config.inAppNotificationsEnabled && !viewing) say(`${alert.title}: ${alert.thread.title}`, alert.status === "failed" || alert.status === "limited");
+    } else if (mode === "notifications" || mode === "notifications-and-sound") {
+      desktopNotify(alert.title, alert.thread.title);
+    }
+  };
+
   const respond = (decision: ProviderApprovalDecision) => {
     if (!threadId || !pendingApproval) return say("Nothing is waiting for approval.", true);
     run(decision === "decline" ? "Declined" : "Approved", () => session.respond(threadId, pendingApproval.requestId, decision));
@@ -374,6 +421,225 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setMode("details");
   };
 
+  // Pickers: the palette's overlay over a fixed list.
+  const openPicker = (next: Picker) => {
+    if (mode !== "picker" && mode !== "palette" && mode !== "confirm") returnMode.current = mode === "filter" || mode === "details" ? "nav" : mode;
+    setPicker(next);
+    setPickerQuery("");
+    setPickerIndex(0);
+    setMode("picker");
+  };
+  const pickerView = useMemo(() => (picker ? pickerGroups(picker, pickerQuery) : []), [picker, pickerQuery]);
+  const pickerItems = useMemo(() => (picker ? picker.groups.flatMap((group) => group.items) : []), [picker]);
+  const pickerEntries = paletteEntries(pickerView);
+  const pickItem = (index: number) => {
+    const entry = pickerEntries[index];
+    if (entry?.kind !== "command") return;
+    const item = pickerItems.find((candidate) => candidate.id === entry.command.id);
+    setPicker(null);
+    setMode(returnMode.current);
+    item?.run();
+  };
+
+  // Model, options and mode: for the draft, or for the open thread (sent with its next message).
+  const providerConfig = serverConfig?.config ?? null;
+  const currentModel: ModelSelection | null = draft ? draft.modelSelection : threadShell ? (pendingModels.get(threadShell.id) ?? threadShell.modelSelection) : null;
+  const setModel = (selection: ModelSelection) => {
+    if (draft) return setDraft({ ...draft, modelSelection: selection });
+    if (!threadShell) return;
+    const id = threadShell.id;
+    const same = sameSelection(providerConfig, selection, threadShell.modelSelection);
+    setPendingModels((previous) => {
+      const next = new Map(previous);
+      if (same) next.delete(id);
+      else next.set(id, selection);
+      return next;
+    });
+  };
+  const runtimeMode = draft ? draft.runtimeMode : threadShell?.runtimeMode;
+  const setRuntime = (next: (typeof RUNTIME_MODES)[number]) => {
+    if (draft) return setDraft({ ...draft, runtimeMode: next });
+    if (threadShell) run(`Mode: ${RUNTIME_MODE_LABELS[next] ?? next}`, () => session.setRuntimeMode(threadShell.id, next));
+  };
+  const openModelPicker = () => {
+    const selection = currentModel;
+    if (!selection) return;
+    if (!providerConfig) return say("Still loading the server's providers.", true);
+    // A started thread stays on its provider unless the provider supports handing over.
+    const locked = draft ? null : lockedProviderInstance(projection);
+    const groups: { label: string; items: PickerItem[] }[] = [];
+    for (const provider of selectableProviders(providerConfig)) {
+      if (locked && provider.instanceId !== locked) continue;
+      groups.push({
+        label: providerName(provider),
+        items: provider.models
+          .filter((model) => !model.isLegacy || model.slug === selection.model)
+          .map((model) => ({
+            id: `model:${provider.instanceId}:${model.slug}`,
+            title: model.name,
+            ...(provider.instanceId === selection.instanceId && model.slug === selection.model ? { hint: "current" } : {}),
+            run: () => setModel(withModel(providerConfig, selection, provider.instanceId, model.slug)),
+          })),
+      });
+    }
+    const options: PickerItem[] = optionDescriptors(providerConfig, selection).map((descriptor) => ({
+      id: `option:${descriptor.id}`,
+      title: `${descriptor.label}: ${optionValueLabel(descriptor, optionValue(selection, descriptor))}`,
+      run: () => {
+        if (descriptor.type === "boolean") return setModel(withOption(selection, descriptor.id, optionValue(selection, descriptor) !== true));
+        openPicker({
+          placeholder: descriptor.label,
+          groups: [
+            {
+              label: descriptor.label,
+              items: descriptor.options.map((choice) => ({
+                id: `choice:${choice.id}`,
+                title: choice.label,
+                ...(choice.id === optionValue(selection, descriptor) ? { hint: "current" } : choice.description ? { hint: choice.description } : {}),
+                run: () => setModel(withOption(selection, descriptor.id, choice.id)),
+              })),
+            },
+          ],
+        });
+      },
+    }));
+    if (options.length > 0) groups.unshift({ label: "Options", items: options });
+    if (runtimeMode) {
+      groups.unshift({
+        label: "Mode",
+        items: RUNTIME_MODES.map((candidate) => ({
+          id: `mode:${candidate}`,
+          title: RUNTIME_MODE_LABELS[candidate] ?? candidate,
+          ...(candidate === runtimeMode ? { hint: "current" } : {}),
+          run: () => setRuntime(candidate),
+        })),
+      });
+    }
+    openPicker({ placeholder: locked ? "Model, options and mode (this thread stays on its provider)" : "Model, options and mode", groups });
+  };
+
+  // New threads, as the web's: a local draft that becomes a thread when its first message is sent.
+  const startDraft = () => {
+    const projects = shell.snapshot?.projects ?? [];
+    const project = projects.find((candidate) => candidate.id === threadShell?.projectId) ?? projects[0];
+    if (!project) return say("No projects on this server yet; add one in T3 Code.", true);
+    setDraft(
+      draftDefaults({
+        config: providerConfig,
+        project,
+        currentModel: threadShell?.modelSelection ?? null,
+        projectHasThreads: shell.snapshot?.threads.some((candidate) => candidate.projectId === project.id) ?? false,
+      }),
+    );
+    setDiff(null);
+    setSettingsIndex(null);
+    setMode("input");
+  };
+  const draftProject = draft ? shell.snapshot?.projects.find((candidate) => candidate.id === draft.projectId) : undefined;
+  const openProjectPicker = () => {
+    if (!draft) return;
+    openPicker({
+      placeholder: "Project",
+      groups: [
+        {
+          label: "Projects",
+          items: (shell.snapshot?.projects ?? []).map((candidate) => ({
+            id: `project:${candidate.id}`,
+            title: candidate.title,
+            hint: candidate.id === draft.projectId ? "current" : candidate.workspaceRoot.replace(homedir(), "~"),
+            run: () =>
+              setDraft(
+                draftDefaults({
+                  config: providerConfig,
+                  project: candidate,
+                  currentModel: draft.modelSelection,
+                  projectHasThreads: shell.snapshot?.threads.some((member) => member.projectId === candidate.id) ?? false,
+                }),
+              ),
+          })),
+        },
+      ],
+    });
+  };
+  const toggleWorkspace = () => draft && setDraft({ ...draft, envMode: draft.envMode === "local" ? "worktree" : "local" });
+  const launchDraft = (text: string) => {
+    if (!draft || !draftProject) return;
+    const launching = draft;
+    const project = draftProject;
+    say("Starting thread…");
+    void (async () => {
+      let workspaceStrategy: { type: "root" } | { type: "worktree"; baseRef: string; startFromOrigin?: boolean } = { type: "root" };
+      if (launching.envMode === "worktree") {
+        // A worktree starts from the default branch; outside a git repository it runs in place, as the web's.
+        const refs = await session.defaultRef(project.workspaceRoot);
+        if (refs.isRepo && refs.ref) workspaceStrategy = { type: "worktree", baseRef: refs.ref.name, startFromOrigin: providerConfig?.settings.newWorktreesStartFromOrigin ?? true };
+      }
+      return session.launchThread({
+        projectId: launching.projectId,
+        title: deriveThreadTitleSeed({ text, attachments: [] }),
+        generateTitle: true,
+        modelSelection: launching.modelSelection,
+        runtimeMode: launching.runtimeMode,
+        interactionMode: "default",
+        workspaceStrategy,
+        text,
+      });
+    })().then(
+      (id) => {
+        drafts.current.delete(DRAFT_KEY);
+        openThread(id);
+        say("Thread started");
+      },
+      (error) => say(`Could not start the thread: ${messageOf(error)}`, true),
+    );
+  };
+
+  // The thread's terminals, as the web's terminal drawer: attach to one, or open the first.
+  const threadTerminals = threadShell ? (terminals?.items ?? []).filter((terminal) => terminal.threadId === threadShell.id) : [];
+  const enterTerminal = (terminal: { terminalId: string; cwd: string; worktreePath: string | null; label?: string }) => {
+    if (!threadShell) return;
+    attachTerminal(renderer, session, { threadId: threadShell.id, terminalId: terminal.terminalId, cwd: terminal.cwd, worktreePath: terminal.worktreePath, label: terminal.label || terminal.terminalId }, (message) => {
+      if (message) say(message, true);
+    });
+  };
+  const openTerminal = () => {
+    if (!threadShell) return say("Open a thread first.", true);
+    const cwd = threadShell.worktreePath ?? project?.workspaceRoot;
+    if (!cwd) return say("This thread has no folder to open a terminal in.", true);
+    const fresh = (id: string) => ({ terminalId: id, cwd, worktreePath: threadShell.worktreePath });
+    if (threadTerminals.length === 0) return enterTerminal(fresh(DEFAULT_TERMINAL_ID));
+    if (threadTerminals.length === 1 && threadTerminals[0]) return enterTerminal(threadTerminals[0]);
+    const taken = new Set(threadTerminals.map((terminal) => terminal.terminalId));
+    let next = 1;
+    while (taken.has(`term-${next}`)) next += 1;
+    openPicker({
+      placeholder: "Terminal",
+      groups: [
+        {
+          label: "Terminals",
+          items: threadTerminals.map((terminal) => ({
+            id: `terminal:${terminal.terminalId}`,
+            title: terminal.label || terminal.terminalId,
+            hint: terminal.status === "running" ? (terminal.hasRunningSubprocess ? "busy" : "running") : terminal.status,
+            run: () => enterTerminal(terminal),
+          })),
+        },
+        { label: "New", items: [{ id: "terminal:new", title: "New terminal", run: () => enterTerminal(fresh(`term-${next}`)) }] },
+      ],
+    });
+  };
+
+  /** The composer's text in $EDITOR. */
+  const openEditor = () => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    const edited = editInEditor(renderer, composer.plainText);
+    if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
+    composer.setText(edited);
+    composer.gotoBufferEnd();
+    setMode("input");
+  };
+
   const settingsRows = settingRows(config);
   const cycleSetting = (index: number) => {
     const row = settingsRows[index];
@@ -441,6 +707,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return;
     }
     const text = raw.trim();
+    if (draft) {
+      if (!text) return;
+      clearComposer();
+      return launchDraft(text);
+    }
     if (!threadId) return;
     if (pendingInput && questionDraft) {
       const question = pendingInput.questions[questionDraft.index];
@@ -457,7 +728,15 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return run("Declined and redirected", () => session.sendMessage(threadId, text, "steer"));
     }
     const dispatchMode = resolveComposerDispatchMode({ running: working, alternateModifier: alternate, activeTurnDefault: config.followUpBehavior });
-    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, text, dispatchMode));
+    const pendingModel = pendingModels.get(threadId);
+    if (pendingModel) {
+      setPendingModels((previous) => {
+        const next = new Map(previous);
+        next.delete(threadId);
+        return next;
+      });
+    }
+    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, text, dispatchMode, pendingModel));
   };
 
   const loadEarlier = () => {
@@ -503,7 +782,16 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     command("filter", "Filter threads", () => setMode("filter"), { shortcut: "/", keywords: ["search"] });
     command("settled", showFolded ? "Hide settled threads" : "Show settled threads", () => setShowFolded(!showFolded), { shortcut: "z", keywords: ["snoozed", "archive"] });
   }
-  command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options"] });
+  command("new-thread", "New thread", startDraft, { shortcut: "c", keywords: ["create", "start", "chat"] });
+  if (draft) {
+    command("draft-project", "New thread: choose project", openProjectPicker, { shortcut: "p" });
+    command("draft-workspace", draft.envMode === "local" ? "New thread: use a new worktree" : "New thread: run in the project folder", toggleWorkspace, { shortcut: "w", keywords: ["worktree", "local", "branch"] });
+    command("draft-cancel", "Cancel new thread", () => setDraft(null), { keywords: ["discard"] });
+  }
+  if (currentModel) command("model", "Change model, options or mode", openModelPicker, { shortcut: "m", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] });
+  if (threadShell && !draft) command("terminal", "Open terminal", openTerminal, { shortcut: "ctrl+j", keywords: ["shell", "console"] });
+  if (threadId || draft) command("editor", "Write the message in $EDITOR", openEditor, { shortcut: "ctrl+g", keywords: ["vim", "editor", "compose"] });
+  command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options", "notifications", "alerts"] });
   command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
 
   const commandKey = commands.map((candidate) => `${candidate.id}:${candidate.title}`).join("|");
@@ -528,6 +816,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const globalKey = (key: KeyEvent): boolean => {
     if (key.ctrl && key.name === "c") return quit(), true;
     if (key.ctrl && key.name === "k") return openPalette(), true;
+    if ((key.ctrl && key.name === "j") || key.name === "linefeed") return openTerminal(), true;
+    if (key.ctrl && key.name === "g" && (threadId || draft)) return openEditor(), true;
     // One-line inputs keep ctrl+u and ctrl+d for editing.
     const lineInput = mode === "filter" || mode === "palette" || mode === "confirm";
     if (key.name === "pagedown" || (!lineInput && key.ctrl && key.name === "d")) return scrollPage(1), true;
@@ -539,6 +829,16 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   };
 
   useKeyboard((key) => {
+    if (mode === "picker") {
+      if (key.ctrl && key.name === "c") return quit();
+      if (key.name === "escape") {
+        setPicker(null);
+        setMode(returnMode.current);
+      } else if (key.name === "down" || (key.ctrl && key.name === "n")) setPickerIndex((index) => Math.min(pickerEntries.length - 1, index + 1));
+      else if (key.name === "up" || (key.ctrl && key.name === "p")) setPickerIndex((index) => Math.max(0, index - 1));
+      else return;
+      return key.preventDefault();
+    }
     if (mode === "palette") {
       if (key.ctrl && key.name === "c") return quit();
       if (key.name === "escape" || (key.ctrl && key.name === "k")) setMode(returnMode.current);
@@ -632,6 +932,17 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         return quit();
       case "escape":
         if (diff) setDiff(null);
+        else if (draft) setDraft(null);
+        return;
+      case "c":
+        return startDraft();
+      case "m":
+        return openModelPicker();
+      case "p":
+        if (draft) openProjectPicker();
+        return;
+      case "w":
+        if (draft) toggleWorkspace();
         return;
       case "j":
       case "down":
@@ -674,7 +985,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       case "i":
       case "return":
       case "tab":
-        if (threadId) setMode("input");
+        if (threadId || draft) setMode("input");
         return key.preventDefault();
     }
   });
@@ -694,26 +1005,39 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const placeholder =
     mode !== "input"
       ? "Press i to type"
-      : pendingApproval
-        ? pendingApproval.supportsFeedback
-          ? "Send feedback to decline this request"
-          : "Send a message to decline and redirect the agent"
-        : pendingInput
-          ? "Type your own answer, or leave this blank to use the selected option"
-          : working
-            ? config.followUpBehavior === "queue"
-              ? "Queue a message for after this run (alt+enter to steer instead)"
-              : "Steer the agent (alt+enter to queue instead)"
-            : "Ask anything";
-  const footer = threadShell
+      : draft
+        ? "What should the new thread do?"
+        : pendingApproval
+          ? pendingApproval.supportsFeedback
+            ? "Send feedback to decline this request"
+            : "Send a message to decline and redirect the agent"
+          : pendingInput
+            ? "Type your own answer, or leave this blank to use the selected option"
+            : working
+              ? config.followUpBehavior === "queue"
+                ? "Queue a message for after this run (alt+enter to steer instead)"
+                : "Steer the agent (alt+enter to queue instead)"
+              : "Ask anything";
+  // The model with its options, then the mode when it isn't full access; click or m to change.
+  const composerKey: string = draft ? DRAFT_KEY : (threadId ?? "");
+  const pendingModel = !draft && threadShell ? pendingModels.get(threadShell.id) : undefined;
+  const footer =
+    currentModel && runtimeMode
+      ? [
+          providerConfig ? modelSummary(providerConfig, currentModel) : currentModel.model === "default" ? "" : currentModel.model,
+          runtimeMode === "full-access" ? "" : (RUNTIME_MODE_LABELS[runtimeMode] ?? runtimeMode),
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
+  const draftLines: DraftLine[] = draft
     ? [
-        threadShell.modelSelection.model === "default" ? "" : threadShell.modelSelection.model,
-        threadShell.interactionMode === "plan" ? "Plan" : "Build",
-        threadShell.runtimeMode === "full-access" ? "" : (RUNTIME_MODE_LABELS[threadShell.runtimeMode] ?? threadShell.runtimeMode),
+        { key: "project", label: "Project", value: draftProject?.title ?? "—", shortcut: "p", onPick: openProjectPicker },
+        { key: "model", label: "Model", value: modelSummary(providerConfig, draft.modelSelection), shortcut: "m", onPick: openModelPicker },
+        { key: "mode", label: "Mode", value: RUNTIME_MODE_LABELS[draft.runtimeMode] ?? draft.runtimeMode, shortcut: "m", onPick: openModelPicker },
+        { key: "workspace", label: "Runs in", value: draft.envMode === "worktree" ? "a new worktree from the default branch" : "the project folder", shortcut: "w", onPick: toggleWorkspace },
       ]
-        .filter(Boolean)
-        .join(" · ")
-    : "";
+    : [];
   const detailsPanel = (inPlace: boolean) => (
     <DetailsPanel
       details={details}
@@ -773,6 +1097,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             />
           ) : diff ? (
             <DiffView diff={diff} scrollRef={scrollRef} />
+          ) : draft ? (
+            <DraftView lines={draftLines} />
           ) : threadId && detailsInPlace ? (
             <box flexGrow={1} minHeight={0} flexDirection="column">
               {detailsPanel(true)}
@@ -810,7 +1136,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               }}
             />
           ) : null}
-          {threadId ? (
+          {threadId || draft ? (
             <box
               border
               borderStyle="rounded"
@@ -824,10 +1150,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               onMouseDown={() => setMode("input")}
             >
               <textarea
-                key={threadId}
+                key={composerKey}
                 ref={composerRef}
                 focused={mode === "input"}
-                initialValue={drafts.current.get(threadId) ?? ""}
+                initialValue={drafts.current.get(composerKey) ?? ""}
                 placeholder={placeholder}
                 placeholderColor={colors.faint}
                 textColor={colors.text}
@@ -837,8 +1163,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 onContentChange={() => {
                   const composer = composerRef.current;
                   const text = composer?.plainText ?? "";
-                  if (text) drafts.current.set(threadId, text);
-                  else drafts.current.delete(threadId);
+                  if (text) drafts.current.set(composerKey, text);
+                  else drafts.current.delete(composerKey);
                   // Wrapped lines count too, so a long paragraph grows the box.
                   // The wrapped count can lag a programmatic newline, so hard lines are a floor.
                   setComposerLines(Math.max(text.split("\n").length, composer?.virtualLineCount ?? 1));
@@ -847,9 +1173,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               />
             </box>
           ) : null}
-          {threadId ? (
-            <box flexDirection="row" height={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
+          {threadId || draft ? (
+            <box flexDirection="row" height={1} flexShrink={0} paddingLeft={2} paddingRight={2} onMouseDown={openModelPicker}>
               <text fg={colors.faint}>{footer}</text>
+              {pendingModel ? <text fg={colors.accent}>{"  · next message"}</text> : null}
             </box>
           ) : null}
         </box>
@@ -859,7 +1186,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         {flash ? (
           <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text>
         ) : (
-          <text fg={colors.faint}>{hints(mode, { config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined })}</text>
+          <text fg={colors.faint}>{hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined })}</text>
         )}
       </box>
       {mode === "palette" ? (
@@ -877,16 +1204,33 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           onPick={pick}
         />
       ) : null}
+      {mode === "picker" && picker ? (
+        <Palette
+          query={pickerQuery}
+          placeholder={picker.placeholder}
+          groups={pickerView}
+          selected={Math.min(pickerIndex, Math.max(0, pickerEntries.length - 1))}
+          width={width}
+          height={height}
+          onQuery={(value) => {
+            setPickerQuery(value);
+            setPickerIndex(0);
+          }}
+          onSubmit={() => pickItem(Math.min(pickerIndex, pickerEntries.length - 1))}
+          onPick={pickItem}
+        />
+      ) : null}
     </box>
   );
 }
 
 function hints(
   mode: Mode,
-  state: { readonly config: Tui3Config; readonly approval: boolean; readonly question: boolean; readonly working: boolean; readonly attached: boolean; readonly diff: boolean; readonly parent: boolean },
+  state: { readonly draft: boolean; readonly config: Tui3Config; readonly approval: boolean; readonly question: boolean; readonly working: boolean; readonly attached: boolean; readonly diff: boolean; readonly parent: boolean },
 ): string {
   if (mode === "filter") return "enter done · esc close";
   if (mode === "palette") return "↑/↓ move · enter run · esc close";
+  if (mode === "picker") return "↑/↓ move · enter choose · esc close";
   if (mode === "confirm") return "enter confirm · esc cancel";
   if (mode === "details") return "j/k move · enter open · t toggle automation · esc back";
   if (mode === "settings") return "j/k move · enter change · esc close";
@@ -894,15 +1238,16 @@ function hints(
     const send = state.config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
     const other = state.config.followUpBehavior === "steer" ? "queue" : "steer";
     const newline = state.config.sendShortcut === "enter" ? "shift+enter or \\ newline" : "enter newline";
-    const parts = [state.working ? `${send} ${state.config.followUpBehavior} · alt+enter ${other}` : `${send} send`, newline, "esc navigate"];
+    const parts = [state.working ? `${send} ${state.config.followUpBehavior} · alt+enter ${other}` : `${send} send`, newline, "ctrl+g editor", "esc navigate"];
     if (state.question) parts.unshift("1-9 pick");
     if (state.approval) parts.unshift("approval waiting: esc, then y/n");
     if (!state.attached) parts.push("ctrl+n/p thread");
     return parts.join(" · ");
   }
   if (state.diff) return "j/k scroll · esc close diff · l details";
+  if (state.draft) return "i write the first message · p project · m model & mode · w worktree · esc cancel";
   const parts = state.attached ? ["j/k scroll"] : ["j/k threads", "/ filter"];
-  parts.push("i type", "l details", "e expand", "o earlier");
+  parts.push("i type", "c new", "m model", "ctrl+j terminal", "l details", "e expand");
   if (state.parent) parts.push("u parent");
   parts.push("ctrl+k commands", "q quit");
   if (state.question) parts.unshift("1-9 pick · x dismiss");

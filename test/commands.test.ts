@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { OrchestrationV2Command, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
+import { OrchestrationV2Command, OrchestrationV2ThreadLaunchInput, ProjectId, ProviderInstanceId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { T3Session } from "../src/client/session.ts";
@@ -62,5 +63,35 @@ describe("commands tui3 dispatches", () => {
     await session.stopThread(threadId);
     expect(isCommand(sent[0])).toBe(true);
     expect(sent[0]).toMatchObject({ type: "thread.stop", threadId });
+  });
+
+  test("a model change rides on the next message, and a mode change is its own command", async () => {
+    const { session, sent } = capturingSession();
+    const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus-5-5", options: [{ id: "effort", value: "high" }] };
+    await session.sendMessage(threadId, "carry on", "auto", modelSelection);
+    await session.setRuntimeMode(threadId, "approval-required");
+    expect(sent.every(isCommand)).toBe(true);
+    expect(sent[0]).toMatchObject({ type: "message.dispatch", modelSelection });
+    expect(sent[1]).toMatchObject({ type: "thread.runtime-mode.set", runtimeMode: "approval-required" });
+  });
+
+  test("a new thread launches with a payload the server accepts", async () => {
+    const session = new T3Session();
+    let payload: unknown;
+    const rpc = { "orchestration.launchThread": (input: unknown) => ((payload = input), Effect.succeed({ threadId: ThreadId.make("new-1") })) };
+    (session as unknown as { connection: unknown }).connection = { rpc };
+    const id = await session.launchThread({
+      projectId: ProjectId.make("p1"),
+      title: "Fix the flaky test",
+      generateTitle: true,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      text: "Fix the flaky test",
+    });
+    expect(id as string).toBe("new-1");
+    expect(Schema.is(OrchestrationV2ThreadLaunchInput)(payload)).toBe(true);
+    expect(payload).toMatchObject({ initialMessage: { text: "Fix the flaky test", attachments: [] } });
   });
 });

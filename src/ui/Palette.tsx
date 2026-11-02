@@ -7,6 +7,7 @@ import { colors } from "./theme.ts";
  */
 export function Palette(props: {
   readonly query: string;
+  readonly placeholder?: string;
   readonly groups: readonly PaletteGroup[];
   readonly selected: number;
   readonly width: number;
@@ -31,7 +32,7 @@ export function Palette(props: {
     <box position="absolute" top={2} left={Math.floor((props.width - width) / 2)} width={width} zIndex={10} flexDirection="column" border borderStyle="rounded" borderColor={colors.borderFocused} backgroundColor={colors.panel}>
       <box paddingLeft={1} paddingRight={1} height={1} flexDirection="row">
         <text fg={colors.accent}>{"› "}</text>
-        <input focused flexGrow={1} placeholder="Search commands and threads (> for commands only)" value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.panel} focusedBackgroundColor={colors.panel} />
+        <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.panel} focusedBackgroundColor={colors.panel} />
       </box>
       <box border={["top"]} borderColor={colors.border} flexDirection="column" height={listHeight + 1}>
         {rows.length === 0 ? <text fg={colors.muted} paddingLeft={1}>No matches</text> : null}

@@ -28,7 +28,7 @@ describe("config", () => {
 
   test("labels settings for the settings view", () => {
     const rows = settingRows({ ...DEFAULT_CONFIG, followUpBehavior: "queue" });
-    expect(rows.map((row) => row.key)).toEqual(["followUpBehavior", "sendShortcut", "timestampFormat", "diffIgnoreWhitespace"]);
+    expect(rows.map((row) => row.key)).toEqual(["followUpBehavior", "sendShortcut", "timestampFormat", "diffIgnoreWhitespace", "notificationMode", "inAppNotificationsEnabled"]);
     expect(rows[0]?.value).toBe("queues");
   });
 });

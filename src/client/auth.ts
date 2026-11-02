@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 
 /**
  * Scopes tui3 asks for: read and operate threads, read diffs, run git actions
- * (commit, push, open a PR), and stop a thread's local servers.
+ * (commit, push, open a PR), stop a thread's local servers, and use its terminals.
  */
-export const TUI3_SCOPES = ["orchestration:read", "orchestration:operate", "filesystem:read", "source-control:write", "terminal:operate"] as const;
+export const TUI3_SCOPES = ["orchestration:read", "orchestration:operate", "filesystem:read", "source-control:write", "terminal:read", "terminal:operate"] as const;
 
 export interface ServerTarget {
   /** e.g. http://127.0.0.1:3773 */

@@ -15,6 +15,12 @@ const LABELS: { readonly [K in keyof Tui3Config]: { readonly label: string; read
   sendShortcut: { label: "Send with", help: "ctrl+enter needs kitty keyboard support; alt+enter also sends", values: { enter: "enter", "ctrl-enter": "ctrl+enter (enter adds a line)" } },
   timestampFormat: { label: "Times", help: "automation schedules", values: { locale: "system locale", "12-hour": "12-hour", "24-hour": "24-hour" } },
   diffIgnoreWhitespace: { label: "Diffs", help: "whitespace-only changes", values: { true: "ignore whitespace", false: "show whitespace" } },
+  notificationMode: {
+    label: "Alerts",
+    help: "when a thread needs you or finishes; notifications only while the terminal is unfocused",
+    values: { off: "off", sound: "bell", notifications: "desktop notifications", "notifications-and-sound": "bell and desktop notifications" },
+  },
+  inAppNotificationsEnabled: { label: "In-app alerts", help: "a line at the bottom for other threads", values: { true: "on", false: "off" } },
 };
 
 /** tui3's own settings, in display order, each cycled with enter. */

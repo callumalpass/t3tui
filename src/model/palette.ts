@@ -88,3 +88,34 @@ export function paletteGroups(input: {
 export function paletteEntries(groups: readonly PaletteGroup[]): PaletteEntry[] {
   return groups.flatMap((group) => group.entries);
 }
+
+/** A choice in a picker (model, option, project, terminal…). */
+export interface PickerItem {
+  readonly id: string;
+  readonly title: string;
+  /** Shown on the right: "current", a provider, a status. */
+  readonly hint?: string;
+  readonly run: () => void;
+}
+
+export interface Picker {
+  readonly placeholder: string;
+  readonly groups: readonly { readonly label: string; readonly items: readonly PickerItem[] }[];
+}
+
+/** A picker's groups filtered and ranked by the query, in the palette's shape. */
+export function pickerGroups(picker: Picker, query: string): PaletteGroup[] {
+  const folded = foldSearchQuery(query);
+  return picker.groups
+    .map((group) => {
+      const items = folded
+        ? group.items
+            .map((item) => ({ item, match: scoreSearchTerms(folded, [item.title, group.label, item.hint ?? ""], { typos: true }) }))
+            .filter((candidate) => candidate.match !== null)
+            .sort((a, b) => b.match!.score - a.match!.score)
+            .map(({ item }) => item)
+        : group.items;
+      return { label: group.label, entries: items.map((item): PaletteEntry => ({ kind: "command", command: { id: item.id, title: item.title, ...(item.hint ? { shortcut: item.hint } : {}) } })) };
+    })
+    .filter((group) => group.entries.length > 0);
+}
