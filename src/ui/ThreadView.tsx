@@ -35,6 +35,8 @@ export interface ConversationMouse {
   readonly menu: (target: ConversationTarget) => void;
   /** A click on a changed file: that turn's diff. */
   readonly openTurnDiff: (checkpointTurnCount: number) => void;
+  /** A click in a reply's text, at its screen position, for the link or path under it. */
+  readonly click: (x: number, y: number) => void;
 }
 
 /** Prose stops at this width on wide terminals, left-aligned. */
@@ -179,7 +181,7 @@ const Row = memo(function Row(props: {
       if (message.role === "system") return <text marginTop={1} fg={colors.muted} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>{message.text}</text>;
       return (
         <box marginTop={1} flexDirection="column" onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
-          <markdown content={message.text || "…"} syntaxStyle={markdownStyle} streaming={message.streaming} conceal tableOptions={{ widthMode: "content", wrapMode: "word", cellPaddingX: 1, borderColor: colors.border }} />
+          <markdown content={message.text || "…"} syntaxStyle={markdownStyle} streaming={message.streaming} conceal tableOptions={{ widthMode: "content", wrapMode: "word", cellPaddingX: 1, borderColor: colors.border }} onMouseUp={(event: MouseEvent) => isLeftClick(event) && mouse.click(event.x, event.y)} />
           {summary && summary.files.length > 0 ? <ChangedFiles summary={summary} onOpenTurnDiff={mouse.openTurnDiff} /> : null}
           {props.footer ? <text marginTop={1} fg={colors.faint}>{props.footer}</text> : null}
         </box>

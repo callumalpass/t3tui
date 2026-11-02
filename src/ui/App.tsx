@@ -3,15 +3,16 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { parseFileUrlHref, resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { pastedImagePath } from "../model/attachments.ts";
+import { isWebUrl, pathAt } from "../model/links.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type T3tuiConfig } from "../config.ts";
 import { saveLayout, type Layout } from "../layout.ts";
@@ -47,6 +48,7 @@ import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
 import { rendererClipboard, type Clipboard } from "./clipboard.ts";
+import { openInBrowser, screenTextAt } from "./links.ts";
 import { desktopNotify, ring } from "./terminalOut.ts";
 import { colors, statusColor } from "./theme.ts";
 import { BAR, NO_BORDER } from "./edges.ts";
@@ -583,6 +585,18 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     showPane({ kind: "local", id: `edit:${file}`, title: `Editing ${path}`, command: editorCommand(file), cwd: cwd ?? undefined, onExit: () => {} });
   };
 
+  /** A click on a link opens it in the browser; on a path to a workspace file, in the editor pane. A drag doesn't. */
+  const openAt = (x: number, y: number) => {
+    if (renderer.getSelection()?.getSelectedText()) return;
+    const url = renderer.getLinkAt(x, y);
+    if (url && isWebUrl(url)) return openInBrowser(url, (reason) => say(`Could not open the browser (${reason}): ${url}`, true));
+    const shown = url ? null : screenTextAt(renderer, x, y);
+    const raw = url ? (url.startsWith("file:") ? decodeURIComponent(parseFileUrlHref(url)?.path ?? "") : url) : shown && pathAt(shown.text, shown.index);
+    if (!raw || !attachCwd) return;
+    const { path } = splitFilePathPosition(resolvePathLinkTarget(raw, attachCwd));
+    if (existsSync(path) && statSync(path).isFile()) editFile(path, attachCwd);
+  };
+
   const settingsRows = settingRows(config);
   const cycleSetting = (index: number) => {
     const row = settingsRows[index];
@@ -1025,6 +1039,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     loadEarlier: useEvent(() => loadEarlier()),
     menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
     openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
+    click: useEvent((x: number, y: number) => openAt(x, y)),
   };
   const copy = (label: string, text: string) => {
     void clipboard.copy(text);
