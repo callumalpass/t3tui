@@ -18,7 +18,7 @@ import { pullRequestRepository } from "../model/pullRequests.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { resetCreditOutcome, usageLimits, usageSummaryLines } from "../model/usage.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
-import type { Section } from "../model/threads.ts";
+import { statusLabel, type Section } from "../model/threads.ts";
 import { ComposerMenu } from "./ComposerMenu.tsx";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
@@ -40,7 +40,7 @@ import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
-import { colors } from "./theme.ts";
+import { colors, statusColor } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { useTurns } from "./useTurns.ts";
 import { ThreadView, type ConversationMouse, type ConversationTarget } from "./ThreadView.tsx";
@@ -961,6 +961,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   };
 
   const status = connectionLabel(shell, now);
+  // The header names the open thread (a draft opens none), with the list's status word for it.
+  const headerStatus = !draft && threadRow ? statusLabel(threadRow, now) : null;
+  const headerProject = threadRow?.projectName ? truncate(threadRow.projectName, 24) : "";
+  const headerRoom = width - 18 - (headerProject ? headerProject.length + 3 : 0) - (headerStatus ? headerStatus.text.length + 2 : 0) - (shell.status.type !== "live" ? status.length + 2 : 0) - (usageInfo.note ? usageInfo.note.length + 2 : 0);
+  const headerTitle = truncate(title, Math.max(8, headerRoom));
   const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
   const detailsColumn = panel.show && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
   const detailsInPlace = panel.show && !detailsColumn;
@@ -1027,14 +1032,22 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           }
         : {})}
     >
-      <box flexDirection="row" paddingLeft={1} paddingRight={1} height={1} flexShrink={0}>
-        <text fg={colors.accent}>
-          <strong>tui3</strong>
-        </text>
-        <text fg={shell.status.type === "live" ? colors.faint : colors.warn} wrapMode="none" onMouseDown={() => session.retryNow()}>{`  ${status}`}</text>
+      <box flexDirection="row" paddingLeft={1} paddingRight={1} height={1} flexShrink={0} backgroundColor={colors.bg} overflow="hidden">
+        {!draft && threadId ? (
+          <>
+            {headerProject ? <text fg={colors.faint} wrapMode="none" flexShrink={0}>{`${headerProject} / `}</text> : null}
+            <text fg={colors.text} wrapMode="none">
+              <strong>{headerTitle}</strong>
+            </text>
+            {headerStatus ? <text fg={statusColor(headerStatus.tone)} wrapMode="none" flexShrink={0}>{`  ${headerStatus.text}`}</text> : null}
+          </>
+        ) : (
+          <text fg={colors.faint}>tui3</text>
+        )}
+        {shell.status.type !== "live" ? <text fg={colors.warn} wrapMode="none" onMouseDown={() => session.retryNow()}>{`  ${status}`}</text> : null}
         {usageInfo.note ? <text fg={colors.warn} wrapMode="none">{`  ${usageInfo.note}`}</text> : null}
         <box flexGrow={1} />
-        <Button label="commands" shortcut="ctrl+k" onPress={openPalette} />
+        <Button label="ctrl+k" shortcut="commands" plain onPress={openPalette} />
       </box>
       <box flexDirection="row" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         {attached ? null : (
@@ -1203,7 +1216,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         {detailsColumn ? detailsPanel(false) : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
-        {flash ? <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text> : <HintBar hints={hintsFor(keymap.hints)} />}
+        {flash ? <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text> : <HintBar hints={hintsFor(keymap.hints)} width={width - 2} />}
       </box>
       {mode === "palette" ? (
         <Palette

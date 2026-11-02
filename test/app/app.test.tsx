@@ -278,7 +278,7 @@ describe("command output", () => {
 describe("mouse", () => {
   test("the header button opens the palette", async () => {
     const app = await open();
-    const button = app.find("commands ctrl+k");
+    const button = app.find("ctrl+k commands");
     await app.click(button.x + 1, button.y);
     expect(app.hints()).toBe("↑/↓ move · enter run · esc close");
   });
@@ -309,23 +309,24 @@ describe("mouse", () => {
 
   test("dragging the divider resizes the list; right-click resets it", async () => {
     const app = await open();
-    const before = app.find("│").x;
+    // The divider is an invisible-at-rest accent bar (┃ in the background colour).
+    const before = app.find("┃").x;
     await app.mockMouse.drag(before, 10, before + 10, 10);
     await app.settle();
-    expect(app.find("│").x).toBe(before + 10);
+    expect(app.find("┃").x).toBe(before + 10);
     await app.click(before + 10, 10, 2);
-    expect(app.find("│").x).toBe(before);
+    expect(app.find("┃").x).toBe(before);
   });
 
   test("the list keeps its dragged width for the next run", async () => {
     const first = await open();
-    const before = first.find("│").x;
+    const before = first.find("┃").x;
     await first.mockMouse.drag(before, 10, before + 7, 10);
     await first.settle(100);
     first.destroy();
     const layout = await loadLayout();
     expect(layout.listWidth).toBe(before + 7);
     const next = await open({ layout });
-    expect(next.find("│").x).toBe(before + 7);
+    expect(next.find("┃").x).toBe(before + 7);
   });
 });
