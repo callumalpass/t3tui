@@ -2,7 +2,7 @@ import type { DiscoveredLocalServer, OrchestrationProjectShell, OrchestrationV2S
 import { useEffect, useMemo, useState } from "react";
 
 import type { FeedState, T3Session, VcsState } from "../client/session.ts";
-import type { Tui3Config } from "../config.ts";
+import type { T3tuiConfig } from "../config.ts";
 import { detailsActions, detailsCwd, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
 import { keys, type Binding } from "../model/keymap.ts";
 import type { Automations } from "./useAutomations.ts";
@@ -27,7 +27,7 @@ export function useDetails(deps: {
   readonly snapshot: OrchestrationV2ShellSnapshot | null;
   readonly subagents: readonly OrchestrationV2Subagent[];
   readonly now: number;
-  readonly config: Tui3Config;
+  readonly config: T3tuiConfig;
   readonly diff: DiffState | null;
   readonly setDiff: (update: DiffState | null | ((value: DiffState | null) => DiffState | null)) => void;
   readonly automations: Automations;

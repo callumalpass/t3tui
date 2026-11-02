@@ -1,16 +1,16 @@
 import type { ServerConfig } from "@t3tools/contracts";
 
-import { CONFIG_CHOICES, type Tui3Config } from "../config.ts";
+import { CONFIG_CHOICES, type T3tuiConfig } from "../config.ts";
 import { RUNTIME_MODE_LABELS } from "./details.ts";
 
 export interface SettingRow {
-  readonly key: keyof Tui3Config;
+  readonly key: keyof T3tuiConfig;
   readonly label: string;
   readonly value: string;
   readonly help: string;
 }
 
-const LABELS: { readonly [K in keyof Tui3Config]: { readonly label: string; readonly help: string; readonly values?: Partial<Record<string, string>> } } = {
+const LABELS: { readonly [K in keyof T3tuiConfig]: { readonly label: string; readonly help: string; readonly values?: Partial<Record<string, string>> } } = {
   followUpBehavior: { label: "While the agent runs, enter", help: "alt+enter does the other", values: { steer: "steers", queue: "queues" } },
   sendShortcut: { label: "Send with", help: "ctrl+enter needs kitty keyboard support; alt+enter also sends", values: { enter: "enter", "ctrl-enter": "ctrl+enter (enter adds a line)" } },
   timestampFormat: { label: "Times", help: "automation schedules", values: { locale: "system locale", "12-hour": "12-hour", "24-hour": "24-hour" } },
@@ -24,9 +24,9 @@ const LABELS: { readonly [K in keyof Tui3Config]: { readonly label: string; read
   theme: { label: "Colours", help: "from the next start", values: { auto: "match the terminal", dark: "dark", light: "light" } },
 };
 
-/** tui3's own settings, in display order, each cycled with enter. */
-export function settingRows(config: Tui3Config): SettingRow[] {
-  return (Object.keys(CONFIG_CHOICES) as (keyof Tui3Config)[]).map((key) => {
+/** t3tui's own settings, in display order, each cycled with enter. */
+export function settingRows(config: T3tuiConfig): SettingRow[] {
+  return (Object.keys(CONFIG_CHOICES) as (keyof T3tuiConfig)[]).map((key) => {
     const meta = LABELS[key];
     const raw = String(config[key]);
     return { key, label: meta.label, value: meta.values?.[raw] ?? raw, help: meta.help };

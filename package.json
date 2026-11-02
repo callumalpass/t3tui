@@ -1,11 +1,11 @@
 {
-  "name": "tui3",
+  "name": "t3tui",
   "version": "0.0.1",
   "private": true,
   "license": "MIT",
   "type": "module",
   "bin": {
-    "tui3": "./dist/bin.js"
+    "t3tui": "./dist/bin.js"
   },
   "scripts": {
     "dev": "bun run src/bin.ts",

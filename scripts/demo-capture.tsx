@@ -50,7 +50,7 @@ const snapshot = {
   schemaVersion: 1,
   snapshotSequence: 0,
   projects: [
-    project("project-tui3", "tui3", "/home/dev/projects/tui3"),
+    project("project-t3tui", "t3tui", "/home/dev/projects/t3tui"),
     project("project-acme", "acme-api", "/home/dev/projects/acme-api"),
     project("project-dotfiles", "dotfiles", "/home/dev/dotfiles"),
   ],
@@ -58,7 +58,7 @@ const snapshot = {
     // The open thread: pinned, running, and waiting on a command approval.
     thread({
       id: OPEN_THREAD,
-      projectId: "project-tui3",
+      projectId: "project-t3tui",
       title: "Bundle into dist/",
       runtimeMode: "approval-required",
       status: "running",
@@ -95,7 +95,7 @@ const snapshot = {
     // Waiting for an answer.
     thread({
       id: "thread-resize",
-      projectId: "project-tui3",
+      projectId: "project-t3tui",
       title: "Resize the thread list",
       status: "running",
       latestRunId: "run-resize",
@@ -136,7 +136,7 @@ const snapshot = {
     // Idle and read.
     thread({
       id: "thread-tmux",
-      projectId: "project-tui3",
+      projectId: "project-t3tui",
       title: "Add tmux mirror",
       latestRunRequestedAt: ago(3 * HOUR + 10 * MIN),
       latestRunStartedAt: ago(3 * HOUR + 10 * MIN),
@@ -263,7 +263,7 @@ const projection = {
   thread: {
     ...v2Projection.thread,
     id: OPEN_THREAD,
-    projectId: "project-tui3",
+    projectId: "project-t3tui",
     title: "Bundle into dist/",
     runtimeMode: "approval-required",
     createdAt: ago(2 * DAY),
@@ -340,7 +340,7 @@ function standalonePage(fragment: string, pageBg: string): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>tui3 — demo screen</title>
+<title>t3tui — demo screen</title>
 <style>
   body { margin: 0; padding: 24px; background: ${pageBg}; }
   .tui { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.3; margin: 0; padding: 12px 14px; border-radius: 8px; overflow-x: auto; }

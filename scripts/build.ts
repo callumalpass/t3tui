@@ -1,4 +1,4 @@
-// Bundles tui3 into dist/. Running the TypeScript sources makes Bun compile and keep
+// Bundles t3tui into dist/. Running the TypeScript sources makes Bun compile and keep
 // hundreds of vendored modules at startup, which costs over 100 MB of memory.
 import { rm } from "node:fs/promises";
 import { join } from "node:path";

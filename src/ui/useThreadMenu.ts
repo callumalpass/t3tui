@@ -3,7 +3,7 @@ import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { ContextMenuItem, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadShell, ServerConfig, ThreadId } from "@t3tools/contracts";
 
 import type { T3Session } from "../client/session.ts";
-import type { Tui3Config } from "../config.ts";
+import type { T3tuiConfig } from "../config.ts";
 import type { Binding } from "../model/keymap.ts";
 import type { Picker, PickerItem } from "../model/palette.ts";
 import { parseSnooze, pickSnooze, threadHasRuntime, threadMenu, topPinOrderKey, type ThreadActionMenuId } from "../model/threadMenu.ts";
@@ -18,7 +18,7 @@ export function useThreadMenu(deps: {
   readonly renderer: CliRenderer;
   readonly snapshot: OrchestrationV2ShellSnapshot | null;
   readonly config: ServerConfig | null;
-  readonly timestampFormat: Tui3Config["timestampFormat"];
+  readonly timestampFormat: T3tuiConfig["timestampFormat"];
   /** The open thread: the menu's key and palette command act on it. */
   readonly thread: OrchestrationV2ThreadShell | undefined;
   readonly openPicker: (picker: Picker) => void;

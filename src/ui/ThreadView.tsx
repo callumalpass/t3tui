@@ -10,7 +10,7 @@ import { FindText } from "./FindText.tsx";
 import { isLeftClick, isRightClick, useHover } from "./Button.tsx";
 import { checkpointFileTotals, type ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import type { Tui3Config } from "../config.ts";
+import type { T3tuiConfig } from "../config.ts";
 
 import { CommandOutput } from "./CommandOutput.tsx";
 import { BAR } from "./edges.ts";
@@ -52,7 +52,7 @@ export function ThreadView(props: {
   readonly loading: boolean;
   readonly error?: string | undefined;
   readonly workspaceRoot: string | undefined;
-  readonly timestampFormat: Tui3Config["timestampFormat"];
+  readonly timestampFormat: T3tuiConfig["timestampFormat"];
   readonly now: number;
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
   /** For a subagent or fork: the thread it came from, shown as a link in the header. */
@@ -104,7 +104,7 @@ export function ThreadView(props: {
  * landed, day-aware as the web's is. Parts a row doesn't carry are left out;
  * only a finished turn's last reply (or its detached meta row) gets one.
  */
-function assistantFooter(row: MessagesTimelineRow, timeline: Timeline, timestampFormat: Tui3Config["timestampFormat"], now: number): string {
+function assistantFooter(row: MessagesTimelineRow, timeline: Timeline, timestampFormat: T3tuiConfig["timestampFormat"], now: number): string {
   const message = row.kind === "assistant-meta" ? row.message : row.kind === "message" && row.showAssistantMeta ? row.message : null;
   if (message?.role !== "assistant" || message.streaming) return "";
   const meta = message.runId ? timeline.runMeta.get(message.runId) : undefined;
@@ -120,7 +120,7 @@ function assistantFooter(row: MessagesTimelineRow, timeline: Timeline, timestamp
 }
 
 /** The web's day-aware timestamp: a time today, "yesterday at …", then a short date. */
-function dayAwareTime(iso: string, format: Tui3Config["timestampFormat"], now: number): string {
+function dayAwareTime(iso: string, format: T3tuiConfig["timestampFormat"], now: number): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", ...(format === "locale" ? {} : { hour12: format === "12-hour" }) });

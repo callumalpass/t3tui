@@ -13,7 +13,7 @@ import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models
 import { homedir } from "node:os";
 
 import type { VcsState } from "../client/session.ts";
-import { formatClock, type Tui3Config } from "../config.ts";
+import { formatClock, type T3tuiConfig } from "../config.ts";
 import { buildMenuItems, resolveQuickAction } from "../../vendor/t3code/apps/web/src/components/GitActionsControl.logic.ts";
 import type { StatusTone } from "./threads.ts";
 
@@ -93,7 +93,7 @@ export interface DetailsInput {
   readonly automations?: readonly ScheduledTask[];
   readonly now?: number;
   /** How automation times read; the system's locale by default. */
-  readonly timestampFormat?: Tui3Config["timestampFormat"];
+  readonly timestampFormat?: T3tuiConfig["timestampFormat"];
 }
 
 export interface PullRequestLine {
@@ -223,7 +223,7 @@ function gitActions(status: VcsStatusResult): NonNullable<ThreadDetails["git"]> 
   return { quick, hint: quick ? null : quickAction.hint ?? quickAction.label, menu };
 }
 
-function automationLine(task: ScheduledTask, now: number, timestampFormat: Tui3Config["timestampFormat"]): AutomationLine {
+function automationLine(task: ScheduledTask, now: number, timestampFormat: T3tuiConfig["timestampFormat"]): AutomationLine {
   const schedule =
     task.schedule.type === "interval"
       ? `every ${formatWorkingDurationLabel(task.schedule.everyMs)}`

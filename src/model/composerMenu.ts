@@ -32,7 +32,7 @@ export interface ComposerItem {
 const THREAD_LIMIT = 5;
 export const PATH_SEARCH_LIMIT = 80;
 
-/** The trigger the cursor sits in, or null. `/model` is a command here, as tui3 has no model-name search. */
+/** The trigger the cursor sits in, or null. `/model` is a command here, as t3tui has no model-name search. */
 export function composerTrigger(text: string, cursor: number): ComposerTrigger | null {
   const trigger = detectComposerTrigger(text, cursor);
   if (trigger?.kind === "slash-model") return { ...trigger, kind: "slash-command", query: "model" };

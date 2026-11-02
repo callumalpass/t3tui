@@ -3,13 +3,13 @@ import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 import { needsAttention, threadRows, type ThreadRow } from "../model/threads.ts";
 
 /** Window option that ties a tmux window to the thread it attaches to. */
-const THREAD_OPTION = "@tui3_thread";
+const THREAD_OPTION = "@t3tui_thread";
 const TITLE_WIDTH = 24;
 
 export interface TmuxSyncOptions {
   readonly session: string;
-  /** Command that starts tui3, e.g. [bun, /path/to/bin.ts]. */
-  readonly tui3: readonly string[];
+  /** Command that starts t3tui, e.g. [bun, /path/to/bin.ts]. */
+  readonly t3tui: readonly string[];
 }
 
 async function tmux(args: readonly string[], allowFailure = false): Promise<string> {
@@ -35,7 +35,7 @@ export function windowName(row: ThreadRow): string {
 export async function syncTmux(snapshot: OrchestrationV2ShellSnapshot, options: TmuxSyncOptions): Promise<{ readonly opened: number }> {
   const { session } = options;
   if (!(await sessionExists(session))) {
-    await tmux(["new-session", "-d", "-s", session, "-n", "dashboard", shellJoin(options.tui3)]);
+    await tmux(["new-session", "-d", "-s", session, "-n", "dashboard", shellJoin(options.t3tui)]);
   }
   const windows = new Map<string, string>();
   for (const line of (await tmux(["list-windows", "-t", `=${session}`, "-F", `#{window_id}\t#{${THREAD_OPTION}}`])).split("\n")) {
@@ -50,7 +50,7 @@ export async function syncTmux(snapshot: OrchestrationV2ShellSnapshot, options: 
   for (const row of rows) {
     if (windows.has(row.thread.id)) continue;
     const windowId = (
-      await tmux(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", `=${session}:`, "-n", windowName(row), shellJoin([...options.tui3, "attach", row.thread.id])])
+      await tmux(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", `=${session}:`, "-n", windowName(row), shellJoin([...options.t3tui, "attach", row.thread.id])])
     ).trim();
     await tmux(["set-option", "-w", "-t", windowId, THREAD_OPTION, row.thread.id]);
     windows.set(row.thread.id, windowId);

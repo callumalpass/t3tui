@@ -38,8 +38,8 @@ const socketUrlFor = async (target: ServerTarget) => {
     try {
       return { url: await resolveSocketUrl(target, existing, protocol), credential: existing };
     } catch (error) {
-      // A revoked or expired token falls through to a fresh one; TUI3_TOKEN never does.
-      if (!(error instanceof UnauthorizedError) || process.env.TUI3_TOKEN) throw error;
+      // A revoked or expired token falls through to a fresh one; T3TUI_TOKEN never does.
+      if (!(error instanceof UnauthorizedError) || process.env.T3TUI_TOKEN) throw error;
     }
   }
   const credential = await issueLocalCredential(target);

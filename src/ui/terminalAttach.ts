@@ -6,7 +6,7 @@ import type { T3Session } from "../client/session.ts";
 /** Ctrl+J (LF), Ctrl+] and Ctrl+J under the kitty keyboard protocol leave the terminal. */
 const DETACH_KEYS = new Set(["\n", "\x1d", "\x1b[106;5u"]);
 
-/** Modes a full-screen program may leave on; switched off before tui3 draws again. */
+/** Modes a full-screen program may leave on; switched off before t3tui draws again. */
 const RESET = "\x1b[0m\x1b[?25h\x1b[?1l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l";
 
 export interface TerminalTarget {
@@ -30,7 +30,7 @@ export function attachTerminal(renderer: CliRenderer, session: T3Session, target
 
   renderer.suspend();
   stdout.write("\x1b[?1049h\x1b[H\x1b[2J");
-  stdout.write(`\x1b]2;tui3 · ${target.label} · ctrl+j to return\x07`);
+  stdout.write(`\x1b]2;t3tui · ${target.label} · ctrl+j to return\x07`);
   stdin.setRawMode?.(true);
   stdin.resume();
 
@@ -82,7 +82,7 @@ export function attachTerminal(renderer: CliRenderer, session: T3Session, target
     stdin.off("data", onInput);
     stdout.off("resize", onResize);
     stdout.write(RESET);
-    stdout.write("\x1b]2;tui3\x07");
+    stdout.write("\x1b]2;t3tui\x07");
     renderer.resume();
     renderer.requestRender();
     onDone(message);

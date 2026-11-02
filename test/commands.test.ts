@@ -19,7 +19,7 @@ function capturingSession() {
 const isCommand = Schema.is(OrchestrationV2Command);
 const threadId = ThreadId.make("thread-1");
 
-describe("commands tui3 dispatches", () => {
+describe("commands t3tui dispatches", () => {
   test("messages dispatch like the web composer: auto, steer or queue", async () => {
     const { session, sent } = capturingSession();
     await session.sendMessage(threadId, "hello");

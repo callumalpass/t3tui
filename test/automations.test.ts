@@ -6,7 +6,7 @@ import { automationTemplate, newAutomationTemplate, parseAutomation } from "../s
 
 const projects = [
   { id: "p1", title: "tasknotes", workspaceRoot: "/repo/tasknotes" },
-  { id: "p2", title: "tui3", workspaceRoot: "/repo/tui3" },
+  { id: "p2", title: "t3tui", workspaceRoot: "/repo/t3tui" },
 ] as unknown as OrchestrationProjectShell[];
 
 const task = (extra: Record<string, unknown> = {}) =>

@@ -25,7 +25,7 @@ const LOCAL_ENVIRONMENT = "local" as EnvironmentId;
  * The web's ThreadNotificationCoordinator over the shell snapshot: attention (approval,
  * question, guest request, failure, usage limit) alerts once per run and status;
  * completion alerts after the Working shelf's grace, unless the run was stopped. Nothing
- * alerts for state that was already there when tui3 connected.
+ * alerts for state that was already there when t3tui connected.
  */
 export function createAlerts(onAlert: (alert: Alert) => void) {
   let previous = new Map<ThreadId, Observed>();

@@ -1,6 +1,6 @@
-# tui3 reference
+# t3tui reference
 
-Everything tui3 does, by area. Most of it is also in the command palette (`ctrl+k`), which lists every action and its key.
+Everything t3tui does, by area. Most of it is also in the command palette (`ctrl+k`), which lists every action and its key.
 
 - [Modes](#modes)
 - [Keys](#keys)
@@ -18,7 +18,7 @@ Everything tui3 does, by area. Most of it is also in the command palette (`ctrl+
 
 ## Modes
 
-The message box is always at the bottom. tui3 has two modes: **typing**, where keys go to the message box, and **navigation**, where single keys act. `esc` switches to navigation; `i`, `enter` or `tab` switch back. Drafts are kept per thread.
+The message box is always at the bottom. t3tui has two modes: **typing**, where keys go to the message box, and **navigation**, where single keys act. `esc` switches to navigation; `i`, `enter` or `tab` switch back. Drafts are kept per thread.
 
 ## Keys
 
@@ -105,8 +105,8 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Find in thread:** `f`, or `Find in thread` in the palette or thread menu, searches the whole conversation, counts matches, highlights them, and loads earlier history to reach the selected one. Matching Markdown shows as plain text while you search.
 - **Archived threads:** `A` or `Show archived threads` opens the archive. Open a thread as usual; `Unarchive thread` in the palette restores it, and `Show active threads` returns to the live list.
 - **Ordering:** `J` / `K` or `Move pinned thread down` / `up` in the palette reorder pinned threads. Active threads stay ordered by when they came back to you.
-- **Read state:** opening a thread marks it read after a moment. Set `TUI3_NO_VISIT=1` to turn that off.
-- **Bottom line:** server restarts, update results and migration events flash here, along with reconnect status. If the connection drops, tui3 reconnects and resubscribes on its own; press `r` to retry straight away.
+- **Read state:** opening a thread marks it read after a moment. Set `T3TUI_NO_VISIT=1` to turn that off.
+- **Bottom line:** server restarts, update results and migration events flash here, along with reconnect status. If the connection drops, t3tui reconnects and resubscribes on its own; press `r` to retry straight away.
 
 ## Mouse
 
@@ -149,7 +149,7 @@ Limits: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other 
 
 ## Terminals
 
-`ctrl+j` attaches to the thread's terminal on the T3 server, the same one the app's terminal drawer shows. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. tui3 hands the whole screen to the terminal; `ctrl+j` or `ctrl+]` comes back, and the terminal keeps running. Its size is shared, so attaching resizes it for anyone else watching.
+`ctrl+j` attaches to the thread's terminal on the T3 server, the same one the app's terminal drawer shows. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. t3tui hands the whole screen to the terminal; `ctrl+j` or `ctrl+]` comes back, and the terminal keeps running. Its size is shared, so attaching resizes it for anyone else watching.
 
 `T` opens the terminal picker even with only one terminal. Choose `New terminal`, `Close terminal…` or `Clear terminal…`; typing `close` or `clear` finds each terminal's action directly. Closing ends the shell and deletes its history; clearing clears its scrollback. These are in the command palette too.
 
@@ -159,11 +159,11 @@ Limits: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other 
 
 While a worktree is being prepared, its stage, progress and any failure show above the message box. `Cancel worktree setup…` in the palette asks first.
 
-`E` opens the workspace in an editor on the server. In a single-file diff it opens that file; in a whole-tree diff it asks which file. It picks from the server's available editors in the app's fallback order (tui3 can't see which editor your browser last used), and it can't jump to a line.
+`E` opens the workspace in an editor on the server. In a single-file diff it opens that file; in a whole-tree diff it asks which file. It picks from the server's available editors in the app's fallback order (t3tui can't see which editor your browser last used), and it can't jump to a line.
 
 ## Alerts
 
-tui3 alerts when a thread you aren't watching finishes or needs you (approval, input, a request, a failure or a usage limit), on the same rules as T3 Code. Subagents don't alert. Depending on `notificationMode`:
+t3tui alerts when a thread you aren't watching finishes or needs you (approval, input, a request, a failure or a usage limit), on the same rules as T3 Code. Subagents don't alert. Depending on `notificationMode`:
 
 - **Bell:** the terminal bell.
 - **Desktop notifications:** sent through the terminal (OSC 9, or OSC 99 in kitty), only when the terminal window isn't focused. Under tmux they need `set -g allow-passthrough on`.
@@ -172,7 +172,7 @@ While the terminal is focused, alerts for other threads also show on the bottom 
 
 ## Settings
 
-Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a click changes one, and changes save to `~/.config/tui3/config.json`:
+Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a click changes one, and changes save to `~/.config/t3tui/config.json`:
 
 | Setting | Choices | Default |
 | --- | --- | --- |
@@ -184,6 +184,6 @@ Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a clic
 | `inAppNotificationsEnabled` | `true`, `false` | `true` |
 | `theme` | `auto` (match the terminal), `dark`, `light`; applies from the next start | `auto` |
 
-They have the same names as the app's settings. The app keeps its settings in the browser, so tui3 keeps its own, and turns the two alert settings on by default where the app leaves them off.
+They have the same names as the app's settings. The app keeps its settings in the browser, so t3tui keeps its own, and turns the two alert settings on by default where the app leaves them off.
 
 The same view shows the server settings that matter here (model and mode for new threads, auto-settle, rate-limited threads), read-only; change those in the app. Below them is usage: each provider's limit windows as room left, its banked reset credits, and the last 30 days' cost and tokens. When a window is 90% used or more, the top line says so. `Use reset credit: …` in the palette spends a banked credit, after asking.

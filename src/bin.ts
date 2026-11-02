@@ -1,31 +1,33 @@
 #!/usr/bin/env bun
 import type { OrchestrationV2ShellSnapshot, ThreadId } from "@t3tools/contracts";
 
+import { migrateConfigDir } from "./client/auth.ts";
 import { T3Session } from "./client/session.ts";
 import { findThread, lastActivity, relativeTime, rowTime, shortId, statusLabel, threadRows } from "./model/threads.ts";
 
-const USAGE = `tui3: a terminal client for T3 Code
+const USAGE = `t3tui: a terminal client for T3 Code
 
 usage:
-  tui3                      dashboard: every thread, live
-  tui3 attach <thread>      one thread, full screen (id, short id from \`list\`, or title text)
-  tui3 list [--json]        print threads and exit
-  tui3 tmux [--watch] [--session <name>]
-                            mirror active threads into tmux windows (default session: tui3)
-  tui3 help
+  t3tui                     dashboard: every thread, live
+  t3tui attach <thread>     one thread, full screen (id, short id from \`list\`, or title text)
+  t3tui list [--json]       print threads and exit
+  t3tui tmux [--watch] [--session <name>]
+                            mirror active threads into tmux windows (default session: t3tui)
+  t3tui help
 
 env:
-  TUI3_SERVER   server origin (default: the local server from ~/.t3)
-  TUI3_TOKEN    bearer token for a remote server (local servers mint one via \`t3\`)`;
+  T3TUI_SERVER  server origin (default: the local server from ~/.t3)
+  T3TUI_TOKEN   bearer token for a remote server (local servers mint one via \`t3\`)`;
 
 async function main(argv: string[]) {
+  migrateConfigDir();
   const [command, ...rest] = argv;
   switch (command) {
     case undefined:
       return runUi();
     case "attach": {
       const needle = rest.join(" ").trim();
-      if (!needle) return fail("usage: tui3 attach <thread>");
+      if (!needle) return fail("usage: t3tui attach <thread>");
       return runUi(needle);
     }
     case "list":
@@ -79,9 +81,9 @@ async function list(json: boolean) {
 async function tmuxCommand(args: string[]) {
   const { syncTmux } = await import("./mux/tmux.ts");
   const sessionFlag = args.indexOf("--session");
-  const name = sessionFlag >= 0 ? args[sessionFlag + 1] : "tui3";
-  if (!name) return fail("usage: tui3 tmux [--watch] [--session <name>]");
-  const options = { session: name, tui3: [process.execPath, import.meta.path] };
+  const name = sessionFlag >= 0 ? args[sessionFlag + 1] : "t3tui";
+  if (!name) return fail("usage: t3tui tmux [--watch] [--session <name>]");
+  const options = { session: name, t3tui: [process.execPath, import.meta.path] };
   const { session, snapshot } = await connectedSession();
   const { opened } = await syncTmux(snapshot, options);
   console.log(`tmux session "${name}" is in sync (${opened} new window${opened === 1 ? "" : "s"}). Attach with: tmux attach -t ${name}`);
@@ -146,11 +148,11 @@ async function runUi(attachNeedle?: string) {
   // The kitty keyboard protocol lets terminals that support it send shift+enter, for newlines.
   const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, useKittyKeyboard: {} });
   // OpenTUI answers SIGHUP and SIGTERM by tearing the screen down without exiting, and the
-  // session's socket would keep a closed terminal's tui3 running for good.
+  // session's socket would keep a closed terminal's t3tui running for good.
   renderer.once("destroy", () => {
     void Promise.race([session.stop(), Bun.sleep(1000)]).finally(() => process.exit(0));
   });
-  // Bun collects so lazily that a streaming thread takes tui3 past 500 MB of garbage. A full
+  // Bun collects so lazily that a streaming thread takes t3tui past 500 MB of garbage. A full
   // collection pauses for up to ~150 ms, so it waits for a few seconds without keys or clicks.
   let lastInput = Date.now();
   process.stdin.on("data", () => {

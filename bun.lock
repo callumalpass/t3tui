@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "tui3",
+      "name": "t3tui",
       "dependencies": {
         "@opentui/core": "0.2.7",
         "@opentui/react": "0.2.7",

@@ -10,7 +10,7 @@ import { join } from "node:path";
  */
 export function editInEditor(renderer: CliRenderer, text: string): string | null {
   const editor = process.env.VISUAL || process.env.EDITOR || "vi";
-  const dir = mkdtempSync(join(tmpdir(), "tui3-"));
+  const dir = mkdtempSync(join(tmpdir(), "t3tui-"));
   const file = join(dir, "prompt.md");
   writeFileSync(file, text);
   renderer.suspend();

@@ -2,7 +2,7 @@ import type { SettingRow } from "../model/settings.ts";
 import { ClickRow } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
-/** Settings in place of the conversation: tui3's own (cycled with enter or a click), then the server's, read-only. */
+/** Settings in place of the conversation: t3tui's own (cycled with enter or a click), then the server's, read-only. */
 export function SettingsView(props: {
   readonly rows: readonly SettingRow[];
   readonly server: readonly { label: string; value: string }[];
@@ -25,7 +25,7 @@ export function SettingsView(props: {
         <text fg={colors.faint}>esc close</text>
       </box>
       <text fg={colors.text} marginTop={1}>
-        <strong>{`tui3 · ${props.path}`}</strong>
+        <strong>{`t3tui · ${props.path}`}</strong>
       </text>
       {props.rows.map((row, index) => {
         const selected = index === props.selected;

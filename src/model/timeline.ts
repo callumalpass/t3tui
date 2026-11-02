@@ -9,7 +9,7 @@ import {
 import { derivePendingThreadRequests, type PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 
-// The web app's own timeline derivation: tui3 shows the same rows, folds and labels.
+// The web app's own timeline derivation: t3tui shows the same rows, folds and labels.
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,

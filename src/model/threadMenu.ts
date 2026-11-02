@@ -3,7 +3,7 @@ import { presentThreadShell, threadRuntimeCanArchive } from "@t3tools/client-run
 import { canSnooze, effectiveSnoozed, pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 
-import type { Tui3Config } from "../config.ts";
+import type { T3tuiConfig } from "../config.ts";
 import { buildThreadActionMenuItems, type ThreadActionMenuId } from "../../vendor/t3code/apps/web/src/components/threadActionMenu.logic.ts";
 
 export type { ThreadActionMenuId };
@@ -18,8 +18,8 @@ export interface ThreadMenu {
   readonly snoozePresets: readonly SnoozePreset[];
 }
 
-/** The web sidebar's thread menu (right-click), from the same builder, less what tui3 can't do. */
-export function threadMenu(input: { readonly thread: OrchestrationV2ThreadShell; readonly config: ServerConfig | null; readonly timestampFormat: Tui3Config["timestampFormat"]; readonly now?: Date }): ThreadMenu {
+/** The web sidebar's thread menu (right-click), from the same builder, less what t3tui can't do. */
+export function threadMenu(input: { readonly thread: OrchestrationV2ThreadShell; readonly config: ServerConfig | null; readonly timestampFormat: T3tuiConfig["timestampFormat"]; readonly now?: Date }): ThreadMenu {
   const { config } = input;
   // The presented shell carries what the menu reads: pending requests, the runtime.
   const thread = presentThreadShell(config?.environment.environmentId ?? LOCAL, input.thread);
@@ -44,18 +44,18 @@ export function threadMenu(input: { readonly thread: OrchestrationV2ThreadShell;
   return { items: items.filter((item) => !UNSUPPORTED.has(item.id)), snoozePresets };
 }
 
-function snoozeMenu(config: ServerConfig | null, timestampFormat: Tui3Config["timestampFormat"], now: Date): readonly SnoozePreset[] {
+function snoozeMenu(config: ServerConfig | null, timestampFormat: T3tuiConfig["timestampFormat"], now: Date): readonly SnoozePreset[] {
   const presets = config?.settings.snoozePresets;
   return resolveSnoozePresets(now, { ...(presets ? { presets } : {}), formatTime: (date) => formatTime(date, timestampFormat) });
 }
 
 /** A shown snooze choice, re-resolved now as the web does; undefined once its time has passed. */
-export function pickSnooze(shown: readonly SnoozePreset[], id: string, config: ServerConfig | null, timestampFormat: Tui3Config["timestampFormat"]): SnoozePreset | undefined {
+export function pickSnooze(shown: readonly SnoozePreset[], id: string, config: ServerConfig | null, timestampFormat: T3tuiConfig["timestampFormat"]): SnoozePreset | undefined {
   const presets = config?.settings.snoozePresets;
   return pickSnoozePreset({ shown, id, now: new Date(), ...(presets ? { presets } : {}), formatTime: (date) => formatTime(date, timestampFormat) });
 }
 
-function formatTime(date: Date, format: Tui3Config["timestampFormat"]): string {
+function formatTime(date: Date, format: T3tuiConfig["timestampFormat"]): string {
   return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", ...(format === "locale" ? {} : { hour12: format === "12-hour" }) });
 }
 

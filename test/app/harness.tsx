@@ -6,7 +6,7 @@ import { createMockKeys, type KeyInput } from "@opentui/core/testing";
 import type { OrchestrationV2ShellSnapshot, OrchestrationV2ThreadProjection, ThreadId } from "@t3tools/contracts";
 
 import type { ConnectionStatus, T3Session } from "../../src/client/session.ts";
-import { DEFAULT_CONFIG, type Tui3Config } from "../../src/config.ts";
+import { DEFAULT_CONFIG, type T3tuiConfig } from "../../src/config.ts";
 import type { Layout } from "../../src/layout.ts";
 import { App } from "../../src/ui/App.tsx";
 import { v2Projection, v2ShellSnapshot, v2ThreadId } from "../../vendor/t3code/packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
@@ -14,7 +14,7 @@ import { v2Projection, v2ShellSnapshot, v2ThreadId } from "../../vendor/t3code/p
 export { v2Projection, v2ShellSnapshot, v2ThreadId };
 
 // Settings and layout saves go to a scratch folder, never the real config.
-process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "tui3-test-"));
+process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "t3tui-test-"));
 
 // Updates from the app's own timers land outside act(); the warnings say nothing useful here.
 const consoleError = console.error;
@@ -76,7 +76,7 @@ export function fakeSession(
 }
 
 /** Renders the whole app against a fake session, with helpers to drive it by key and mouse. */
-export async function renderApp(options: { readonly session?: ReturnType<typeof fakeSession>; readonly config?: Partial<Tui3Config>; readonly layout?: Layout; readonly width?: number; readonly height?: number } = {}) {
+export async function renderApp(options: { readonly session?: ReturnType<typeof fakeSession>; readonly config?: Partial<T3tuiConfig>; readonly layout?: Layout; readonly width?: number; readonly height?: number } = {}) {
   const fake = options.session ?? fakeSession();
   const config = { ...DEFAULT_CONFIG, ...options.config };
   const rig = await testRender(<App session={fake.session} config={config} {...(options.layout ? { layout: options.layout } : {})} />, { width: options.width ?? 140, height: options.height ?? 40 });

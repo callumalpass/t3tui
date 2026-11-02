@@ -159,8 +159,8 @@ const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 5_000, 10_000];
 
 const NO_HISTORY: ThreadHistory = { cursor: null, hasMore: false, loading: false };
 
-const debugPath = process.env.TUI3_DEBUG;
-/** Appends to the file named by TUI3_DEBUG; the TUI owns stdout and stderr. */
+const debugPath = process.env.T3TUI_DEBUG;
+/** Appends to the file named by T3TUI_DEBUG; the TUI owns stdout and stderr. */
 export function debugLog(message: string): void {
   if (debugPath) appendFileSync(debugPath, `${new Date().toISOString()} ${message}\n`);
 }
@@ -560,9 +560,9 @@ export class T3Session {
     return this.dispatch({ type: "thread.user-input.dismiss", commandId: newCommandId(), threadId, requestId });
   }
 
-  /** Moves the thread's read watermark, as opening it in the web app does. TUI3_NO_VISIT=1 peeks without it. */
+  /** Moves the thread's read watermark, as opening it in the web app does. T3TUI_NO_VISIT=1 peeks without it. */
   visit(threadId: ThreadId): Promise<void> {
-    if (process.env.TUI3_NO_VISIT === "1") return Promise.resolve();
+    if (process.env.T3TUI_NO_VISIT === "1") return Promise.resolve();
     return this.dispatch({ type: "thread.visit", commandId: newCommandId(), threadId, visitedAt: new Date().toISOString(), opened: true });
   }
 

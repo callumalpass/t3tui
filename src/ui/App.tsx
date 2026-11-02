@@ -10,7 +10,7 @@ import type { ChatAttachment, OrchestrationMessageContext, OrchestrationV2Subage
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { modelSummary } from "../model/models.ts";
-import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
+import { configPath, cycleConfig, saveConfig, type T3tuiConfig } from "../config.ts";
 import { saveLayout, type Layout } from "../layout.ts";
 import { RUNTIME_MODE_LABELS } from "../model/details.ts";
 import { paletteEntries, paletteGroups, pickerGroups, type Picker, type PickerItem } from "../model/palette.ts";
@@ -98,7 +98,7 @@ const COMPOSER_KEYS = {
 /** The composer's key while a new thread is being drafted. */
 const DRAFT_KEY = "draft";
 
-export function App(props: { readonly session: T3Session; readonly config: Tui3Config; readonly layout?: Layout; readonly attachThreadId?: ThreadId }) {
+export function App(props: { readonly session: T3Session; readonly config: T3tuiConfig; readonly layout?: Layout; readonly attachThreadId?: ThreadId }) {
   const { session, attachThreadId } = props;
   const attached = attachThreadId !== undefined;
   const renderer = useRenderer();
@@ -765,7 +765,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     detailsKey,
     parent && { keys: ["u"], run: () => openThread(parent.threadId), hint: "parent", command: { id: "parent", title: `Go to parent: ${parent.title}` } },
     hinted(paletteKey, "commands"),
-    { keys: ["q"], run: quit, hint: "quit", command: { id: "quit", title: "Quit tui3", keywords: ["exit"] } },
+    { keys: ["q"], run: quit, hint: "quit", command: { id: "quit", title: "Quit t3tui", keywords: ["exit"] } },
     panel.keys.toggle,
     { keys: ["e"], run: () => setExpandAll((value) => !value), command: { id: "expand", title: expandAll ? "Collapse work" : "Expand all work", keywords: ["fold", "tool calls"] } },
     thread?.history.hasMore && { keys: ["o"], run: loadEarlier, command: { id: "earlier", title: "Load earlier turns", keywords: ["history", "older"] } },
@@ -1055,7 +1055,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             {headerStatus ? <text fg={statusColor(headerStatus.tone)} wrapMode="none" flexShrink={0}>{`  ${headerStatus.text}`}</text> : null}
           </>
         ) : (
-          <text fg={colors.faint}>tui3</text>
+          <text fg={colors.faint}>t3tui</text>
         )}
         {shell.status.type !== "live" ? <text fg={colors.warn} wrapMode="none" onMouseDown={() => session.retryNow()}>{`  ${status}`}</text> : null}
         {usageInfo.note ? <text fg={colors.warn} wrapMode="none">{`  ${usageInfo.note}`}</text> : null}
