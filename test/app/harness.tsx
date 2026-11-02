@@ -66,10 +66,21 @@ export async function renderApp(options: { readonly session?: ReturnType<typeof 
   // The app runs on timers and subscriptions, as it does live: tests wait for frames rather than wrap each update in act().
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   const keys = createMockKeys(rig.renderer);
-  /** Lets effects, timers and React updates land, then draws a frame. */
+  /**
+   * Lets effects, timers and React updates land: waits `ms`, then draws frames until two in a
+   * row match. A loaded machine (the whole suite at once) can take far longer than `ms`.
+   */
   const settle = async (ms = 20) => {
     await new Promise((resolve) => setTimeout(resolve, ms));
     await rig.renderOnce();
+    let last = rig.captureCharFrame();
+    for (let tries = 0; tries < 50; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      await rig.renderOnce();
+      const next = rig.captureCharFrame();
+      if (next === last) return;
+      last = next;
+    }
   };
   await settle(150);
   const named: Record<string, KeyInput> = { escape: "ESCAPE", return: "RETURN", tab: "TAB", up: "ARROW_UP", down: "ARROW_DOWN", left: "ARROW_LEFT", right: "ARROW_RIGHT", backspace: "BACKSPACE" };
