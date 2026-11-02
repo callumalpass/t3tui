@@ -1,4 +1,5 @@
 import type { SettingRow } from "../model/settings.ts";
+import { ClickRow } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
 /** Settings in place of the conversation: tui3's own (cycled with enter or a click), then the server's, read-only. */
@@ -27,11 +28,11 @@ export function SettingsView(props: {
       {props.rows.map((row, index) => {
         const selected = index === props.selected;
         return (
-          <box key={row.key} flexDirection="row" height={1} backgroundColor={selected ? colors.selectedBg : "transparent"} onMouseDown={() => props.onCycle(index)}>
+          <ClickRow key={row.key} flexDirection="row" height={1} selected={selected} onPress={() => props.onCycle(index)}>
             <text fg={colors.muted} flexShrink={0}>{`${selected ? "▸ " : "  "}${row.label.padEnd(labelWidth)}`}</text>
             <text fg={colors.text} flexShrink={0}>{row.value}</text>
             <text fg={colors.faint} wrapMode="none">{`  ${row.help}`}</text>
-          </box>
+          </ClickRow>
         );
       })}
       <text fg={colors.faint} marginTop={1}>T3 Code · change these in the app</text>

@@ -1,4 +1,4 @@
-import type { KeyEvent, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
+import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
@@ -47,7 +47,11 @@ import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { useTurns } from "./useTurns.ts";
-import { ThreadView } from "./ThreadView.tsx";
+import { ThreadView, type ConversationMouse, type ConversationTarget } from "./ThreadView.tsx";
+import { Button, ResizeHandle } from "./Button.tsx";
+import { HintBar } from "./HintBar.tsx";
+import type { HintKey } from "../model/hints.ts";
+import { useEvent } from "./useEvent.ts";
 import { useQueue } from "./useQueue.ts";
 import { useSecretRequest } from "./useSecretRequest.ts";
 import { canStopSubagent } from "../model/subagents.ts";
@@ -111,6 +115,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [filter, setFilter] = useState("");
   const [showFolded, setShowFolded] = useState(false);
   const [expandAll, setExpandAll] = useState(false);
+  /** Folds opened one at a time by a click, for the open thread. */
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** The thread list's width once its border is dragged; null follows the window. */
+  const [listWidthPref, setListWidthPref] = useState<number | null>(null);
+  const [resizing, setResizing] = useState(false);
   /** null follows the terminal width; d sets it for the rest of the session. */
   const [detailsPref, setDetailsPref] = useState<boolean | null>(null);
   const [detailsSelected, setDetailsSelected] = useState<string | null>(null);
@@ -235,10 +244,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const timeline = useMemo(() => {
     if (!thread?.projection || !watchedId) return null;
     const previous = previousTimeline.current?.id === watchedId ? previousTimeline.current.timeline : null;
-    const next = buildTimeline(thread.projection, { expandAll: expandAll || mode === "find", historyComplete: !thread.history.hasMore }, previous);
+    const next = buildTimeline(thread.projection, { expandAll: expandAll || mode === "find", expanded: expandedIds, historyComplete: !thread.history.hasMore }, previous);
     previousTimeline.current = { id: watchedId, timeline: next };
     return next;
-  }, [thread?.projection, thread?.history.hasMore, watchedId, expandAll, mode === "find"]);
+  }, [thread?.projection, thread?.history.hasMore, watchedId, expandAll, expandedIds, mode === "find"]);
+  useEffect(() => setExpandedIds(new Set()), [watchedId]);
   const current = watchedId === threadId ? timeline : null;
   const find = useThreadFind(session, watchedId, thread, current, mode === "find");
   const openFind = () => { setDiff(null); setSettingsIndex(null); setMode("find"); };
@@ -345,6 +355,19 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setFlash({ text, bad });
     setTimeout(() => setFlash((value) => (value?.text === text ? null : value)), 4000);
   };
+  // Taking the mouse costs the terminal's own drag-to-select, so a drag selects here and copies on release.
+  const copySelection = useEvent((selection: Selection) => {
+    const text = selection.getSelectedText();
+    if (!text.trim()) return;
+    copyText(renderer, text);
+    say(`Copied ${text.length === 1 ? "1 character" : `${text.length} characters`}`);
+  });
+  useEffect(() => {
+    renderer.on("selection", copySelection);
+    return () => {
+      renderer.off("selection", copySelection);
+    };
+  }, [renderer, copySelection]);
   const run = (label: string, action: () => Promise<unknown>) => {
     action().then(
       () => say(label),
@@ -1189,7 +1212,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     return false;
   };
 
-  useKeyboard((key) => {
+  const handleKey = (key: KeyEvent) => {
+    // A key ends a mouse selection; it was copied when the drag ended.
+    if (renderer.hasSelection) renderer.clearSelection();
     if (mode === "find") {
       if (key.ctrl && key.name === "c") return quit();
       if (key.ctrl && key.name === "k") return openPalette(), key.preventDefault();
@@ -1375,7 +1400,58 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         if (threadId || draft) setMode("input");
         return key.preventDefault();
     }
-  });
+  };
+  useKeyboard(handleKey);
+
+  /** A click on a key hint presses that key, through the same handler as the keyboard. */
+  const pressKey = (hint: HintKey) =>
+    handleKey({ ...hint, meta: false, option: false, number: false, raw: hint.sequence, eventType: "press", source: "raw", preventDefault() {}, stopPropagation() {} } as unknown as KeyEvent);
+
+  // The mouse in the conversation: stable callbacks, since its rows are memoized.
+  const conversationMouse: ConversationMouse = {
+    respond: useEvent((decision: ProviderApprovalDecision) => respond(decision)),
+    selectTurn: useEvent((messageId: string) => turns.select(messageId)),
+    toggleFold: useEvent((id: string) =>
+      setExpandedIds((previous) => {
+        const next = new Set(previous);
+        if (!next.delete(id)) next.add(id);
+        return next;
+      }),
+    ),
+    loadEarlier: useEvent(() => loadEarlier()),
+    menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
+  };
+  const copy = (label: string, text: string) => {
+    copyText(renderer, text);
+    say(`Copied ${label}`);
+  };
+  /** The right-click menu on a message or command, as a picker like the thread menu. */
+  const openConversationMenu = (target: ConversationTarget) => {
+    const items: PickerItem[] =
+      target.kind === "command"
+        ? [
+            { id: "copy-command", title: "Copy command", run: () => copy("the command", target.command) },
+            ...(target.output ? [{ id: "copy-output", title: "Copy output", run: () => copy("the output", target.output) }] : []),
+          ]
+        : [
+            { id: "copy-message", title: "Copy message", run: () => copy("the message", target.text) },
+            ...(target.role === "user" ? turns.menuFor(target.messageId) : []),
+          ];
+    if (target.kind === "message" && target.role === "user") turns.select(target.messageId);
+    openPicker({ placeholder: target.kind === "command" ? "Command" : target.role === "user" ? "Your message" : "Message", groups: [{ label: truncateLabel(target.kind === "command" ? target.command : target.text, 60), items }] });
+  };
+  /** The right-click menu in the pull request view: its palette commands, as a picker. */
+  const openPullRequestMenu = () =>
+    openPicker({
+      placeholder: "Pull request",
+      groups: [{ label: "Pull request", items: pullRequests.commands.filter((candidate) => candidate.id.startsWith("pr-") || candidate.id.startsWith("watch-") || candidate.id.startsWith("unlink-")).map((candidate) => ({ id: candidate.id, title: candidate.title, ...(candidate.shortcut ? { hint: candidate.shortcut } : {}), run: candidate.run })) }],
+    });
+  /** A click in the conversation, a diff or the PR view takes the keys there, out of the composer or details. */
+  const focusConversation = (event: MouseEvent) => {
+    if (event.button !== 0 || (mode !== "input" && mode !== "details")) return;
+    setDetailsSelected(null);
+    setMode("nav");
+  };
 
   const status =
     shell.status.type === "error"
@@ -1385,7 +1461,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         : shell.status.type === "reconnecting"
           ? "reconnecting…"
           : (shell.serverUrl ?? "");
-  const listWidth = attached ? 0 : Math.min(46, Math.max(28, Math.floor(width * 0.3)));
+  const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
   const detailsColumn = showDetails && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
   const detailsInPlace = showDetails && !detailsColumn;
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 2;
@@ -1440,7 +1516,19 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   );
 
   return (
-    <box flexDirection="column" width={width} height={height} backgroundColor={colors.bg}>
+    <box
+      flexDirection="column"
+      width={width}
+      height={height}
+      backgroundColor={colors.bg}
+      {...(resizing
+        ? {
+            onMouseDrag: (event: MouseEvent) => setListWidthPref(clampListWidth(event.x, width)),
+            onMouseUp: () => setResizing(false),
+            onMouseDragEnd: () => setResizing(false),
+          }
+        : {})}
+    >
       <box flexDirection="row" paddingLeft={1} paddingRight={1} height={1} flexShrink={0}>
         <text fg={colors.accent}>
           <strong>tui3</strong>
@@ -1448,7 +1536,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         <text fg={shell.status.type === "live" ? colors.faint : colors.warn}>{`  ${status}`}</text>
         {usageInfo.note ? <text fg={colors.warn} wrapMode="none">{`  ${usageInfo.note}`}</text> : null}
         <box flexGrow={1} />
-        <text fg={colors.faint}>ctrl+k commands</text>
+        <Button label="commands" shortcut="ctrl+k" onPress={openPalette} />
       </box>
       <box flexDirection="row" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         {attached ? null : (
@@ -1478,7 +1566,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             shelfStatus={library.error ?? (library.loading ? "Loading…" : library.archived ? "Archived threads · A to go back" : null)}
           />
         )}
+        {attached ? null : <ResizeHandle active={resizing} onStart={() => setResizing(true)} onReset={() => setListWidthPref(null)} />}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
+          <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation}>
           {settingsIndex !== null ? (
             <SettingsView
               rows={settingsRows}
@@ -1493,9 +1583,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               }}
             />
           ) : mode === "pull-request" && pullRequests.view ? (
-            <PullRequestView view={pullRequests.view} scrollRef={scrollRef} />
+            <PullRequestView view={pullRequests.view} scrollRef={scrollRef} onOpenUrl={() => pullRequests.commands.find((candidate) => candidate.id === "pr-open")?.run()} onMenu={openPullRequestMenu} onClose={pullRequests.close} />
           ) : diff ? (
-            <DiffView diff={diff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} />
+            <DiffView diff={diff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} onFile={turns.diffContext.click} />
           ) : draft ? (
             <DraftView lines={draftLines} />
           ) : threadId && detailsInPlace && mode !== "find" ? (
@@ -1522,17 +1612,26 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               scrollRef={scrollRef}
               parent={parent}
               onOpenThread={openThread}
+              mouse={conversationMouse}
             />
           ) : (
             <box flexGrow={1} paddingLeft={2} paddingTop={1}>
               <text fg={colors.muted}>{shell.snapshot ? "No thread selected." : "Waiting for threads…"}</text>
             </box>
           )}
+          </box>
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
-          {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} /> : null}
-          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} /> : null}
-          {mode !== "confirm" && pendingInput && questionDraft ? <QuestionPanel request={pendingInput} index={questionDraft.index} draft={questionDraft.answers[pendingInput.questions[questionDraft.index]?.id ?? ""]} /> : null}
+          {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
+          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 3} actions={queue.actions} /> : null}
+          {mode !== "confirm" && pendingInput && questionDraft ? <QuestionPanel
+              request={pendingInput}
+              index={questionDraft.index}
+              draft={questionDraft.answers[pendingInput.questions[questionDraft.index]?.id ?? ""]}
+              onPick={pickOption}
+              onNext={() => advanceQuestion(questionDraft)}
+              onDismiss={threadId && pendingInput.dismissible ? () => run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId)) : undefined}
+            /> : null}
           {mode === "confirm" && confirmation ? (
             <ConfirmBar
               confirmation={confirmation}
@@ -1542,12 +1641,17 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 closeOverlay();
                 confirmation.run(confirmMessage);
               }}
+              onCancel={closeOverlay}
             />
           ) : null}
           {menu ? <ComposerMenu items={menu.items} selected={menuSelected} empty={menu.empty} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} onPick={(index) => chooseMenuItem(menu.items[index])} /> : null}
-          {attach.line ? (
-            <box flexDirection="row" height={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
-              <text fg={colors.muted} wrapMode="none">{attach.line}</text>
+          {attach.pending.length > 0 ? (
+            <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
+              <text fg={colors.muted}>Attached:</text>
+              {attach.pending.map((attachment) => (
+                <Button key={attachment.id} label={`${attachment.name} ✕`} onPress={() => attach.remove(attachment)} />
+              ))}
+              <Button label="+ file" shortcut="a" onPress={attach.attachFile} />
             </box>
           ) : null}
           {threadId || draft ? (
@@ -1603,7 +1707,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         ) : menuOpen ? (
           <text fg={colors.faint}>↑/↓ move · tab or enter choose · esc close</text>
         ) : (
-          <text fg={colors.faint}>{hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined, secret: secret.focused ? "focused" : secret.request ? "pending" : null, queue: queue.focused ? "focused" : queue.editing ? "editing" : queue.queued.length > 0 ? "queued" : null })}</text>
+          <HintBar mode={mode} onPress={pressKey} text={hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined, secret: secret.focused ? "focused" : secret.request ? "pending" : null, queue: queue.focused ? "focused" : queue.editing ? "editing" : queue.queued.length > 0 ? "queued" : null })} />
         )}
       </box>
       {mode === "palette" ? (
@@ -1620,6 +1724,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           }}
           onSubmit={() => pick(Math.min(paletteIndex, entries.length - 1))}
           onPick={pick}
+          onMove={(step) => setPaletteIndex((index) => Math.max(0, Math.min(entries.length - 1, index + step)))}
         />
       ) : null}
       {mode === "picker" && picker ? (
@@ -1636,6 +1741,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           }}
           onSubmit={() => pickItem(Math.min(pickerIndex, pickerEntries.length - 1))}
           onPick={pickItem}
+          onMove={(step) => setPickerIndex((index) => Math.max(0, Math.min(pickerEntries.length - 1, index + step)))}
         />
       ) : null}
     </box>
@@ -1702,6 +1808,16 @@ function composerLineCount(composer: TextareaRenderable): number {
   const width = Math.max(1, composer.width);
   const estimate = composer.plainText.split("\n").reduce((lines, line) => lines + Math.max(1, Math.ceil(Bun.stringWidth(line) / width)), 0);
   return Math.max(estimate, composer.virtualLineCount);
+}
+
+/** The thread list keeps room for itself and for the conversation. */
+function clampListWidth(columns: number, width: number): number {
+  return Math.max(20, Math.min(columns, width - MIN_CONVERSATION_WIDTH));
+}
+
+function truncateLabel(text: string, width: number): string {
+  const line = firstLine(text);
+  return line.length > width ? `${line.slice(0, width - 1)}…` : line;
 }
 
 function firstLine(text: string): string {

@@ -18,6 +18,9 @@ export const colors = {
   bad: "#f7768e",
   warn: "#e0af68",
   selectedBg: "#283457",
+  /** Under the pointer: lighter than the panel, quieter than a selection. */
+  hoverBg: "#202437",
+  buttonBg: "#24283b",
   /** The web app's sky / indigo / violet status hues. */
   info: "#7dcfff",
   input: "#bb9af7",

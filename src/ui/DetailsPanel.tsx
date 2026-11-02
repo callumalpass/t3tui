@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { MAX_DETAIL_FILES, type DetailsAction, type ThreadDetails } from "../model/details.ts";
+import { ClickRow } from "./Button.tsx";
 import { colors, statusColor } from "./theme.ts";
 
 /** Rows stay readable when the panel takes the conversation's place on a narrow terminal. */
@@ -167,9 +168,9 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
 function Selectable(props: LineProps & { readonly id: DetailsAction["id"]; readonly inner: number; readonly text?: string; readonly color?: string; readonly children?: ReactNode }) {
   const active = props.selected === props.id;
   return (
-    <box backgroundColor={active ? colors.selectedBg : "transparent"} onMouseDown={() => props.onActivate(props.id)}>
+    <ClickRow selected={active} onPress={() => props.onActivate(props.id)}>
       {props.children ?? <text fg={active ? colors.text : (props.color ?? colors.muted)}>{truncate(props.text ?? "", props.inner)}</text>}
-    </box>
+    </ClickRow>
   );
 }
 

@@ -1,5 +1,5 @@
 import { turnTargets, type TurnTarget } from "./turns.ts";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, RunAttemptId, RunId } from "@t3tools/contracts";
 import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -42,6 +42,7 @@ interface TimelineCache {
   readonly rows: { readonly input: MessagesTimelineRowsInput; readonly rows: MessagesTimelineRow[] };
   readonly stable: StableMessagesTimelineRowsState;
   readonly expandAll: boolean;
+  readonly expanded: ReadonlySet<string>;
 }
 
 /** Answers yes for every id: "expand everything" without knowing the group ids up front. */
@@ -50,15 +51,17 @@ class EverySet<T> extends Set<T> {
     return true;
   }
 }
-const EVERYTHING = new EverySet<never>();
-const NOTHING = new Set<never>();
+const EVERYTHING: ReadonlySet<string> = new EverySet<string>();
+const NOTHING: ReadonlySet<string> = new Set<string>();
 
 export function buildTimeline(
   projection: OrchestrationV2ThreadProjection,
-  options: { readonly expandAll: boolean; readonly historyComplete: boolean },
+  /** `expanded` holds the run, attempt and work group ids opened one at a time (by a click). */
+  options: { readonly expandAll: boolean; readonly expanded?: ReadonlySet<string>; readonly historyComplete: boolean },
   previous: Timeline | null,
 ): Timeline {
-  const cache = previous?.cache.expandAll === options.expandAll ? previous.cache : null;
+  const opened = options.expanded ?? NOTHING;
+  const cache = previous?.cache.expandAll === options.expandAll && previous.cache.expanded === opened ? previous.cache : null;
   const entries = deriveTimelineEntriesFromVisibleTurnItemsWithState(
     {
       visibleTurnItems: projection.visibleTurnItems,
@@ -75,15 +78,16 @@ export function buildTimeline(
   const isWorking = derivePhase(runtime) === "running" || runlessStartedAt !== null;
   const workStartedAt = deriveActiveWorkStartedAt(latestRun, runtime, null) ?? runlessStartedAt;
   const pending = derivePendingThreadRequests(projection);
-  const expanded = options.expandAll ? EVERYTHING : NOTHING;
+  const expanded = options.expandAll ? EVERYTHING : opened;
   const rows = deriveMessagesTimelineRowsWithState(
     {
       timelineEntries: entries.entries,
       pendingApprovalRequestIds: new Set(pending.approvals.map((approval) => approval.requestId)),
       latestRun,
       runningRunId: runtime?.activeRunId ?? null,
-      expandedRunIds: expanded,
-      expandedAttemptIds: expanded,
+      // The ids are branded strings; one set of plain ones holds all three kinds.
+      expandedRunIds: expanded as ReadonlySet<RunId>,
+      expandedAttemptIds: expanded as ReadonlySet<RunAttemptId>,
       expandedWorkGroupIds: expanded,
       isWorking,
       runlessWorkActive: runlessStartedAt !== null,
@@ -100,6 +104,6 @@ export function buildTimeline(
     turns: turnTargets(projection, entries.entries, isWorking ? runtime?.activeRunId ?? null : null, options.historyComplete),
     isWorking,
     workStartedAt,
-    cache: { entries, rows, stable, expandAll: options.expandAll },
+    cache: { entries, rows, stable, expandAll: options.expandAll, expanded: opened },
   };
 }

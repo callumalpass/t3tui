@@ -1,4 +1,7 @@
 import type { PaletteEntry, PaletteGroup } from "../model/palette.ts";
+import type { MouseEvent } from "@opentui/core";
+
+import { ClickRow, wheelStep } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
 /**
@@ -16,6 +19,8 @@ export function Palette(props: {
   readonly onQuery: (query: string) => void;
   readonly onSubmit: () => void;
   readonly onPick: (index: number) => void;
+  /** The wheel moves the selection, as the arrows do. */
+  readonly onMove: (step: -1 | 1) => void;
 }) {
   const width = Math.min(80, props.width - 4);
   const listHeight = Math.max(4, Math.min(props.height - 8, 22));
@@ -37,7 +42,7 @@ export function Palette(props: {
         <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.panel} focusedBackgroundColor={colors.panel} />
       </box>
       {props.status ? <text fg={colors.muted} paddingLeft={1}>{props.status}</text> : null}
-      <box border={["top"]} borderColor={colors.border} flexDirection="column" height={listHeight + 1}>
+      <box border={["top"]} borderColor={colors.border} flexDirection="column" height={listHeight + 1} onMouseScroll={(event: MouseEvent) => { const step = wheelStep(event); if (step) props.onMove(step); }}>
         {rows.length === 0 ? <text fg={colors.muted} paddingLeft={1}>No matches</text> : null}
         {rows.slice(start, start + listHeight).map((row) =>
           row.kind === "header" ? (
@@ -58,11 +63,11 @@ function Row(props: { readonly entry: PaletteEntry; readonly selected: boolean; 
   const right = entry.kind === "command" ? (entry.command.shortcut ?? "") : entry.project;
   const title = entry.kind === "command" ? entry.command.title : `${entry.subagent ? "↳ " : ""}${entry.snippet ? truncate(entry.title, Math.max(12, Math.floor(props.inner / 3))) : entry.title}${entry.snippet ? ` — ${entry.snippet}` : ""}`;
   return (
-    <box flexDirection="row" paddingLeft={1} paddingRight={1} backgroundColor={props.selected ? colors.selectedBg : "transparent"} onMouseDown={props.onPick}>
+    <ClickRow flexDirection="row" paddingLeft={1} paddingRight={1} selected={props.selected} onPress={props.onPick}>
       <text fg={props.selected ? colors.text : entry.kind === "command" ? colors.text : colors.muted}>{truncate(title, props.inner - right.length - 2)}</text>
       <box flexGrow={1} />
       <text fg={colors.faint}>{right}</text>
-    </box>
+    </ClickRow>
   );
 }
 

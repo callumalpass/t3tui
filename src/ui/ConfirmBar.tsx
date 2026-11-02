@@ -1,3 +1,4 @@
+import { Button, Buttons } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
 /** An action that waits for you to say yes: git actions, stopping a server, running an automation. */
@@ -11,7 +12,7 @@ export interface Confirmation {
 }
 
 /** Shown above the composer while a confirmation is open. */
-export function ConfirmBar(props: { readonly confirmation: Confirmation; readonly message: string; readonly onMessage: (value: string) => void; readonly onSubmit: () => void }) {
+export function ConfirmBar(props: { readonly confirmation: Confirmation; readonly message: string; readonly onMessage: (value: string) => void; readonly onSubmit: () => void; readonly onCancel: () => void }) {
   const { confirmation } = props;
   return (
     <box border borderStyle="rounded" borderColor={colors.warn} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={1} paddingRight={1}>
@@ -25,7 +26,10 @@ export function ConfirmBar(props: { readonly confirmation: Confirmation; readonl
           <input focused flexGrow={1} placeholder={confirmation.message.placeholder} value={props.message} onInput={props.onMessage} onSubmit={props.onSubmit} />
         </box>
       ) : null}
-      <text fg={colors.faint}>{`enter ${confirmation.confirmLabel} · esc cancel`}</text>
+      <Buttons>
+        <Button label={confirmation.confirmLabel} shortcut="enter" color={colors.warn} onPress={props.onSubmit} />
+        <Button label="cancel" shortcut="esc" onPress={props.onCancel} />
+      </Buttons>
     </box>
   );
 }

@@ -1,4 +1,5 @@
 import type { ComposerItem } from "../model/composerMenu.ts";
+import { ClickRow } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
 const MAX_ROWS = 8;
@@ -22,10 +23,10 @@ export function ComposerMenu(props: { readonly items: readonly ComposerItem[]; r
           const index = start + offset;
           const label = truncate(item.label, Math.floor(inner * 0.5));
           return (
-            <box key={item.id} flexDirection="row" paddingLeft={1} paddingRight={1} backgroundColor={index === selected ? colors.selectedBg : "transparent"} onMouseDown={() => props.onPick(index)}>
+            <ClickRow key={item.id} flexDirection="row" paddingLeft={1} paddingRight={1} selected={index === selected} onPress={() => props.onPick(index)}>
               <text fg={index === selected ? colors.text : colors.accent}>{label}</text>
               <text fg={colors.faint}>{`  ${truncate(item.description, inner - label.length - 2)}`}</text>
-            </box>
+            </ClickRow>
           );
         })
       )}

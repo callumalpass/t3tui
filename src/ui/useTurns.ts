@@ -46,10 +46,14 @@ export function useTurns(input: {
     setCursor({ threadId: input.threadId, messageId: next.messageId });
     setTimeout(() => input.scrollRef.current?.scrollChildIntoView(`turn-${next.messageId}`), 0);
   };
-  const openDiff = (fullThread: boolean) => {
+  /** A click or right-click on a prompt points the cursor at it without scrolling away. */
+  const select = (messageId: string) => {
+    if (input.threadId && turns.some((turn) => turn.messageId === messageId)) setCursor({ threadId: input.threadId, messageId });
+  };
+  const openDiff = (fullThread: boolean, messageId = selectedMessageId) => {
     const checkpoint = fullThread
       ? turns.map((turn) => turn.checkpoint).filter((checkpoint): checkpoint is TurnCheckpoint => checkpoint?.status === "ready").sort((a, b) => b.checkpointTurnCount - a.checkpointTurnCount)[0]
-      : diffTurn(turns, selectedMessageId);
+      : diffTurn(turns, messageId);
     if (!input.threadId || !input.cwd || !checkpoint) return input.say("No changes from this turn.");
     const toTurnCount = checkpoint.checkpointTurnCount;
     const state: DiffState = { cwd: input.cwd, path: null, title: fullThread ? "Changes" : `Turn ${toTurnCount}`, status: "loading" };
@@ -62,16 +66,16 @@ export function useTurns(input: {
       (error) => input.setDiff((current) => current === state ? { ...state, status: "error", error: messageOf(error) } : current),
     );
   };
-  const revert = (restoreFiles = false) => {
+  const revert = (restoreFiles = false, target = selected) => {
     const projection = input.projection;
-    if (!selected || !projection || reverting) return input.say("Select a turn with [ or ] first.");
+    if (!target || !projection || reverting) return input.say("Select a turn with [ or ] first.");
     const provider = input.config?.providers.find((provider) => provider.instanceId === projection.thread.providerInstanceId);
     if (!provider || provider.supportsConversationRollback === false) return input.say("This provider does not support reverting conversation history. Start a new thread instead.", true);
     if (input.timeline?.isWorking) return input.say("Interrupt the current turn before reverting checkpoints.", true);
-    const turnCount = selected.revertTurnCount;
+    const turnCount = target.revertTurnCount;
     const checkpoint = turnCount === undefined ? undefined : findRevertCheckpoint(projection.checkpoints, turnCount);
     if (turnCount === undefined || !checkpoint) return input.say("This message has no available checkpoint to rewind to.", true);
-    if (selected.hasAttachments) return input.say("Use the T3 Code app to rewind a message with attachments.", true);
+    if (target.hasAttachments) return input.say("Use the T3 Code app to rewind a message with attachments.", true);
     input.confirm({
       title: "Edit from here?",
       detail: "Rewind chat to before this message. Your prompt returns to the composer. “Revert files too” also undoes your own edits.",
@@ -79,7 +83,7 @@ export function useTurns(input: {
       run: () => {
         setReverting(true);
         input.session.rewind(projection, checkpoint, turnCount, restoreFiles).then(() => {
-          input.restorePrompt(projection.thread.id, recallableComposerPrompt(selected.text));
+          input.restorePrompt(projection.thread.id, recallableComposerPrompt(target.text));
           if (currentThread.current === projection.thread.id) { setCursor(null); input.setDiff(null); }
           input.say("Thread rewound");
         }, (error) => input.say(`Could not rewind: ${messageOf(error)}`, true)).finally(() => setReverting(false));
@@ -113,7 +117,21 @@ export function useTurns(input: {
     if (key.name === "escape" && !input.diff && selectedMessageId) { setCursor(null); return true; }
     return false;
   };
-  return { selectedMessageId, commands, onKey, diffContext };
+  /** The prompt's right-click menu. */
+  const menuFor = (messageId: string) => {
+    const turn = turns.find((candidate) => candidate.messageId === messageId);
+    if (!turn) return [];
+    const run = (action: () => void) => () => { select(messageId); action(); };
+    return [
+      { id: "turn-select", title: "Select this turn", hint: "[ ]", run: run(() => undefined) },
+      { id: "turn-diff", title: "View changes from this turn", hint: "D", run: run(() => openDiff(false, messageId)) },
+      ...(turn.revertTurnCount !== undefined ? [
+        { id: "turn-revert", title: "Revert to before this prompt…", hint: "R", run: run(() => revert(false, turn)) },
+        { id: "turn-revert-files", title: "Revert files too…", run: run(() => revert(true, turn)) },
+      ] : []),
+    ];
+  };
+  return { selectedMessageId, commands, onKey, diffContext, select, menuFor };
 }
 
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }

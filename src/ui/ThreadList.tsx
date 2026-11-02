@@ -1,7 +1,9 @@
 import type { MouseEvent } from "@opentui/core";
 import { needsAttention, relativeTime, rowTime, SECTION_LABELS, statusLabel, type Section, type ThreadRow } from "../model/threads.ts";
 import type { ThreadId } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 
+import { ClickRow, wheelStep } from "./Button.tsx";
 import { colors, statusColor } from "./theme.ts";
 
 /**
@@ -34,7 +36,12 @@ export function ThreadList(props: {
   const { rows, selected, focused, width, height, now } = props;
   // Rows take two lines plus a header per section; keep the selection in view.
   const visibleCount = Math.max(1, Math.floor((height - (props.filtering ? 9 : 6)) / 2));
-  const start = Math.max(0, Math.min(selected - Math.floor(visibleCount / 2), rows.length - visibleCount));
+  const maxStart = Math.max(0, rows.length - visibleCount);
+  // The wheel scrolls the list without moving the selection; moving the selection brings it back.
+  const [scrolled, setScrolled] = useState<number | null>(null);
+  useEffect(() => setScrolled(null), [selected]);
+  const centred = Math.max(0, Math.min(selected - Math.floor(visibleCount / 2), maxStart));
+  const start = Math.min(scrolled ?? centred, maxStart);
   const windowRows = rows.slice(start, start + visibleCount);
   const inner = Math.max(8, width - 3);
   // Active goes unlabelled when it leads the list, as in the web sidebar.
@@ -56,13 +63,15 @@ export function ThreadList(props: {
     const recede = !isSelected && (row.status === "working" || row.status === "waiting" || (row.status === "ready" && !row.unread));
     const title = truncate(row.thread.title || "New thread", inner);
     lines.push(
-      <box
+      <ClickRow
         key={row.thread.id}
         flexDirection="column"
         paddingLeft={1}
         paddingRight={1}
-        backgroundColor={isSelected ? (focused ? colors.selectedBg : colors.panel) : "transparent"}
-        onMouseDown={(event: MouseEvent) => (event.button === 2 ? props.onMenu(row.thread.id) : props.onPick(row.thread.id))}
+        selected={isSelected}
+        selectedBg={focused ? colors.selectedBg : colors.panel}
+        onPress={() => props.onPick(row.thread.id)}
+        onMenu={() => props.onMenu(row.thread.id)}
       >
         <box flexDirection="row">
           <text fg={colors.faint}>{left}</text>
@@ -70,12 +79,21 @@ export function ThreadList(props: {
           <text fg={status ? statusColor[status.tone] : colors.faint}>{right}</text>
         </box>
         <text fg={recede ? colors.muted : colors.text}>{attention ? <strong>{title}</strong> : title}</text>
-      </box>,
+      </ClickRow>,
     );
   });
   const collapsed = [...props.collapsed].filter(([, count]) => count > 0);
   return (
-    <box border={["right"]} borderColor={colors.border} width={width} flexShrink={0} overflow="hidden" flexDirection="column">
+    <box
+      width={width}
+      flexShrink={0}
+      overflow="hidden"
+      flexDirection="column"
+      onMouseScroll={(event: MouseEvent) => {
+        const step = wheelStep(event);
+        if (step) setScrolled(Math.max(0, Math.min(maxStart, start + step)));
+      }}
+    >
       {props.filtering ? (
         <box border borderStyle="rounded" borderColor={colors.borderFocused} height={3} flexShrink={0}>
           <input focused placeholder="Filter threads…" value={props.filter} onInput={props.onFilter} onSubmit={props.onFilterDone} />
@@ -86,9 +104,15 @@ export function ThreadList(props: {
       {rows.length === 0 ? <text fg={colors.muted}>{props.filter ? " no matches" : " no threads"}</text> : lines}
       <box flexGrow={1} />
       {props.shelfStatus ? <text fg={colors.muted} paddingLeft={1}>{props.shelfStatus}</text> : null}
-      {props.showMore ? <text fg={colors.accent} paddingLeft={1} onMouseDown={() => props.onShowMore?.()}>Show more settled threads (ctrl+k)</text> : null}
+      {props.showMore ? (
+        <ClickRow paddingLeft={1} onPress={() => props.onShowMore?.()}>
+          <text fg={colors.accent} selectable={false}>Show more settled threads</text>
+        </ClickRow>
+      ) : null}
       {collapsed.map(([section, count]) => (
-        <text key={section} fg={colors.faint} onMouseDown={props.onUnfold}>{` › ${SECTION_LABELS[section]} ${count}`}</text>
+        <ClickRow key={section} onPress={props.onUnfold}>
+          <text fg={colors.faint} selectable={false}>{` › ${SECTION_LABELS[section]} ${count}`}</text>
+        </ClickRow>
       ))}
     </box>
   );

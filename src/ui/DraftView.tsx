@@ -1,3 +1,4 @@
+import { ClickRow } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
 export interface DraftLine {
@@ -23,11 +24,11 @@ export function DraftView(props: { readonly lines: readonly DraftLine[] }) {
       </box>
       <box flexDirection="column" marginTop={1}>
         {props.lines.map((line) => (
-          <box key={line.key} flexDirection="row" height={1} onMouseDown={line.onPick}>
+          <ClickRow key={line.key} flexDirection="row" height={1} onPress={line.onPick}>
             <text fg={colors.muted} flexShrink={0}>{line.label.padEnd(labelWidth)}</text>
             <text fg={colors.text} flexShrink={0}>{line.value}</text>
             <text fg={colors.faint} wrapMode="none">{`  ${line.shortcut}`}</text>
-          </box>
+          </ClickRow>
         ))}
       </box>
       <text fg={colors.faint} marginTop={1}>Write the first message below; sending it starts the thread.</text>

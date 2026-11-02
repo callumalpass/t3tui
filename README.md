@@ -98,7 +98,12 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Find in thread:** `f` or `Find in thread` in the palette or thread menu searches the whole conversation, counts matches, highlights matching text and loads earlier history to reveal the selected match. Matching Markdown is shown as highlighted plain text while finding.
 - **Archived threads:** `A` or `Show archived threads` in the palette opens the archive. Open a thread normally; `Unarchive thread` in the palette restores it. `Show active threads` returns to the live list.
 - **Ordering:** `J` / `K` or `Move pinned thread down` / `Move pinned thread up` in the palette reorder pinned threads. Active threads stay ordered by return time, as in T3 Code's Working shelf.
-- **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
+- **Mouse:**
+  - **Select and copy:** drag across any text to select it; it's copied when you let go (through the terminal with OSC 52, and the desktop clipboard locally). A key press clears the highlight. Your terminal's own selection still works with shift held.
+  - **Buttons:** approvals, questions (click an option), secret requests, confirmations, queued messages (click one for send now / edit / remove), attached files (✕ removes one) and the PR view have buttons, each with its key beside it. Every hint along the bottom that names one key is clickable, and so is `commands` at the top.
+  - **Conversation:** a click on a prompt selects that turn, as `[`/`]` do; a click on a folded turn or work group opens just that one; a click on a command shows its output; "Load earlier turns" loads them. In a diff, a click on a file selects it and a second click shows its whole file. In the PR view, the URL opens in the browser.
+  - **Right-click menus:** on a thread (its actions), a prompt (copy, view its changes, revert), a reply (copy), a command (copy the command or its output) and the PR view (its actions).
+  - **Panes:** clicking the conversation takes the keys out of the message box or details; clicking the message box types. The wheel scrolls the conversation, the thread list (without moving the selection) and the palette. Drag the thread list's right border to resize it; right-click the border to reset it.
 - Threads open scrolled to the bottom.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
 

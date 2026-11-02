@@ -1,8 +1,9 @@
 import type { ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { splitPatch } from "../model/diffs.ts";
-import type { ScrollBoxRenderable } from "@opentui/core";
+import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
 import type { RefObject } from "react";
 
+import { isLeftClick, useHover } from "./Button.tsx";
 import { colors, getMarkdownStyle } from "./theme.ts";
 
 export interface DiffState {
@@ -18,7 +19,7 @@ export interface DiffState {
 }
 
 /** Working-tree or checkpoint changes through the same unified diff renderer. */
-export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: RefObject<ScrollBoxRenderable | null>; readonly selected: number; readonly expanded: Readonly<Record<string, { patch?: string; error?: string }>> }) {
+export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: RefObject<ScrollBoxRenderable | null>; readonly selected: number; readonly expanded: Readonly<Record<string, { patch?: string; error?: string }>>; readonly onFile: (index: number) => void }) {
   const { diff } = props;
   const files = diff.patch ? splitPatch(diff.patch) : [];
   return (
@@ -38,7 +39,7 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
       <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
         {files.map((file, index) => (
           <box key={file.path} id={`diff-file-${index}`} flexDirection="column" marginTop={1}>
-            <text fg={index === props.selected ? colors.accent : colors.muted}>{`${index === props.selected ? "▸ " : "  "}${file.path}`}</text>
+            <FileHeader path={file.path} selected={index === props.selected} canExpand={diff.source !== undefined} onPress={() => props.onFile(index)} />
             {props.expanded[file.path] && !props.expanded[file.path]?.patch ? <text fg={props.expanded[file.path]?.error ? colors.bad : colors.muted}>{props.expanded[file.path]?.error ?? "Loading full file…"}</text> : null}
             <diff
               diff={props.expanded[file.path]?.patch ?? file.patch}
@@ -59,6 +60,17 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
           </box>
         ))}
       </scrollbox>
+    </box>
+  );
+}
+
+/** A click selects the file; a click on the selected one shows its whole file, as x does. */
+function FileHeader(props: { readonly path: string; readonly selected: boolean; readonly canExpand: boolean; readonly onPress: () => void }) {
+  const [hover, hoverProps] = useHover();
+  return (
+    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && props.onPress()}>
+      <text fg={props.selected ? colors.accent : hover ? colors.text : colors.muted} selectable={false}>{`${props.selected ? "▸ " : "  "}${props.path}`}</text>
+      {hover && props.selected && props.canExpand ? <text fg={colors.faint} selectable={false}>{"  click for the whole file"}</text> : null}
     </box>
   );
 }

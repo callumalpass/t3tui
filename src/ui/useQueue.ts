@@ -152,5 +152,17 @@ export function useQueue(input: {
 
   const placeholder = editing ? "Edit the queued message (enter saves, esc cancels)" : canResume ? (queue?.resumableRunId ? "Ask anything, or press enter to continue where it left off" : "Ask anything, or press enter to send the held messages") : null;
 
-  return { queue, queued, focus, focused: focus !== null, editingRunId: editing?.runId ?? null, editing: editing !== null, key, submit, commands, placeholder };
+  const at = (index: number, action: (message: QueuedMessage) => void) => () => {
+    const message = queued[index];
+    if (message) action(message);
+  };
+  const actions = {
+    focus: (index: number) => setFocus(index),
+    sendNow: (index: number) => at(index, sendNow)(),
+    edit: (index: number) => at(index, beginEdit)(),
+    remove: (index: number) => at(index, remove)(),
+    resume: canResume ? resume : null,
+  };
+
+  return { queue, queued, focus, focused: focus !== null, editingRunId: editing?.runId ?? null, editing: editing !== null, key, submit, commands, placeholder, actions };
 }

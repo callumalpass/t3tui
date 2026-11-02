@@ -67,5 +67,11 @@ export function useSecretRequest(input: { readonly session: T3Session; readonly 
       ]
     : [];
 
-  return { request, value, error, busy, focused: value !== null, key, commands };
+  const actions = {
+    focus: () => setValue(""),
+    cancel: () => setValue(null),
+    save: () => value !== null && answer({ type: "save", secret: value }),
+    decline: () => answer({ type: "decline" }),
+  };
+  return { request, value, error, busy, focused: value !== null, key, commands, actions };
 }

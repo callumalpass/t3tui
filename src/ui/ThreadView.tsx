@@ -1,5 +1,5 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
-import type { ThreadId } from "@t3tools/contracts";
+import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
+import type { ProviderApprovalDecision, ThreadId } from "@t3tools/contracts";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, useState, type RefObject } from "react";
@@ -7,12 +7,28 @@ import { findTextSegments } from "../model/search.ts";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
 import { FindText } from "./FindText.tsx";
+import { Button, Buttons, isLeftClick, isRightClick, useHover } from "./Button.tsx";
 
 import { CommandOutput } from "./CommandOutput.tsx";
 import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
 import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
+
+/** What a right-click in the conversation was on. */
+export type ConversationTarget =
+  | { readonly kind: "message"; readonly messageId: string; readonly role: "user" | "assistant" | "system"; readonly text: string }
+  | { readonly kind: "command"; readonly command: string; readonly output: string };
+
+export interface ConversationMouse {
+  readonly respond: (decision: ProviderApprovalDecision) => void;
+  /** A click on a prompt: the turn cursor, as [ and ] move it. */
+  readonly selectTurn: (messageId: string) => void;
+  /** A click on a folded turn or work group: its own expansion, apart from e. */
+  readonly toggleFold: (id: string) => void;
+  readonly loadEarlier: () => void;
+  readonly menu: (target: ConversationTarget) => void;
+}
 
 /** The conversation, row for row as the web app derives it (MessagesTimeline.logic). */
 export function ThreadView(props: {
@@ -35,6 +51,8 @@ export function ThreadView(props: {
   readonly parent?: { readonly title: string; readonly threadId: ThreadId } | undefined;
   /** Opens another thread: a subagent from its work row, or the parent from the header. Keep it stable; rows are memoized on it. */
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** The mouse in the conversation. Keep these stable too. */
+  readonly mouse: ConversationMouse;
 }) {
   const { timeline, history } = props;
   const pendingIds = new Set<string>(timeline?.pending.approvals.map((approval) => approval.requestId) ?? []);
@@ -56,7 +74,7 @@ export function ThreadView(props: {
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
-        {history?.hasMore || history?.error ? <LoadEarlier history={history} /> : null}
+        {history?.hasMore || history?.error ? <LoadEarlier history={history} onLoad={props.mouse.loadEarlier} /> : null}
         {timeline?.rows.map((row) => (
           <Row
             key={row.id}
@@ -72,6 +90,7 @@ export function ThreadView(props: {
             now={row.kind === "working" ? props.now : 0}
             workStartedAt={timeline.workStartedAt}
             onOpenThread={props.onOpenThread}
+            mouse={props.mouse}
           />
         ))}
       </scrollbox>
@@ -79,16 +98,17 @@ export function ThreadView(props: {
   );
 }
 
-function LoadEarlier({ history }: { readonly history: ThreadHistory }) {
+function LoadEarlier({ history, onLoad }: { readonly history: ThreadHistory; readonly onLoad: () => void }) {
   const label = history.loading ? "Loading earlier turns…" : history.error ? `Could not load earlier turns: ${history.error} (o to retry)` : "Load earlier turns (o)";
-  return <Divider label={label} color={history.error ? colors.bad : colors.faint} />;
+  return <Divider label={label} color={history.error ? colors.bad : colors.accent} onPress={history.loading ? undefined : onLoad} />;
 }
 
-function Divider({ label, color }: { readonly label: string; readonly color: string }) {
+function Divider({ label, color, onPress }: { readonly label: string; readonly color: string; readonly onPress?: (() => void) | undefined }) {
+  const [hover, hoverProps] = useHover();
   return (
-    <box flexDirection="row" marginTop={1}>
+    <box flexDirection="row" marginTop={1} {...(onPress ? { ...hoverProps, onMouseDown: (event: MouseEvent) => isLeftClick(event) && onPress() } : {})}>
       <box flexGrow={1} border={["bottom"]} borderColor={colors.border} height={1} />
-      <text fg={color}>{` ${label} `}</text>
+      <text fg={onPress && hover ? colors.text : color} selectable={!onPress}>{` ${label} `}</text>
       <box flexGrow={1} border={["bottom"]} borderColor={colors.border} height={1} />
     </box>
   );
@@ -112,8 +132,9 @@ const Row = memo(function Row(props: {
   readonly now: number;
   readonly workStartedAt: string | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly mouse: ConversationMouse;
 }) {
-  const { row, workspaceRoot } = props;
+  const { row, workspaceRoot, mouse } = props;
   switch (row.kind) {
     case "message": {
       const { message } = row;
@@ -121,10 +142,11 @@ const Row = memo(function Row(props: {
         const segments = findTextSegments(message.text, message.role === "user");
         if (segments.some((segment) => findThreadSearchOccurrences(segment, props.findQuery).length > 0)) return <FindText segments={segments} query={props.findQuery} activeOccurrence={props.activeOccurrence} scrollRef={props.scrollRef} />;
       }
-      if (message.role === "user") return <UserMessage text={message.text} messageId={message.id} selected={props.selected} />;
-      if (message.role === "system") return <text marginTop={1} fg={colors.muted}>{message.text}</text>;
+      const menu = { kind: "message", messageId: message.id, role: message.role, text: message.text } as const;
+      if (message.role === "user") return <UserMessage text={message.text} messageId={message.id} selected={props.selected} onSelect={() => mouse.selectTurn(message.id)} onMenu={() => mouse.menu(menu)} />;
+      if (message.role === "system") return <text marginTop={1} fg={colors.muted} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>{message.text}</text>;
       return (
-        <box marginTop={1}>
+        <box marginTop={1} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
           <markdown content={message.text || "…"} syntaxStyle={getMarkdownStyle()} streaming={message.streaming} conceal />
         </box>
       );
@@ -133,21 +155,21 @@ const Row = memo(function Row(props: {
     case "attempt-fold":
       // The finished turn's work, folded: the web's turn separator.
       return (
-        <box marginTop={1} border={["bottom"]} borderColor={colors.border} flexDirection="row">
-          <text fg={colors.muted}>{`${row.label} ${row.expanded ? "⌄" : "›"}`}</text>
-        </box>
+        <Toggle onPress={() => mouse.toggleFold(row.kind === "turn-fold" ? row.runId : row.attemptId)} border>
+          {(hover) => <text fg={hover ? colors.text : colors.muted} selectable={false}>{`${row.label} ${row.expanded ? "⌄" : "›"}`}</text>}
+        </Toggle>
       );
     case "work-toggle":
       return (
-        <box marginTop={1} flexDirection="row">
-          <text fg={row.hasFailure ? colors.bad : colors.muted}>{`${SUMMARY_GLYPH[row.summaryKind] ?? "•"} ${row.summary} ${row.expanded ? "⌄" : "›"}`}</text>
-        </box>
+        <Toggle onPress={() => mouse.toggleFold(row.groupId)}>
+          {(hover) => <text fg={row.hasFailure ? colors.bad : hover ? colors.text : colors.muted} selectable={false}>{`${SUMMARY_GLYPH[row.summaryKind] ?? "•"} ${row.summary} ${row.expanded ? "⌄" : "›"}`}</text>}
+        </Toggle>
       );
     case "work":
       return (
         <box marginTop={row.continuesWorkLog ? 0 : 1} flexDirection="column">
           {row.groupedEntries.map((entry) => (
-            <WorkEntry key={entry.id} entry={entry} expanded={row.isExpandedToolGroup} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} onOpenThread={props.onOpenThread} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
+            <WorkEntry key={entry.id} entry={entry} expanded={row.isExpandedToolGroup} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} onOpenThread={props.onOpenThread} onMenu={mouse.menu} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
           ))}
         </box>
       );
@@ -155,7 +177,7 @@ const Row = memo(function Row(props: {
       return (
         <box marginTop={1} flexDirection="column">
           {row.thought?.detail ? <text fg={colors.faint}>{`∴ ${liveThoughtLine(row.thought.detail)}`}</text> : null}
-          <WorkEntry entry={row.entry} expanded={row.expanded} label={liveWorkEntryLabel(row.entry, workspaceRoot, row.active)} onOpenThread={props.onOpenThread} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
+          <WorkEntry entry={row.entry} expanded={row.expanded} label={liveWorkEntryLabel(row.entry, workspaceRoot, row.active)} onOpenThread={props.onOpenThread} onMenu={mouse.menu} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
         </box>
       );
     case "working": {
@@ -178,7 +200,7 @@ const Row = memo(function Row(props: {
         </box>
       );
     case "event":
-      return <EventRow item={row.projectedItem.item} pending={props.pending} />;
+      return <EventRow item={row.projectedItem.item} pending={props.pending} onRespond={mouse.respond} />;
     case "worktree-setup":
       return <text marginTop={1} fg={colors.info}>◐ Setting up worktree…</text>;
     default:
@@ -191,22 +213,24 @@ const USER_FOLD_LINES = 8;
 const USER_FOLD_CHARS = 600;
 
 /** The web's user bubble: right-aligned, at most 80% wide, folded past 8 lines or 600 characters. */
-function UserMessage({ text, messageId, selected }: { readonly text: string; readonly messageId: string; readonly selected: boolean }) {
+function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly text: string; readonly messageId: string; readonly selected: boolean; readonly onSelect: () => void; readonly onMenu: () => void }) {
+  const [hover, hoverProps] = useHover();
   const trimmed = text.trim();
   const lines = trimmed.split("\n");
   let shown = lines.slice(0, USER_FOLD_LINES).join("\n");
   if (shown.length > USER_FOLD_CHARS) shown = `${shown.slice(0, USER_FOLD_CHARS).trimEnd()}…`;
   const folded = shown.length < trimmed.length;
   return (
-    <box id={`turn-${messageId}`} border={selected ? ["left"] : []} borderColor={colors.accent} marginTop={1} alignSelf="flex-end" maxWidth="80%" backgroundColor={colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column">
+    <box id={`turn-${messageId}`} border={selected ? ["left"] : []} borderColor={colors.accent} marginTop={1} alignSelf="flex-end" maxWidth="80%" backgroundColor={hover && !selected ? colors.selectedBg : colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu() : isLeftClick(event) ? onSelect() : undefined)}>
       <text fg={colors.text}>{shown}</text>
       {folded ? <text fg={colors.faint}>{`… ${Math.max(1, lines.length - shown.split("\n").length)} more lines`}</text> : null}
     </box>
   );
 }
 
-function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, session, streamCommandOutput, scrollRef }: { readonly entry: WorkLogEntry; readonly expanded: boolean; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void; readonly session: T3Session; readonly streamCommandOutput: boolean; readonly scrollRef: RefObject<ScrollBoxRenderable | null> }) {
+function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu, session, streamCommandOutput, scrollRef }: { readonly entry: WorkLogEntry; readonly expanded: boolean; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void; readonly onMenu: (target: ConversationTarget) => void; readonly session: T3Session; readonly streamCommandOutput: boolean; readonly scrollRef: RefObject<ScrollBoxRenderable | null> }) {
   const [open, setExpanded] = useState<boolean | null>(null);
+  const [hover, hoverProps] = useHover();
   const expanded = open ?? groupExpanded;
   const item = entry.structuredPayload;
   const command = item?.type === "command_execution" ? item : null;
@@ -214,13 +238,14 @@ function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, sessio
   const failed = workEntryDisplayIndicatesToolFailure(entry);
   const child = childThreadOf(entry);
   const tone = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : entry.tone === "thinking" ? colors.faint : colors.muted;
-  const text = <text fg={tone}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}${child ? "  ↗" : ""}`}</text>;
+  const clickable = Boolean(command || child);
+  const text = <text fg={clickable && hover ? colors.text : tone} selectable={!clickable}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}${child ? "  ↗" : ""}`}</text>;
   if (command) return <box flexDirection="column">
-    <box flexDirection="row" onMouseDown={() => setExpanded(!expanded)}><text fg={colors.faint}>{expanded ? "⌄ " : "› "}</text>{text}</box>
+    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu({ kind: "command", command: command.input, output: command.output ?? "" }) : isLeftClick(event) ? setExpanded(!expanded) : undefined)}><text fg={colors.faint} selectable={false}>{expanded ? "⌄ " : "› "}</text>{text}</box>
     {expanded && streamCommandOutput && projected ? <CommandOutput session={session} threadId={projected.sourceThreadId} itemId={projected.sourceItemId} scrollRef={scrollRef} />
       : expanded ? <text fg={colors.muted}>{command.output || "No output."}</text> : null}
   </box>;
-  return child ? <box onMouseDown={() => onOpenThread(child)}>{text}</box> : text;
+  return child ? <box {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onOpenThread(child)}>{text}</box> : text;
 }
 
 /** The thread a subagent work row ran in, when it has its own. */
@@ -229,7 +254,7 @@ export function childThreadOf(entry: WorkLogEntry): ThreadId | null {
   return item?.type === "subagent" ? (item.childThreadId ?? null) : null;
 }
 
-function EventRow({ item, pending }: { readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {
+function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision: ProviderApprovalDecision) => void; readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {
   if (item.type === "approval_request" && pending) {
     return (
       <box marginTop={1} border borderStyle="rounded" borderColor={colors.warn} flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -238,7 +263,11 @@ function EventRow({ item, pending }: { readonly item: MessagesTimelineRow extend
         </text>
         {item.prompt ? <text fg={colors.text}>{item.prompt}</text> : null}
         {item.reason ? <text fg={colors.muted}>{item.reason}</text> : null}
-        <text fg={colors.faint}>Waiting for approval · y Approve · Y Always allow this session · n Decline</text>
+        <Buttons>
+          <Button label="Approve" shortcut="y" color={colors.good} onPress={() => onRespond("accept")} />
+          <Button label="Always allow this session" shortcut="Y" onPress={() => onRespond("acceptForSession")} />
+          <Button label="Decline" shortcut="n" color={colors.bad} onPress={() => onRespond("decline")} />
+        </Buttons>
       </box>
     );
   }
@@ -270,6 +299,16 @@ function approvalTitle(kind: string): string {
 function eventRequestId(row: Extract<MessagesTimelineRow, { kind: "event" }>): string | undefined {
   const item = row.projectedItem.item;
   return item.type === "approval_request" ? item.requestId : undefined;
+}
+
+/** A folded turn or work group: a click opens or closes just this one. */
+function Toggle({ onPress, border, children }: { readonly onPress: () => void; readonly border?: boolean; readonly children: (hover: boolean) => React.ReactNode }) {
+  const [hover, hoverProps] = useHover();
+  return (
+    <box marginTop={1} flexDirection="row" {...(border ? { border: ["bottom"] as const, borderColor: colors.border } : {})} {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onPress()}>
+      {children(hover)}
+    </box>
+  );
 }
 
 /** Terminal stand-ins for the web's lucide icons. */

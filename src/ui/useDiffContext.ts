@@ -12,8 +12,8 @@ export function useDiffContext(session: T3Session, diff: DiffState | null, scrol
   const [selected, setSelected] = useState(0);
   const [expanded, setExpanded] = useState<Record<string, { patch?: string; error?: string }>>({});
   useEffect(() => { setSelected(0); setExpanded({}); }, [diff]);
-  const expand = () => {
-    const file = files[selected];
+  const expand = (index = selected) => {
+    const file = files[index];
     if (!file || !diff?.source) return;
     if (expanded[file.path]?.patch) {
       setExpanded((old) => { const next = { ...old }; delete next[file.path]; return next; });
@@ -41,5 +41,10 @@ export function useDiffContext(session: T3Session, diff: DiffState | null, scrol
     if (key.name === "x" || key.name === "return") { expand(); return true; }
     return false;
   };
-  return { selected, expanded, onKey, move, expand };
+  /** A click on a file's header: select it, and a second click opens its whole file. */
+  const click = (index: number) => {
+    if (index === selected) return expand(index);
+    setSelected(index);
+  };
+  return { selected, expanded, onKey, move, expand, click };
 }

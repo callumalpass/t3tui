@@ -16,6 +16,7 @@ export interface Attachments {
   readonly commands: readonly (PaletteCommand & { readonly run: () => void })[];
   /** Prompts for a path and uploads it; the `a` key and the palette both call this. */
   readonly attachFile: () => void;
+  readonly remove: (attachment: ChatAttachment) => void;
   /** Hands the pending attachments to a send and clears them. */
   readonly take: () => readonly ChatAttachment[];
 }
@@ -113,6 +114,7 @@ export function useAttachments(deps: {
     line: attachmentLine(pending),
     commands,
     attachFile,
+    remove,
     take: () => {
       const taken = byComposer.get(composerKey) ?? [];
       if (taken.length > 0) setByComposer((previous) => new Map(previous).set(composerKey, []));
