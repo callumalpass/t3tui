@@ -300,7 +300,7 @@ export function childThreadOf(entry: WorkLogEntry): ThreadId | null {
 function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision: ProviderApprovalDecision) => void; readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {
   if (item.type === "approval_request" && pending) {
     return (
-      <box marginTop={1} border={["left"]} customBorderChars={BAR} borderColor={colors.warn} backgroundColor={colors.element} flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
+      <box marginTop={1} border={["left"]} customBorderChars={BAR} borderColor={colors.warn} backgroundColor={colors.panel} flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
         <text fg={colors.warn}>
           <strong>{approvalTitle(item.requestKind)}</strong>
         </text>

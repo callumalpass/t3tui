@@ -1,4 +1,5 @@
 import { ClickRow } from "./Button.tsx";
+import { BAR } from "./edges.ts";
 import { colors } from "./theme.ts";
 
 export interface DraftLine {
@@ -22,7 +23,7 @@ export function DraftView(props: { readonly lines: readonly DraftLine[] }) {
         <box flexGrow={1} />
         <text fg={colors.faint}>esc cancel</text>
       </box>
-      <box flexDirection="column" marginTop={1}>
+      <box flexDirection="column" marginTop={1} border={["left"]} customBorderChars={BAR} borderColor={colors.border} backgroundColor={colors.panel} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={1}>
         {props.lines.map((line) => (
           <ClickRow key={line.key} flexDirection="row" height={1} onPress={line.onPick}>
             <text fg={colors.muted} flexShrink={0}>{line.label.padEnd(labelWidth)}</text>
