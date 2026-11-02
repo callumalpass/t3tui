@@ -195,6 +195,14 @@ describe("composer", () => {
     expect(app.calls("sendMessage").map((call) => [call.args[0], call.args[1]])).toEqual([[v2ThreadId, "hello there"]]);
   });
 
+  test("ctrl+u deletes to the start of the line rather than scrolling", async () => {
+    const app = await open();
+    await app.press("i");
+    await app.type("hello there");
+    await app.press("u", { ctrl: true });
+    expect(app.frame()).not.toContain("hello there");
+  });
+
   test("c starts a new thread draft; esc twice cancels it", async () => {
     const app = await open();
     await app.press("c");

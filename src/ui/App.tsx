@@ -700,8 +700,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const editorKey: Binding | null = hasComposer ? { keys: ["ctrl+g"], run: openEditor, command: { id: "editor", title: "Write the message in $EDITOR", keywords: ["vim", "editor", "compose"] } } : null;
   const nextThreadKey: Binding = { keys: ["ctrl+n", "alt+↓"], label: "ctrl+n/p", run: () => move(1) };
   const previousThreadKey: Binding = { keys: ["ctrl+p", "alt+↑"], run: () => move(-1) };
-  // One-line inputs keep ctrl+u and ctrl+d for editing.
-  const lineInput = mode === "filter";
+  // Anywhere with a text field, ctrl+u and ctrl+d edit (delete to line start, delete forward); page up/down still scroll.
+  const lineInput = mode === "filter" || mode === "input" || mode === "find" || mode === "palette" || mode === "picker" || mode === "confirm";
   const globalKeys = keys(
     quitKey,
     paletteKey,
