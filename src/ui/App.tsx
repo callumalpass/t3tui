@@ -41,6 +41,7 @@ import { useWorkspace } from "./useWorkspace.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
+import { useTurns } from "./useTurns.ts";
 import { ThreadView } from "./ThreadView.tsx";
 import { useQueue } from "./useQueue.ts";
 import { useSecretRequest } from "./useSecretRequest.ts";
@@ -182,6 +183,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const threadRow = allRows.find((row) => row.thread.id === threadId);
   const threadShell = threadRow?.thread ?? shell.snapshot?.threads.find((thread) => thread.id === threadId) ?? library.archive?.threads.find((thread) => thread.id === threadId) ?? library.merged?.threads.find((thread) => thread.id === threadId) ?? (threadId ? familyShells.get(threadId) : undefined);
   const composerKey: string = draft ? DRAFT_KEY : (threadId ?? "");
+  const activeComposerKey = useRef(composerKey);
+  activeComposerKey.current = composerKey;
   // Pin the initial selection to a thread, or it would follow whatever sorts first.
   useEffect(() => {
     if (selectedId === undefined && rows[0]) setSelectedId(rows[0].thread.id);
@@ -224,10 +227,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const timeline = useMemo(() => {
     if (!thread?.projection || !watchedId) return null;
     const previous = previousTimeline.current?.id === watchedId ? previousTimeline.current.timeline : null;
-    const next = buildTimeline(thread.projection, { expandAll: expandAll || mode === "find" }, previous);
+    const next = buildTimeline(thread.projection, { expandAll: expandAll || mode === "find", historyComplete: !thread.history.hasMore }, previous);
     previousTimeline.current = { id: watchedId, timeline: next };
     return next;
-  }, [thread?.projection, watchedId, expandAll, mode === "find"]);
+  }, [thread?.projection, thread?.history.hasMore, watchedId, expandAll, mode === "find"]);
   const current = watchedId === threadId ? timeline : null;
   const find = useThreadFind(session, watchedId, thread, current, mode === "find");
   const openFind = () => { setDiff(null); setSettingsIndex(null); setMode("find"); };
@@ -384,7 +387,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     const cwd = vcsCwd;
     setDiff({ cwd, path, status: "loading" });
     session.workingTreeDiff(cwd, path ?? undefined, config.diffIgnoreWhitespace).then(
-      (source) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "ready", patch: source?.diff ?? "", truncated: source?.truncated ?? false } : value)),
+      (source) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "ready", patch: source?.diff ?? "", ...(source ? { source: { cwd, sourceKind: source.kind, baseRef: source.baseRef, headRef: source.headRef } } : {}), truncated: source?.truncated ?? false } : value)),
       (error) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "error", error: messageOf(error) } : value)),
     );
   };
@@ -915,8 +918,18 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   const scrollPage = (direction: 1 | -1) => scrollRef.current?.scrollBy(direction * Math.max(1, height - 10));
 
+  const turns = useTurns({ session, threadId, projection, timeline: current, config: providerConfig, cwd: vcsCwd, ignoreWhitespace: config.diffIgnoreWhitespace, enabled: draft === null, diff, setDiff, scrollRef, confirm, say,
+    showConversation: () => { setMode("nav"); setDetailsPref((value) => width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value); },
+    restorePrompt: (id, text) => {
+      const previous = id === activeComposerKey.current ? composerRef.current?.plainText ?? "" : drafts.current.get(id) ?? "";
+      const next = text ? previous ? `${previous}\n\n${text}` : text : previous;
+      drafts.current.set(id, next);
+      if (id === activeComposerKey.current) { composerRef.current?.setText(next); setMode("input"); }
+    },
+  });
+
   // The command palette: everything the keys do, plus what the details panel offers.
-  const commands: (PaletteCommand & { readonly run: () => void })[] = [];
+  const commands: (PaletteCommand & { readonly run: () => void })[] = [...turns.commands];
   const command = (id: string, label: string, action: () => void, extra: Omit<PaletteCommand, "id" | "title"> = {}) => commands.push({ id, title: label, run: action, ...extra });
   if (pendingApproval) {
     command("approve", "Approve request", () => respond("accept"), { shortcut: "y" });
@@ -1124,7 +1137,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       }
       return;
     }
-    if (secret.key(key, mode === "nav", Boolean(pendingInput))) return key.preventDefault();
+    if (secret.key(key, mode === "nav" && !diff, Boolean(pendingInput))) return key.preventDefault();
     if (queue.key(key, mode === "nav" ? "nav" : mode === "input" ? "input" : "other")) return key.preventDefault();
     if (globalKey(key)) return key.preventDefault();
     const digit = /^[1-9]$/.test(key.name) && !key.ctrl && !key.meta ? Number(key.name) - 1 : -1;
@@ -1193,6 +1206,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     if (workspace.key(key)) return;
     if (mode === "nav" && library.key(key, threadId)) return key.preventDefault();
     if (mode === "nav" && key.name === "f" && threadId && !draft) return openFind(), key.preventDefault();
+    if (mode === "nav" && turns.onKey(key)) return key.preventDefault();
     switch (key.name) {
       case "q":
         if (diff) return setDiff(null);
@@ -1373,7 +1387,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               }}
             />
           ) : diff ? (
-            <DiffView diff={diff} scrollRef={scrollRef} />
+            <DiffView diff={diff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} />
           ) : draft ? (
             <DraftView lines={draftLines} />
           ) : threadId && detailsInPlace && mode !== "find" ? (
@@ -1389,6 +1403,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               timeline={current}
               findQuery={find.open ? find.query.trim() : ""}
               findMatch={find.match}
+              selectedMessageId={turns.selectedMessageId}
+              session={session}
+              streamCommandOutput={live && providerConfig?.environment.capabilities.commandOutputStreaming === true}
               history={watchedId === threadId ? (thread?.history ?? null) : null}
               loading={watchedId !== threadId || thread?.status === "loading"}
               error={thread?.error}

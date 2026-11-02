@@ -1,5 +1,10 @@
 import {
   CommandId,
+  type OrchestrationGetTurnDiffInput,
+  type OrchestrationGetFullThreadDiffInput,
+  type ReviewDiffFileContentsInput,
+  type OrchestrationV2Checkpoint,
+  type TurnItemId,
   MessageId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
@@ -60,6 +65,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { applyShellStreamEvent, mergeShellSnapshotProjects } from "../../vendor/t3code/packages/client-runtime/src/state/shellReducer.ts";
+import { applyCommandOutputFrame, EMPTY_COMMAND_OUTPUT, type CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import { connect, type Connection } from "./rpc.ts";
 
 export type ConnectionStatus =
@@ -319,6 +325,68 @@ export class T3Session {
       rpc[WS_METHODS.reviewGetDiffPreview]({ cwd, ignoreWhitespace, ...(path ? { file: { path, previousPath: null, sourceKind: "working-tree" as const } } : {}) }),
     );
     return result.sources.find((source) => source.kind === "working-tree") ?? null;
+  }
+
+  /** Checkpoint ranges, matching the web's turn and thread diff selections. */
+  turnDiff(input: OrchestrationGetTurnDiffInput) {
+    return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getTurnDiff](input));
+  }
+
+  fullThreadDiff(input: OrchestrationGetFullThreadDiffInput) {
+    return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff](input));
+  }
+
+  diffFileContents(input: ReviewDiffFileContentsInput) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.reviewGetDiffFileContents](input));
+  }
+
+  /** Expanded commands have no linger: closing their row stops the stream immediately. */
+  watchCommandOutput(threadId: ThreadId, itemId: TurnItemId, listener: Listener<CommandOutputView>, onError: Listener<string>): () => void {
+    let view = EMPTY_COMMAND_OUTPUT;
+    const fiber = this.runInScope(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]({ threadId, itemId }).pipe(
+      Stream.runForEach((frame) => Effect.sync(() => listener(view = applyCommandOutputFrame(view, frame)))),
+      Effect.catchCause((cause) => Effect.sync(() => onError(prettyCause(cause)))),
+    ));
+    return () => { Effect.runFork(Fiber.interrupt(fiber)); };
+  }
+
+  /** Sends the checkpoint identity captured before opening the confirmation. */
+  rollback(threadId: ThreadId, checkpoint: Pick<OrchestrationV2Checkpoint, "id" | "scopeId">, restoreFiles: boolean, commandId = newCommandId()): Promise<void> {
+    return this.dispatch({ type: "checkpoint.rollback", commandId, threadId, scopeId: checkpoint.scopeId, checkpointId: checkpoint.id, restoreFiles });
+  }
+
+  /** Waits for the settled suffix and provider conversation to rewind, as the web does. */
+  async rewind(initial: OrchestrationV2ThreadProjection, checkpoint: Pick<OrchestrationV2Checkpoint, "id" | "scopeId">, turnCount: number, restoreFiles: boolean): Promise<void> {
+    const witness = initial.runs.filter((run) => run.ordinal > turnCount && ["completed", "interrupted", "failed", "cancelled"].includes(run.status))
+      .sort((a, b) => b.ordinal - a.ordinal)[0];
+    if (!witness) throw new Error("The thread has changed. Select a message to rewind again.");
+    const providerThread = initial.providerThreads.find((thread) => thread.id === initial.thread.activeProviderThreadId);
+    const commandId = newCommandId();
+    await new Promise<void>((resolve, reject) => {
+      let accepted = false;
+      let state: ThreadState | null = null;
+      let unwatch = () => {};
+      const finish = (error?: unknown) => {
+        clearTimeout(timer);
+        unwatch();
+        if (error !== undefined) reject(error); else resolve();
+      };
+      const inspect = () => {
+        const next = state?.projection;
+        if (!next) return;
+        if (next.thread.rollbackFailure?.requestId === commandId) return finish(new Error(next.thread.rollbackFailure.message));
+        const providerRewound = next.providerThreads.some((thread) => {
+          const sameThread = thread.id === providerThread?.id;
+          const freshRoot = turnCount === 0 && thread.ownerNodeId === null && thread.appThreadId === initial.thread.id &&
+            thread.providerInstanceId === providerThread?.providerInstanceId && !initial.providerThreads.some((old) => old.id === thread.id);
+          return (sameThread || freshRoot) && thread.lastRunOrdinal === (turnCount === 0 ? null : turnCount);
+        });
+        if (accepted && providerRewound && next.runs.some((run) => run.id === witness.id && run.status === "rolled_back")) finish();
+      };
+      const timer = setTimeout(() => finish(new Error("Timed out waiting for the thread to rewind.")), 120_000);
+      unwatch = this.watchThread(initial.thread.id, (next) => { state = next; inspect(); });
+      this.rollback(initial.thread.id, checkpoint, restoreFiles, commandId).then(() => { accepted = true; inspect(); }, finish);
+    });
   }
 
   /** Runs a commit / push / PR action, reporting progress as it goes. Rejects with the server's message on failure. */

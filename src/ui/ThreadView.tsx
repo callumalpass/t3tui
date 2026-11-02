@@ -2,13 +2,14 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import type { ThreadId } from "@t3tools/contracts";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
-import { memo, type RefObject } from "react";
+import { memo, useState, type RefObject } from "react";
 import { findTextSegments } from "../model/search.ts";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
 import { FindText } from "./FindText.tsx";
 
-import type { ThreadHistory } from "../client/session.ts";
+import { CommandOutput } from "./CommandOutput.tsx";
+import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
 import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
@@ -21,6 +22,9 @@ export function ThreadView(props: {
   readonly timeline: Timeline | null;
   readonly findQuery?: string | undefined;
   readonly findMatch?: OrchestrationV2SearchThreadResult["match"] | undefined;
+  readonly selectedMessageId: string | null;
+  readonly session: T3Session;
+  readonly streamCommandOutput: boolean;
   readonly history: ThreadHistory | null;
   readonly loading: boolean;
   readonly error?: string | undefined;
@@ -57,6 +61,9 @@ export function ThreadView(props: {
           <Row
             key={row.id}
             row={row}
+            selected={row.kind === "message" && row.message.id === props.selectedMessageId}
+            session={props.session}
+            streamCommandOutput={props.streamCommandOutput}
             scrollRef={props.scrollRef}
             findQuery={props.findQuery ?? ""}
             activeOccurrence={props.findMatch?.entryId === row.id ? props.findMatch.occurrence : null}
@@ -94,6 +101,9 @@ function Divider({ label, color }: { readonly label: string; readonly color: str
  */
 const Row = memo(function Row(props: {
   readonly row: MessagesTimelineRow;
+  readonly selected: boolean;
+  readonly session: T3Session;
+  readonly streamCommandOutput: boolean;
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
   readonly findQuery: string;
   readonly activeOccurrence: number | null;
@@ -111,7 +121,7 @@ const Row = memo(function Row(props: {
         const segments = findTextSegments(message.text, message.role === "user");
         if (segments.some((segment) => findThreadSearchOccurrences(segment, props.findQuery).length > 0)) return <FindText segments={segments} query={props.findQuery} activeOccurrence={props.activeOccurrence} scrollRef={props.scrollRef} />;
       }
-      if (message.role === "user") return <UserMessage text={message.text} />;
+      if (message.role === "user") return <UserMessage text={message.text} messageId={message.id} selected={props.selected} />;
       if (message.role === "system") return <text marginTop={1} fg={colors.muted}>{message.text}</text>;
       return (
         <box marginTop={1}>
@@ -137,7 +147,7 @@ const Row = memo(function Row(props: {
       return (
         <box marginTop={row.continuesWorkLog ? 0 : 1} flexDirection="column">
           {row.groupedEntries.map((entry) => (
-            <WorkEntry key={entry.id} entry={entry} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} onOpenThread={props.onOpenThread} />
+            <WorkEntry key={entry.id} entry={entry} expanded={row.isExpandedToolGroup} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} onOpenThread={props.onOpenThread} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
           ))}
         </box>
       );
@@ -145,9 +155,7 @@ const Row = memo(function Row(props: {
       return (
         <box marginTop={1} flexDirection="column">
           {row.thought?.detail ? <text fg={colors.faint}>{`∴ ${liveThoughtLine(row.thought.detail)}`}</text> : null}
-          <box onMouseDown={() => openChild(row.entry, props.onOpenThread)}>
-            <text fg={row.active ? colors.info : colors.muted}>{`${row.active ? "◐" : glyphFor(row.entry)} ${liveWorkEntryLabel(row.entry, workspaceRoot, row.active)}${childThreadOf(row.entry) ? "  ↗" : ""}`}</text>
-          </box>
+          <WorkEntry entry={row.entry} expanded={row.expanded} label={liveWorkEntryLabel(row.entry, workspaceRoot, row.active)} onOpenThread={props.onOpenThread} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
         </box>
       );
     case "working": {
@@ -183,25 +191,35 @@ const USER_FOLD_LINES = 8;
 const USER_FOLD_CHARS = 600;
 
 /** The web's user bubble: right-aligned, at most 80% wide, folded past 8 lines or 600 characters. */
-function UserMessage({ text }: { readonly text: string }) {
+function UserMessage({ text, messageId, selected }: { readonly text: string; readonly messageId: string; readonly selected: boolean }) {
   const trimmed = text.trim();
   const lines = trimmed.split("\n");
   let shown = lines.slice(0, USER_FOLD_LINES).join("\n");
   if (shown.length > USER_FOLD_CHARS) shown = `${shown.slice(0, USER_FOLD_CHARS).trimEnd()}…`;
   const folded = shown.length < trimmed.length;
   return (
-    <box marginTop={1} alignSelf="flex-end" maxWidth="80%" backgroundColor={colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column">
+    <box id={`turn-${messageId}`} border={selected ? ["left"] : []} borderColor={colors.accent} marginTop={1} alignSelf="flex-end" maxWidth="80%" backgroundColor={colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column">
       <text fg={colors.text}>{shown}</text>
       {folded ? <text fg={colors.faint}>{`… ${Math.max(1, lines.length - shown.split("\n").length)} more lines`}</text> : null}
     </box>
   );
 }
 
-function WorkEntry({ entry, label, onOpenThread }: { readonly entry: WorkLogEntry; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void }) {
+function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, session, streamCommandOutput, scrollRef }: { readonly entry: WorkLogEntry; readonly expanded: boolean; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void; readonly session: T3Session; readonly streamCommandOutput: boolean; readonly scrollRef: RefObject<ScrollBoxRenderable | null> }) {
+  const [open, setExpanded] = useState<boolean | null>(null);
+  const expanded = open ?? groupExpanded;
+  const item = entry.structuredPayload;
+  const command = item?.type === "command_execution" ? item : null;
+  const projected = entry.projectedItem;
   const failed = workEntryDisplayIndicatesToolFailure(entry);
   const child = childThreadOf(entry);
   const tone = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : entry.tone === "thinking" ? colors.faint : colors.muted;
   const text = <text fg={tone}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}${child ? "  ↗" : ""}`}</text>;
+  if (command) return <box flexDirection="column">
+    <box flexDirection="row" onMouseDown={() => setExpanded(!expanded)}><text fg={colors.faint}>{expanded ? "⌄ " : "› "}</text>{text}</box>
+    {expanded && streamCommandOutput && projected ? <CommandOutput session={session} threadId={projected.sourceThreadId} itemId={projected.sourceItemId} scrollRef={scrollRef} />
+      : expanded ? <text fg={colors.muted}>{command.output || "No output."}</text> : null}
+  </box>;
   return child ? <box onMouseDown={() => onOpenThread(child)}>{text}</box> : text;
 }
 
@@ -209,11 +227,6 @@ function WorkEntry({ entry, label, onOpenThread }: { readonly entry: WorkLogEntr
 export function childThreadOf(entry: WorkLogEntry): ThreadId | null {
   const item = entry.structuredPayload;
   return item?.type === "subagent" ? (item.childThreadId ?? null) : null;
-}
-
-function openChild(entry: WorkLogEntry, onOpenThread: (threadId: ThreadId) => void): void {
-  const child = childThreadOf(entry);
-  if (child) onOpenThread(child);
 }
 
 function EventRow({ item, pending }: { readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {

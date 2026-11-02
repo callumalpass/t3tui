@@ -61,7 +61,10 @@ Navigation:
 | `x` | dismiss the agent's question, or decline its secret request |
 | `enter` | with a secret request pending: type or paste the secret into a masked field (it never goes through the message box); `enter` saves it, `esc` cancels |
 | `Q` | go through queued messages: `j`/`k` move, `enter` sends one now (starts a turn, or steers it into the running one), `e` edits it in the message box (`enter` saves, `esc` cancels), `x` removes it. `alt+↑` in the message box edits the last one |
-| `e` | expand all folded turns and work groups |
+| `e` | expand all folded turns, work groups and command output |
+| `[` / `]` | select the previous / next turn; `esc` clears the selection |
+| `D` | view changes from the selected turn, or the latest turn with changes |
+| `R` | rewind to before the selected prompt, after confirmation |
 | `o` | load earlier turns |
 | `f` | find in the open thread; `enter` / `shift+enter` or `ctrl+n` / `ctrl+p` move between matches, `esc` closes |
 | `A` | show archived threads / return to active threads |
@@ -79,9 +82,11 @@ Navigation:
 The layout follows T3 Code's web app, and much of it uses the web app's own code (vendored from upstream):
 
 - **Sidebar:** the same sections (Pinned, Active, Working, then Snoozed and Settled folded to a count) and the same status words: `Working 2m`, `Waiting`, `Approval`, `Input`, `Request`, `Limited`, `Failed`, `Done`. Threads that need you are bold.
+- **Turns:** `[`/`]` select a turn and mark its prompt. `R` or `Revert to this turn` asks `Edit from here?`, then rewinds chat and returns the prompt to the composer, keeping file changes. `Revert files too` in the palette also restores files, including your own edits. Stop a running turn first. Rewinding messages with attachments still needs the web app.
+- **Command output:** expand work with `e` / `Expand all work`, or click a command. Output streams while its expanded row is in view; collapsing it, scrolling away or opening another thread stops the subscription.
 - **Conversation:** built by the web app's timeline logic. Each finished turn's work folds into one line (`Worked for 3m 12s`), your messages are right-aligned, and a running turn shows its live step and `Working for 12s`.
 - **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation.
-- **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `j`/`k` scroll, `esc` closes.
+- **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `D` (or `View changes from this turn`) reviews a turn's checkpoint; `View all changes in this thread` reviews the whole thread. `j`/`k` scroll, `[`/`]` choose a file, and `esc` closes. In uncommitted diffs, `x` or `enter` shows the whole file, including unchanged context; press it again to collapse. Historical checkpoint context is unavailable, as in the web app.
 - **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
 - **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
 - **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them). A running subagent the web could stop gets a "Stop subagent" command in the palette.
