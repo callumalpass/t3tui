@@ -3,6 +3,10 @@ import type { ThreadId } from "@t3tools/contracts";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, type RefObject } from "react";
+import { findTextSegments } from "../model/search.ts";
+import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
+import { FindText } from "./FindText.tsx";
 
 import type { ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
@@ -15,6 +19,8 @@ export function ThreadView(props: {
   readonly title: string;
   readonly detail: string;
   readonly timeline: Timeline | null;
+  readonly findQuery?: string | undefined;
+  readonly findMatch?: OrchestrationV2SearchThreadResult["match"] | undefined;
   readonly history: ThreadHistory | null;
   readonly loading: boolean;
   readonly error?: string | undefined;
@@ -51,6 +57,9 @@ export function ThreadView(props: {
           <Row
             key={row.id}
             row={row}
+            scrollRef={props.scrollRef}
+            findQuery={props.findQuery ?? ""}
+            activeOccurrence={props.findMatch?.entryId === row.id ? props.findMatch.occurrence : null}
             pending={row.kind === "event" && pendingIds.has(eventRequestId(row) ?? "")}
             workspaceRoot={props.workspaceRoot}
             now={row.kind === "working" ? props.now : 0}
@@ -85,6 +94,9 @@ function Divider({ label, color }: { readonly label: string; readonly color: str
  */
 const Row = memo(function Row(props: {
   readonly row: MessagesTimelineRow;
+  readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
+  readonly findQuery: string;
+  readonly activeOccurrence: number | null;
   readonly pending: boolean;
   readonly workspaceRoot: string | undefined;
   readonly now: number;
@@ -95,6 +107,10 @@ const Row = memo(function Row(props: {
   switch (row.kind) {
     case "message": {
       const { message } = row;
+      if (props.findQuery) {
+        const segments = findTextSegments(message.text, message.role === "user");
+        if (segments.some((segment) => findThreadSearchOccurrences(segment, props.findQuery).length > 0)) return <FindText segments={segments} query={props.findQuery} activeOccurrence={props.activeOccurrence} scrollRef={props.scrollRef} />;
+      }
       if (message.role === "user") return <UserMessage text={message.text} />;
       if (message.role === "system") return <text marginTop={1} fg={colors.muted}>{message.text}</text>;
       return (
@@ -144,6 +160,7 @@ const Row = memo(function Row(props: {
     case "context-compaction":
       return <Divider label={row.failed ? `${row.title ?? "Compaction failed"}${row.failure ? `: ${row.failure}` : ""}` : (row.title ?? row.label)} color={row.failed ? colors.bad : colors.faint} />;
     case "proposed-plan":
+      if (props.findQuery) return <FindText segments={findTextSegments(row.proposedPlan.planMarkdown)} query={props.findQuery} activeOccurrence={props.activeOccurrence} scrollRef={props.scrollRef} />;
       return (
         <box marginTop={1} border borderStyle="rounded" borderColor={colors.plan} flexDirection="column" paddingLeft={1} paddingRight={1}>
           <text fg={colors.plan}>

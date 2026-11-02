@@ -54,7 +54,7 @@ describe("thread menu", () => {
     expect(menu).toContain("copy-thread-id");
     expect(menu).toContain("delete");
     expect(menu).not.toContain("project-settings");
-    expect(menu).not.toContain("find");
+    expect(menu).toContain("find");
   });
 
   test("a settled, pinned thread offers to undo both", () => {
@@ -95,6 +95,9 @@ describe("thread menu", () => {
     await session.renameThread(id, "New name");
     await session.regenerateTitle(id);
     await session.archiveThread(id);
+    await session.unarchiveThread(id);
+    await session.reorderThread(id, "pinned", "m");
+    await session.reorderThread(id, "active", "t");
     await session.deleteThread(id, false);
     expect(sent.filter((command) => !Schema.is(OrchestrationV2Command)(command))).toEqual([]);
     expect(sent.map((command) => (command as { type: string }).type)).toEqual([
@@ -109,6 +112,9 @@ describe("thread menu", () => {
       "thread.metadata.update",
       "thread.metadata.update",
       "thread.archive",
+      "thread.unarchive",
+      "thread.pin.reorder",
+      "thread.active.reorder",
       "thread.delete",
     ]);
   });

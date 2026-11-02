@@ -25,7 +25,7 @@ import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type De
 import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type Picker, type PickerItem } from "../model/palette.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
-import { threadRows, type Section } from "../model/threads.ts";
+import type { Section } from "../model/threads.ts";
 import { ComposerMenu } from "./ComposerMenu.tsx";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
@@ -45,13 +45,18 @@ import { ThreadView } from "./ThreadView.tsx";
 import { useQueue } from "./useQueue.ts";
 import { useSecretRequest } from "./useSecretRequest.ts";
 import { canStopSubagent } from "../model/subagents.ts";
+import { useThreadLibrary } from "./useThreadLibrary.ts";
+import { usePaletteSearch } from "./usePaletteSearch.ts";
+import { useThreadFind } from "./useThreadFind.ts";
+import { ThreadFindBar } from "./ThreadFindBar.tsx";
+import { mergeThreadShells, messageMatchGroups } from "../model/search.ts";
 
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
  * "details": j/k move through the details panel. "settings": j/k move through settings.
  * The rest are overlays with their own input.
  */
-type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings";
+type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "find";
 
 /** Holding j/k skims past threads; only subscribe to one you stop on. */
 const SUBSCRIBE_DELAY_MS = 120;
@@ -162,8 +167,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     return () => clearInterval(timer);
   }, []);
 
-  const allRows = useMemo(() => threadRows(shell.snapshot, { query: filter }), [shell.snapshot, filter]);
-  const unfold = showFolded || filter.trim() !== "";
+  const library = useThreadLibrary(session, shell.snapshot, filter);
+  const allRows = library.allRows;
+  useEffect(() => { if (!attached) setSelectedId(undefined); }, [library.archived]);
+  const unfold = library.archived || showFolded || filter.trim() !== "";
   const rows = useMemo(() => (unfold ? allRows : allRows.filter((row) => !FOLDED_SECTIONS.includes(row.section))), [allRows, unfold]);
   const collapsed = useMemo(
     () => new Map(unfold ? [] : FOLDED_SECTIONS.map((section) => [section, allRows.filter((row) => row.section === section).length] as const)),
@@ -173,7 +180,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const threadId = selectedId ?? rows[0]?.thread.id;
   const selectedIndex = rows.findIndex((row) => row.thread.id === threadId);
   const threadRow = allRows.find((row) => row.thread.id === threadId);
-  const threadShell = threadRow?.thread ?? shell.snapshot?.threads.find((thread) => thread.id === threadId) ?? (threadId ? familyShells.get(threadId) : undefined);
+  const threadShell = threadRow?.thread ?? shell.snapshot?.threads.find((thread) => thread.id === threadId) ?? library.archive?.threads.find((thread) => thread.id === threadId) ?? library.merged?.threads.find((thread) => thread.id === threadId) ?? (threadId ? familyShells.get(threadId) : undefined);
   const composerKey: string = draft ? DRAFT_KEY : (threadId ?? "");
   // Pin the initial selection to a thread, or it would follow whatever sorts first.
   useEffect(() => {
@@ -217,11 +224,13 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const timeline = useMemo(() => {
     if (!thread?.projection || !watchedId) return null;
     const previous = previousTimeline.current?.id === watchedId ? previousTimeline.current.timeline : null;
-    const next = buildTimeline(thread.projection, { expandAll }, previous);
+    const next = buildTimeline(thread.projection, { expandAll: expandAll || mode === "find" }, previous);
     previousTimeline.current = { id: watchedId, timeline: next };
     return next;
-  }, [thread?.projection, watchedId, expandAll]);
+  }, [thread?.projection, watchedId, expandAll, mode === "find"]);
   const current = watchedId === threadId ? timeline : null;
+  const find = useThreadFind(session, watchedId, thread, current, mode === "find");
+  const openFind = () => { setDiff(null); setSettingsIndex(null); setMode("find"); };
   const pendingApproval = current?.pending.approvals[0];
   const pendingInput = current?.pending.userInputs[0];
   const questionDraft = pendingInput ? (questionDrafts.get(pendingInput.requestId) ?? { index: 0, answers: {} }) : undefined;
@@ -607,6 +616,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return run(`Snoozed until ${preset.whenLabel}`, () => session.snoozeThread(id, preset.snoozedUntil));
     }
     switch (action) {
+      case "find":
+        openThread(id);
+        return openFind();
       case "settle":
         return run("Settled", () => session.settleThread(id));
       case "unsettle":
@@ -949,9 +961,13 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options", "notifications", "alerts"] });
   command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
 
+  commands.push(...library.commands(threadId));
+  if (threadId && !draft) command("find", "Find in thread", openFind, { shortcut: "f", keywords: ["search", "messages", "plans"] });
+  const paletteSearch = usePaletteSearch(session, library.merged, paletteQuery, mode === "palette");
+  const paletteSnapshot = useMemo(() => mergeThreadShells(library.merged, paletteSearch.result?.threads ?? []), [library.merged, paletteSearch.result]);
   const commandKey = commands.map((candidate) => `${candidate.id}:${candidate.title}`).join("|");
   // eslint-disable-next-line react-hooks/exhaustive-deps -- commands are rebuilt each render; commandKey tracks what changed.
-  const groups = useMemo(() => (mode === "palette" ? paletteGroups({ query: paletteQuery, commands, snapshot: shell.snapshot, now }) : []), [mode, paletteQuery, commandKey, shell.snapshot]);
+  const groups = useMemo(() => (mode === "palette" ? messageMatchGroups(paletteGroups({ query: paletteQuery, commands, snapshot: paletteSnapshot, now }), paletteSearch.result, paletteSnapshot, paletteQuery, now) : []), [mode, paletteQuery, commandKey, paletteSnapshot, paletteSearch.result]);
   const entries = paletteEntries(groups);
   const openPalette = () => {
     if (mode !== "palette" && mode !== "confirm") returnMode.current = mode === "filter" ? "nav" : mode;
@@ -1065,6 +1081,15 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   };
 
   useKeyboard((key) => {
+    if (mode === "find") {
+      if (key.ctrl && key.name === "c") return quit();
+      if (key.ctrl && key.name === "k") return openPalette(), key.preventDefault();
+      if (find.handleKey(key)) {
+        if (key.name === "escape") setMode("nav");
+        return key.preventDefault();
+      }
+      return;
+    }
     if (mode === "input" && menuKey(key)) return key.preventDefault();
     if (mode === "picker") {
       if (key.ctrl && key.name === "c") return quit();
@@ -1166,6 +1191,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       }
     }
     if (workspace.key(key)) return;
+    if (mode === "nav" && library.key(key, threadId)) return key.preventDefault();
+    if (mode === "nav" && key.name === "f" && threadId && !draft) return openFind(), key.preventDefault();
     switch (key.name) {
       case "q":
         if (diff) return setDiff(null);
@@ -1327,6 +1354,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               if (target) openThreadMenu(target);
             }}
             onUnfold={() => setShowFolded(true)}
+            showMore={unfold && library.hasOlder}
+            onShowMore={() => void library.loadOlder()}
+            shelfStatus={library.error ?? (library.loading ? "Loading…" : library.archived ? "Archived threads · A to go back" : null)}
           />
         )}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
@@ -1346,7 +1376,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             <DiffView diff={diff} scrollRef={scrollRef} />
           ) : draft ? (
             <DraftView lines={draftLines} />
-          ) : threadId && detailsInPlace ? (
+          ) : threadId && detailsInPlace && mode !== "find" ? (
             <box flexGrow={1} minHeight={0} flexDirection="column">
               {detailsPanel(true)}
             </box>
@@ -1357,6 +1387,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               title={title}
               detail={threadShell?.branch ?? ""}
               timeline={current}
+              findQuery={find.open ? find.query.trim() : ""}
+              findMatch={find.match}
               history={watchedId === threadId ? (thread?.history ?? null) : null}
               loading={watchedId !== threadId || thread?.status === "loading"}
               error={thread?.error}
@@ -1372,6 +1404,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             </box>
           )}
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
+          {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} /> : null}
           {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} /> : null}
           {mode !== "confirm" && pendingInput && questionDraft ? <QuestionPanel request={pendingInput} index={questionDraft.index} draft={questionDraft.answers[pendingInput.questions[questionDraft.index]?.id ?? ""]} /> : null}
@@ -1446,6 +1479,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       {mode === "palette" ? (
         <Palette
           query={paletteQuery}
+          status={paletteSearch.error ?? (paletteSearch.pending ? "Searching messages…" : null)}
           groups={groups}
           selected={Math.min(paletteIndex, Math.max(0, entries.length - 1))}
           width={width}
@@ -1496,6 +1530,7 @@ function hints(
   if (state.secret === "focused") return "type or paste the secret · enter save securely · esc cancel";
   if (mode === "input" && state.queue === "editing") return "enter save the queued message · esc cancel the edit";
   if (mode === "nav" && state.queue === "focused") return "j/k move · enter send now · e edit · x remove · esc back";
+  if (mode === "find") return "enter next match · shift+enter previous · ctrl+n/p match · esc close find";
   if (mode === "filter") return "enter done · esc close";
   if (mode === "palette") return "↑/↓ move · enter run · esc close";
   if (mode === "picker") return "↑/↓ move · enter choose · esc close";

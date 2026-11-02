@@ -7,6 +7,7 @@ import { colors } from "./theme.ts";
  */
 export function Palette(props: {
   readonly query: string;
+  readonly status?: string | null | undefined;
   readonly placeholder?: string;
   readonly groups: readonly PaletteGroup[];
   readonly selected: number;
@@ -35,6 +36,7 @@ export function Palette(props: {
         <text fg={colors.accent}>{"› "}</text>
         <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.panel} focusedBackgroundColor={colors.panel} />
       </box>
+      {props.status ? <text fg={colors.muted} paddingLeft={1}>{props.status}</text> : null}
       <box border={["top"]} borderColor={colors.border} flexDirection="column" height={listHeight + 1}>
         {rows.length === 0 ? <text fg={colors.muted} paddingLeft={1}>No matches</text> : null}
         {rows.slice(start, start + listHeight).map((row) =>
@@ -54,7 +56,7 @@ export function Palette(props: {
 function Row(props: { readonly entry: PaletteEntry; readonly selected: boolean; readonly inner: number; readonly onPick: () => void }) {
   const { entry } = props;
   const right = entry.kind === "command" ? (entry.command.shortcut ?? "") : entry.project;
-  const title = entry.kind === "command" ? entry.command.title : `${entry.subagent ? "↳ " : ""}${entry.title}`;
+  const title = entry.kind === "command" ? entry.command.title : `${entry.subagent ? "↳ " : ""}${entry.snippet ? truncate(entry.title, Math.max(12, Math.floor(props.inner / 3))) : entry.title}${entry.snippet ? ` — ${entry.snippet}` : ""}`;
   return (
     <box flexDirection="row" paddingLeft={1} paddingRight={1} backgroundColor={props.selected ? colors.selectedBg : "transparent"} onMouseDown={props.onPick}>
       <text fg={props.selected ? colors.text : entry.kind === "command" ? colors.text : colors.muted}>{truncate(title, props.inner - right.length - 2)}</text>

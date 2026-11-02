@@ -6,6 +6,9 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2Command,
+  type OrchestrationV2SearchThreadsInput,
+  type OrchestrationV2SearchThreadInput,
+  type OrchestrationV2GetOlderSettledThreadsInput,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type ProviderApprovalDecision,
@@ -587,6 +590,32 @@ export class T3Session {
       this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({ ...rest, commandId, initialMessage: { messageId: MessageId.make(commandId), text, ...(context ? { context } : {}), attachments: [] } }),
     );
     return result.threadId;
+  }
+
+  /** Searches message bodies and older titles, as the web palette does. */
+  searchThreads(input: OrchestrationV2SearchThreadsInput) {
+    return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.searchThreads](input));
+  }
+
+  /** Finds one occurrence and its position in the whole thread, including unloaded history. */
+  searchThread(input: OrchestrationV2SearchThreadInput) {
+    return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.searchThread](input));
+  }
+
+  archivedThreads() {
+    return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]({}));
+  }
+
+  olderSettledThreads(input: OrchestrationV2GetOlderSettledThreadsInput) {
+    return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads](input));
+  }
+
+  unarchiveThread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.unarchive", commandId: newCommandId(), threadId });
+  }
+
+  reorderThread(threadId: ThreadId, section: "pinned" | "active", orderKey: string): Promise<void> {
+    return this.dispatch({ type: section === "pinned" ? "thread.pin.reorder" : "thread.active.reorder", commandId: newCommandId(), threadId, orderKey });
   }
 
   /** Files and folders under `cwd` matching `query`, as the composer's @ menu searches them. */
