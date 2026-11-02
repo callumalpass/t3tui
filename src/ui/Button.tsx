@@ -75,7 +75,7 @@ export function wheelStep(event: MouseEvent): -1 | 0 | 1 {
 }
 
 /**
- * The 1-column drag target between the list and the conversation. At rest it is invisible
+ * The 1-column drag target between the conversation and the list or details. At rest it is invisible
  * (the panel/background shade change is the edge, and the bar is drawn in the background
  * colour, which also keeps it findable on screen for tests); under the pointer or while
  * dragging it shows as an accent bar. OpenTUI sends a drag to whatever is under the

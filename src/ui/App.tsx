@@ -80,6 +80,8 @@ const MAX_COMPOSER_LINES = 8;
 /** Sections folded to a count unless you filter or press z, like the web sidebar's. */
 const FOLDED_SECTIONS: readonly Section[] = ["snoozed", "settled"];
 const DETAILS_WIDTH = 38;
+/** The narrowest the details column can be dragged. */
+const MIN_DETAILS_WIDTH = 28;
 /** Below this, the details panel takes the conversation's place instead of a column beside it. */
 const MIN_CONVERSATION_WIDTH = 70;
 
@@ -111,13 +113,15 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const [expandAll, setExpandAll] = useState(false);
   /** Folds opened one at a time by a click, for the open thread. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
-  /** The thread list's width once its border is dragged; null follows the window. */
+  /** The thread list's and details column's widths once their edges are dragged; null follows the window. */
   const [listWidthPref, setListWidthPref] = useState<number | null>(props.layout?.listWidth ?? null);
-  const listWidthNow = useRef(listWidthPref);
-  listWidthNow.current = listWidthPref;
+  const [detailsWidthPref, setDetailsWidthPref] = useState<number | null>(props.layout?.detailsWidth ?? null);
+  const layoutNow = useRef<Layout>({ listWidth: listWidthPref, detailsWidth: detailsWidthPref });
+  layoutNow.current = { listWidth: listWidthPref, detailsWidth: detailsWidthPref };
   /** Kept for the next run; a failed save only costs that. */
-  const saveListWidth = (listWidth: number | null) => void saveLayout({ listWidth }).catch(() => {});
-  const [resizing, setResizing] = useState(false);
+  const saveLayoutNow = (change: Partial<Layout> = {}) => void saveLayout({ ...layoutNow.current, ...change }).catch(() => {});
+  /** The edge being dragged. */
+  const [resizing, setResizing] = useState<"list" | "details" | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
   const [config, setConfig] = useState(props.config);
   const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
@@ -978,7 +982,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const headerRoom = width - 18 - (headerProject ? headerProject.length + 3 : 0) - (headerStatus ? headerStatus.text.length + 2 : 0) - (shell.status.type !== "live" ? status.length + 2 : 0) - (usageInfo.note ? usageInfo.note.length + 2 : 0);
   const headerTitle = truncate(title, Math.max(8, headerRoom));
   const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
-  const detailsColumn = panel.show && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
+  // Room for the details column and its edge beside the conversation; a dragged width gives way to the conversation first.
+  const detailsRoom = width - listWidth - 1 - MIN_CONVERSATION_WIDTH;
+  const detailsWidth = Math.min(detailsWidthPref ?? DETAILS_WIDTH, Math.max(DETAILS_WIDTH, detailsRoom));
+  const detailsColumn = panel.show && detailsWidth <= detailsRoom;
   const detailsInPlace = panel.show && !detailsColumn;
   // The block's height: a row of padding on top, the text, then the model line inside it.
   // Padding row, text, a blank row, then the model line.
@@ -1017,7 +1024,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       details={panel.details}
       // Idle subagents are left out of the shell, which is where details come from; newer servers serve them on request.
       {...(threadId && !threadShell ? { empty: supportsFamilies ? "Loading details…" : "No details for idle subagent threads on this server. u goes to the parent." } : {})}
-      width={inPlace ? width - listWidth : DETAILS_WIDTH}
+      width={inPlace ? width - listWidth : detailsWidth}
       loading={panel.loading}
       unfolded={panel.unfolded}
       inPlace={inPlace}
@@ -1034,14 +1041,15 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       backgroundColor={colors.bg}
       {...(resizing
         ? {
-            onMouseDrag: (event: MouseEvent) => setListWidthPref(clampListWidth(event.x, width)),
+            onMouseDrag: (event: MouseEvent) =>
+              resizing === "list" ? setListWidthPref(clampListWidth(event.x, width)) : setDetailsWidthPref(Math.max(MIN_DETAILS_WIDTH, Math.min(width - event.x - 1, detailsRoom))),
             onMouseUp: () => {
-              setResizing(false);
-              saveListWidth(listWidthNow.current);
+              setResizing(null);
+              saveLayoutNow();
             },
             onMouseDragEnd: () => {
-              setResizing(false);
-              saveListWidth(listWidthNow.current);
+              setResizing(null);
+              saveLayoutNow();
             },
           }
         : {})}
@@ -1091,9 +1099,9 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             shelfStatus={library.error ?? (library.loading ? "Loading…" : library.archived ? "Archived threads · A to go back" : null)}
           />
         )}
-        {attached ? null : <ResizeHandle active={resizing} onStart={() => setResizing(true)} onReset={() => {
+        {attached ? null : <ResizeHandle active={resizing === "list"} onStart={() => setResizing("list")} onReset={() => {
               setListWidthPref(null);
-              saveListWidth(null);
+              saveLayoutNow({ listWidth: null });
             }} />}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
           <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation}>
@@ -1149,7 +1157,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
-          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 3} actions={queue.actions} /> : null}
+          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? detailsWidth + 1 : 0) - 3} actions={queue.actions} /> : null}
           {mode !== "confirm" && questions.request && questions.draft ? <QuestionPanel
               request={questions.request}
               index={questions.draft.index}
@@ -1170,7 +1178,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               onCancel={closeOverlay}
             />
           ) : null}
-          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} onPick={composerMenu.pick} /> : null}
+          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (detailsColumn ? detailsWidth + 1 : 0) - 2} onPick={composerMenu.pick} /> : null}
           {attach.pending.length > 0 ? (
             <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
               <text fg={colors.muted}>Attached:</text>
@@ -1253,7 +1261,15 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             </box>
           ) : null}
         </box>
-        {detailsColumn ? detailsPanel(false) : null}
+        {detailsColumn ? (
+          <>
+            <ResizeHandle active={resizing === "details"} onStart={() => setResizing("details")} onReset={() => {
+              setDetailsWidthPref(null);
+              saveLayoutNow({ detailsWidth: null });
+            }} />
+            {detailsPanel(false)}
+          </>
+        ) : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
         {flash ? <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text> : <HintBar hints={hintsFor(keymap.hints)} width={width - 2} />}

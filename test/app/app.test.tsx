@@ -386,4 +386,21 @@ describe("mouse", () => {
     const next = await open({ layout });
     expect(next.find("┃").x).toBe(before + 7);
   });
+
+  test("dragging the details edge resizes it and keeps the width; right-click resets it", async () => {
+    // Wide enough for the details column to open by itself.
+    const first = await open({ width: 200 });
+    // The details edge is the last bar on a row above the composer.
+    const edge = () => first.frame().split("\n")[10]!.lastIndexOf("┃");
+    const before = edge();
+    expect(before).toBe(200 - 38 - 1);
+    await first.mockMouse.drag(before, 10, before - 10, 10);
+    await first.settle(100);
+    expect(edge()).toBe(before - 10);
+    expect((await loadLayout()).detailsWidth).toBe(48);
+    await first.click(before - 10, 10, 2);
+    await first.settle(100);
+    expect(edge()).toBe(before);
+    expect((await loadLayout()).detailsWidth).toBeNull();
+  });
 });

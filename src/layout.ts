@@ -10,9 +10,11 @@ import { configDir } from "./client/auth.ts";
 export interface Layout {
   /** The thread list's width once its border is dragged; null follows the window. */
   readonly listWidth: number | null;
+  /** The details column's width once its border is dragged; null is the default width. */
+  readonly detailsWidth: number | null;
 }
 
-export const DEFAULT_LAYOUT: Layout = { listWidth: null };
+export const DEFAULT_LAYOUT: Layout = { listWidth: null, detailsWidth: null };
 
 const layoutPath = () => join(configDir(), "layout.json");
 
@@ -27,9 +29,10 @@ export async function loadLayout(): Promise<Layout> {
 
 export function parseLayout(raw: unknown): Layout {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const width = record.listWidth;
-  return { listWidth: typeof width === "number" && Number.isInteger(width) && width > 0 ? width : null };
+  return { listWidth: positiveInteger(record.listWidth), detailsWidth: positiveInteger(record.detailsWidth) };
 }
+
+const positiveInteger = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null);
 
 export async function saveLayout(layout: Layout): Promise<void> {
   await mkdir(configDir(), { recursive: true });
