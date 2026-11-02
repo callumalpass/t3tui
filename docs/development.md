@@ -28,3 +28,15 @@ bun install && bun run typecheck && bun test
 ```
 
 Type errors after a bump point at the protocol changes to adapt to.
+
+## Releasing
+
+Releases are standalone binaries built with `bun build --compile`, so users don't need Bun or a checkout. To cut one, bump `version` in `package.json`, commit, and push a matching tag:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The [Release workflow](../.github/workflows/release.yml) compiles linux-x64, linux-arm64, darwin-x64 and darwin-arm64 on one machine, opens each binary's dashboard on its own OS, and publishes them gzipped with a `SHA256SUMS` file, which `install.sh` and `t3tui upgrade` both check. Run the workflow by hand to build and check the binaries without releasing.
+
+To build a binary locally, run `bun run compile` (this machine) or name targets, e.g. `bun run compile darwin-arm64`. Other platforms' targets need their OpenTUI packages: `bun install --os='*' --cpu='*'`. Binaries go in `release/`.

@@ -12,7 +12,17 @@ Built with Bun and [OpenTUI](https://github.com/anomalyco/opentui) (React). t3tu
 
 ## Install
 
-You need [Bun](https://bun.sh) 1.3.14 or later and a T3 Code server running on the same machine (or a token for a remote one; see [How it connects](#how-it-connects)).
+You need a T3 Code server running on the same machine (or a token for a remote one; see [How it connects](#how-it-connects)). On Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/callumalpass/t3tui/main/install.sh | sh
+```
+
+That puts a single `t3tui` binary in `~/.local/bin` (set `T3TUI_INSTALL_DIR` to change it). It needs nothing else installed, not even Bun. `t3tui upgrade` replaces it with the latest release, and `t3tui version` says which you have. Each release notes the T3 Code version it was built against.
+
+### Build from source
+
+On other systems (Windows, or Linux with musl), or to run unreleased changes, you need [Bun](https://bun.sh) 1.3.14 or later:
 
 ```sh
 git clone --recurse-submodules https://github.com/callumalpass/t3tui.git && cd t3tui

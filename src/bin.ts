@@ -3,6 +3,7 @@ import type { OrchestrationV2ShellSnapshot, ThreadId } from "@t3tools/contracts"
 
 import { migrateConfigDir } from "./client/auth.ts";
 import { T3Session } from "./client/session.ts";
+import { isCompiled, upgrade, VERSION } from "./upgrade.ts";
 import { findThread, lastActivity, relativeTime, rowTime, shortId, statusLabel, threadRows } from "./model/threads.ts";
 
 const USAGE = `t3tui: a terminal client for T3 Code
@@ -13,6 +14,8 @@ usage:
   t3tui list [--json]       print threads and exit
   t3tui tmux [--watch] [--session <name>]
                             mirror active threads into tmux windows (default session: t3tui)
+  t3tui upgrade             replace this binary with the latest release
+  t3tui version
   t3tui help
 
 env:
@@ -35,6 +38,13 @@ async function main(argv: string[]) {
       return list(rest.includes("--json"));
     case "tmux":
       return tmuxCommand(rest);
+    case "upgrade":
+      return upgrade();
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(`t3tui ${VERSION}`);
+      return;
     case "help":
     case "--help":
     case "-h":
@@ -83,7 +93,8 @@ async function tmuxCommand(args: string[]) {
   const sessionFlag = args.indexOf("--session");
   const name = sessionFlag >= 0 ? args[sessionFlag + 1] : "t3tui";
   if (!name) return fail("usage: t3tui tmux [--watch] [--session <name>]");
-  const options = { session: name, t3tui: [process.execPath, import.meta.path] };
+  // A compiled binary is t3tui by itself; otherwise it's Bun running this file.
+  const options = { session: name, t3tui: isCompiled() ? [process.execPath] : [process.execPath, import.meta.path] };
   const { session, snapshot } = await connectedSession();
   const { opened } = await syncTmux(snapshot, options);
   console.log(`tmux session "${name}" is in sync (${opened} new window${opened === 1 ? "" : "s"}). Attach with: tmux attach -t ${name}`);

@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "bun run src/bin.ts",
     "build": "bun run scripts/build.ts",
+    "compile": "bun run scripts/compile.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint src test",
     "test": "bun test",
