@@ -21,6 +21,7 @@ const LABELS: { readonly [K in keyof Tui3Config]: { readonly label: string; read
     values: { off: "off", sound: "bell", notifications: "desktop notifications", "notifications-and-sound": "bell and desktop notifications" },
   },
   inAppNotificationsEnabled: { label: "In-app alerts", help: "a line at the bottom for other threads", values: { true: "on", false: "off" } },
+  theme: { label: "Colours", help: "from the next start", values: { auto: "match the terminal", dark: "dark", light: "light" } },
 };
 
 /** tui3's own settings, in display order, each cycled with enter. */

@@ -77,7 +77,7 @@ export function ThreadList(props: {
         <box flexDirection="row">
           <text fg={colors.faint}>{left}</text>
           <box flexGrow={1} />
-          <text fg={status ? statusColor[status.tone] : colors.faint}>{right}</text>
+          <text fg={status ? statusColor(status.tone) : colors.faint}>{right}</text>
         </box>
         <text fg={recede ? colors.muted : colors.text}>{attention ? <strong>{title}</strong> : title}</text>
       </ClickRow>,

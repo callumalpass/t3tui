@@ -145,6 +145,9 @@ async function runUi(attachNeedle?: string) {
   const layout = await loadLayout();
   // The kitty keyboard protocol lets terminals that support it send shift+enter, for newlines.
   const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, useKittyKeyboard: {} });
+  const { applyTheme } = await import("./ui/theme.ts");
+  // Terminals that don't say what their background is get the dark palette.
+  applyTheme(config.theme === "auto" ? ((await renderer.waitForThemeMode(300)) ?? "dark") : config.theme);
   createRoot(renderer).render(createElement(App, { session, config, layout, ...(attachThreadId ? { attachThreadId } : {}) }));
 }
 

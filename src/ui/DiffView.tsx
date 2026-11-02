@@ -49,10 +49,10 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
               showLineNumbers
               wrapMode="none"
               fg={colors.text}
-              addedBg="#1e2a1e"
-              removedBg="#2d1f24"
-              addedContentBg="#1e2a1e"
-              removedContentBg="#2d1f24"
+              addedBg={colors.diffAddedBg}
+              removedBg={colors.diffRemovedBg}
+              addedContentBg={colors.diffAddedBg}
+              removedContentBg={colors.diffRemovedBg}
               addedSignColor={colors.good}
               removedSignColor={colors.bad}
               lineNumberFg={colors.faint}

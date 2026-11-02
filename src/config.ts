@@ -18,9 +18,11 @@ export interface Tui3Config {
   readonly notificationMode: "off" | "notifications" | "sound" | "notifications-and-sound";
   /** As the web's in-app toasts: a line at the bottom for threads you aren't looking at. */
   readonly inAppNotificationsEnabled: boolean;
+  /** auto follows the terminal's background colour. */
+  readonly theme: "auto" | "dark" | "light";
 }
 
-export const DEFAULT_CONFIG: Tui3Config = { followUpBehavior: "steer", sendShortcut: "enter", timestampFormat: "locale", diffIgnoreWhitespace: true, notificationMode: "sound", inAppNotificationsEnabled: true };
+export const DEFAULT_CONFIG: Tui3Config = { followUpBehavior: "steer", sendShortcut: "enter", timestampFormat: "locale", diffIgnoreWhitespace: true, notificationMode: "sound", inAppNotificationsEnabled: true, theme: "auto" };
 
 /** Every setting with its choices in cycling order, for the settings view. */
 export const CONFIG_CHOICES: { readonly [K in keyof Tui3Config]: readonly Tui3Config[K][] } = {
@@ -30,6 +32,7 @@ export const CONFIG_CHOICES: { readonly [K in keyof Tui3Config]: readonly Tui3Co
   diffIgnoreWhitespace: [true, false],
   notificationMode: ["off", "sound", "notifications", "notifications-and-sound"],
   inAppNotificationsEnabled: [true, false],
+  theme: ["auto", "dark", "light"],
 };
 
 export const configPath = () => join(configDir(), "config.json");

@@ -3,7 +3,7 @@ import type { RefObject } from "react";
 
 import type { PullRequestLine } from "../model/pullRequests.ts";
 import { Button, isLeftClick, isRightClick, useHover } from "./Button.tsx";
-import { colors } from "./theme.ts";
+import { colors, type Palette } from "./theme.ts";
 
 export interface PullRequestViewState {
   readonly status: "loading" | "ready" | "error";
@@ -12,15 +12,15 @@ export interface PullRequestViewState {
   readonly error?: string;
 }
 
-const LINE_COLORS: Record<PullRequestLine["kind"], string> = {
-  title: colors.accent,
-  meta: colors.muted,
-  body: colors.text,
-  check: colors.text,
-  review: colors.text,
-  comment: colors.muted,
-  guide: colors.text,
-  faint: colors.faint,
+const LINE_COLORS: Record<PullRequestLine["kind"], keyof Palette> = {
+  title: "accent",
+  meta: "muted",
+  body: "text",
+  check: "text",
+  review: "text",
+  comment: "muted",
+  guide: "text",
+  faint: "faint",
 };
 
 /** A linked pull request in place of the conversation: j/k scroll, o opens it, esc closes. */
@@ -44,7 +44,7 @@ export function PullRequestView(props: { readonly view: PullRequestViewState; re
       <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
         {view.lines.map((line, index) =>
           line.kind === "title" && index > 0 ? (
-            <text key={index} fg={LINE_COLORS[line.kind]} marginTop={1}>
+            <text key={index} fg={colors[LINE_COLORS[line.kind]]} marginTop={1}>
               <strong>{line.text}</strong>
             </text>
           ) : line.kind === "title" ? (
@@ -54,7 +54,7 @@ export function PullRequestView(props: { readonly view: PullRequestViewState; re
           ) : /^https?:\/\//.test(line.text) ? (
             <Link key={index} text={line.text} onPress={props.onOpenUrl} />
           ) : (
-            <text key={index} fg={line.kind === "check" ? checkColor(line.text) : LINE_COLORS[line.kind]}>
+            <text key={index} fg={line.kind === "check" ? checkColor(line.text) : colors[LINE_COLORS[line.kind]]}>
               {line.text || " "}
             </text>
           ),

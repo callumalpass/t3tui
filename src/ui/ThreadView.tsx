@@ -302,9 +302,9 @@ function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision:
   if (!block) return null;
   switch (block.kind) {
     case "notice":
-      return <text marginTop={1} fg={toneColor[block.tone]}>{block.text}</text>;
+      return <text marginTop={1} fg={toneColor(block.tone)}>{block.text}</text>;
     case "tool":
-      return <text marginTop={1} fg={toneColor[block.tone]}>{`${block.icon} ${block.label}`}</text>;
+      return <text marginTop={1} fg={toneColor(block.tone)}>{`${block.icon} ${block.label}`}</text>;
     case "approval":
       return <text marginTop={1} fg={colors.muted}>{`Approval requested: ${block.title}`}</text>;
     case "question":

@@ -1,9 +1,10 @@
-import { SyntaxStyle } from "@opentui/core";
+import { SyntaxStyle, type ThemeMode } from "@opentui/core";
 
 import type { StatusTone } from "../model/threads.ts";
 import type { Tone } from "../model/transcript.ts";
 
-export const colors = {
+/** Tokyo Night. */
+const DARK = {
   bg: "#16161e",
   panel: "#1a1b26",
   border: "#2f334d",
@@ -25,24 +26,50 @@ export const colors = {
   info: "#7dcfff",
   input: "#bb9af7",
   plan: "#c099ff",
-} as const;
-
-export const statusColor: Record<StatusTone, string> = {
-  info: colors.info,
-  muted: colors.muted,
-  warn: colors.warn,
-  input: colors.input,
-  bad: colors.bad,
-  good: colors.good,
+  diffAddedBg: "#1e2a1e",
+  diffRemovedBg: "#2d1f24",
 };
 
-export const toneColor: Record<Tone, string> = {
-  normal: colors.text,
-  muted: colors.muted,
-  good: colors.good,
-  bad: colors.bad,
-  warn: colors.warn,
+export type Palette = { readonly [K in keyof typeof DARK]: string };
+
+/** Tokyo Night Day, for terminals with a light background. */
+const LIGHT: Palette = {
+  bg: "#e1e2e7",
+  panel: "#d6d9e4",
+  border: "#a8aecb",
+  borderFocused: "#2e7de9",
+  text: "#343b58",
+  muted: "#5f6893",
+  faint: "#7a81a8",
+  accent: "#2e7de9",
+  user: "#007197",
+  userBg: "#d0d5e3",
+  good: "#587539",
+  bad: "#d20f39",
+  warn: "#8c6c3e",
+  selectedBg: "#b7c1e3",
+  hoverBg: "#d3d6e2",
+  buttonBg: "#c4c8da",
+  info: "#007197",
+  input: "#9854f1",
+  plan: "#7847bd",
+  diffAddedBg: "#d4e6cc",
+  diffRemovedBg: "#f1d3da",
 };
+
+/** The palette in use. Read at render time, so applyTheme before the first frame sets it everywhere. */
+export const colors: Palette = { ...DARK };
+
+export function applyTheme(mode: ThemeMode): void {
+  Object.assign(colors, mode === "light" ? LIGHT : DARK);
+  markdownStyle = undefined;
+}
+
+const STATUS_COLORS: Record<StatusTone, keyof Palette> = { info: "info", muted: "muted", warn: "warn", input: "input", bad: "bad", good: "good" };
+export const statusColor = (tone: StatusTone): string => colors[STATUS_COLORS[tone]];
+
+const TONE_COLORS: Record<Tone, keyof Palette> = { normal: "text", muted: "muted", good: "good", bad: "bad", warn: "warn" };
+export const toneColor = (tone: Tone): string => colors[TONE_COLORS[tone]];
 
 let markdownStyle: SyntaxStyle | undefined;
 

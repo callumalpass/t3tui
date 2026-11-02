@@ -72,9 +72,9 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
             <>
               <box flexDirection="row">
                 <text fg={colors.text}>{`PR #${branch.pullRequest.number}  `}</text>
-                <text fg={statusColor[branch.pullRequest.tone]}>{branch.pullRequest.state}</text>
+                <text fg={statusColor(branch.pullRequest.tone)}>{branch.pullRequest.state}</text>
                 <box flexGrow={1} />
-                {branch.pullRequest.checks ? <text fg={statusColor[branch.pullRequest.checks.tone]}>{branch.pullRequest.checks.text}</text> : null}
+                {branch.pullRequest.checks ? <text fg={statusColor(branch.pullRequest.checks.tone)}>{branch.pullRequest.checks.text}</text> : null}
               </box>
               {branch.pullRequest.title ? <text fg={colors.muted}>{truncate(branch.pullRequest.title, inner)}</text> : null}
             </>
@@ -139,7 +139,7 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
                 <box flexDirection="row">
                   <text fg={colors.faint}>{truncate(automation.schedule, inner - automation.status.length - 1)}</text>
                   <box flexGrow={1} />
-                  <text fg={statusColor[automation.tone]}>{automation.status}</text>
+                  <text fg={statusColor(automation.tone)}>{automation.status}</text>
                 </box>
               </box>
             </Selectable>
@@ -158,7 +158,7 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
       {details.goal ? (
         <Section title="Goal">
           <text fg={colors.text}>{details.goal.objective}</text>
-          <text fg={statusColor[details.goal.tone]}>{details.goal.status}</text>
+          <text fg={statusColor(details.goal.tone)}>{details.goal.status}</text>
         </Section>
       ) : null}
     </>
