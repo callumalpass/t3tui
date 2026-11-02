@@ -47,16 +47,17 @@ export function newAutomationTemplate(projects: readonly OrchestrationProjectShe
 /** The $EDITOR template for an existing automation, its fields filled in. */
 export function automationTemplate(task: ScheduledTask, projects: readonly OrchestrationProjectShell[]): string {
   const project = projects.find((candidate) => candidate.id === task.projectId);
+  const strategy = task.workspaceStrategy;
   return template({
     title: task.title,
     enabled: task.enabled,
     schedule: scheduleText(task),
     project: project?.title ?? task.projectId,
     thread: task.threadId ?? "",
-    workspace: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
-    startFromOrigin: task.workspaceStrategy.type === "worktree" ? (task.workspaceStrategy.startFromOrigin ?? false) : true,
-    checkoutPath: task.workspaceStrategy.type === "existing_worktree" ? task.workspaceStrategy.worktreePath : "",
+    workspace: strategy.type,
+    baseRef: strategy.type === "worktree" ? strategy.baseRef : "main",
+    startFromOrigin: strategy.type === "worktree" ? (strategy.startFromOrigin ?? false) : true,
+    checkoutPath: strategy.type === "existing_worktree" ? strategy.worktreePath : "",
     model: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
     mode: task.runtimeMode,
     prompt: task.prompt,
@@ -107,10 +108,13 @@ function scheduleText(task: ScheduledTask): string {
   switch (schedule.type) {
     case "interval": {
       const minutes = schedule.everyMs / 60_000;
-      return Number.isInteger(minutes) && minutes % 60 === 0 ? `interval ${minutes / 60}h` : `interval ${Math.max(1, Math.round(minutes))}m`;
+      const wholeHours = Number.isInteger(minutes) && minutes % 60 === 0;
+      return wholeHours ? `interval ${minutes / 60}h` : `interval ${Math.max(1, Math.round(minutes))}m`;
     }
     case "fixed_time": {
-      const days = schedule.weekdays && schedule.weekdays.length > 0 && schedule.weekdays.length < 7 ? ` ${schedule.weekdays.map((day) => WEEKDAY_NAMES[day]).join(",")}` : "";
+      // No days, or every day, both read as plain "every day at HH:MM".
+      const weekdayNames = (schedule.weekdays ?? []).map((day) => WEEKDAY_NAMES[day]);
+      const days = weekdayNames.length > 0 && weekdayNames.length < 7 ? ` ${weekdayNames.join(",")}` : "";
       return `fixed ${schedule.timeOfDay}${days}`;
     }
     case "webhook":
@@ -127,6 +131,58 @@ export type AutomationParse = { readonly ok: true; readonly input: ScheduledTask
  * its signature, dedupe and filters, as the template says.
  */
 export function parseAutomation(text: string, projects: readonly OrchestrationProjectShell[], existing?: ScheduledTask): AutomationParse {
+  const { fields, prompt } = readTemplate(text);
+  const get = (key: string) => fields.get(key) ?? "";
+
+  const title = get("title");
+  const projectText = get("project");
+  const byTitle = projects.find((candidate) => candidate.title === projectText);
+  const project = byTitle ?? projects.find((candidate) => candidate.id === projectText);
+  const model = parseModel(get("model"), existing?.modelSelection);
+  if (!title || !prompt || !project || !model) {
+    return { ok: false, error: "Scheduled task is incomplete: add a title, prompt, project, and model." };
+  }
+
+  const schedule = parseSchedule(get("schedule"), existing);
+  if (!schedule.ok) return schedule;
+
+  const workspace = get("workspace") || "worktree";
+  const checkoutPath = get("checkout path");
+  if (workspace === "existing_worktree" && !checkoutPath) {
+    return { ok: false, error: "Checkout path is required: enter the path of the checkout to run in." };
+  }
+  const workspaceStrategy = workspaceStrategyFor(workspace, checkoutPath, get);
+  if (workspaceStrategy === null) {
+    return { ok: false, error: `Workspace must be worktree, root, or existing_worktree, not "${workspace}".` };
+  }
+
+  const mode = get("mode");
+  if (!(RUNTIME_MODES as readonly string[]).includes(mode)) {
+    return { ok: false, error: `Mode must be one of ${RUNTIME_MODES.join(", ")}, not "${mode}".` };
+  }
+
+  const threadId = get("thread");
+  return {
+    ok: true,
+    input: {
+      ...(existing ? { id: existing.id, requireExisting: true } : {}),
+      title,
+      prompt,
+      enabled: get("enabled").toLowerCase() !== "false",
+      schedule: schedule.schedule,
+      projectId: ProjectId.make(project.id),
+      threadId: threadId ? ThreadId.make(threadId) : null,
+      workspaceStrategy,
+      modelSelection: model,
+      runtimeMode: mode as RuntimeMode,
+      interactionMode: existing?.interactionMode ?? "default",
+      creationSource: "web",
+    },
+  };
+}
+
+/** The template's `Key: value` lines, plus everything after `Prompt:` as the prompt. */
+function readTemplate(text: string): { fields: Map<string, string>; prompt: string } {
   const fields = new Map<string, string>();
   const promptLines: string[] = [];
   let inPrompt = false;
@@ -146,48 +202,29 @@ export function parseAutomation(text: string, projects: readonly OrchestrationPr
     }
     fields.set(key, match[2]!.trim());
   }
-  const get = (key: string) => fields.get(key) ?? "";
-  const title = get("title");
-  const prompt = promptLines.join("\n").trim();
-  const projectText = get("project");
-  const project = projects.find((candidate) => candidate.title === projectText) ?? projects.find((candidate) => candidate.id === projectText);
-  const model = parseModel(get("model"), existing?.modelSelection);
-  if (!title || !prompt || !project || !model) return { ok: false, error: "Scheduled task is incomplete: add a title, prompt, project, and model." };
+  return { fields, prompt: promptLines.join("\n").trim() };
+}
 
-  const schedule = parseSchedule(get("schedule"), existing);
-  if (!schedule.ok) return schedule;
-
-  const workspace = get("workspace") || "worktree";
-  const checkoutPath = get("checkout path");
-  if (workspace === "existing_worktree" && !checkoutPath) return { ok: false, error: "Checkout path is required: enter the path of the checkout to run in." };
-  if (workspace !== "root" && workspace !== "worktree" && workspace !== "existing_worktree") return { ok: false, error: `Workspace must be worktree, root, or existing_worktree, not "${workspace}".` };
-
-  const mode = get("mode");
-  if (!(RUNTIME_MODES as readonly string[]).includes(mode)) return { ok: false, error: `Mode must be one of ${RUNTIME_MODES.join(", ")}, not "${mode}".` };
-
-  const threadId = get("thread");
-  return {
-    ok: true,
-    input: {
-      ...(existing ? { id: existing.id, requireExisting: true } : {}),
-      title,
-      prompt,
-      enabled: get("enabled").toLowerCase() !== "false",
-      schedule: schedule.schedule,
-      projectId: ProjectId.make(project.id),
-      threadId: threadId ? ThreadId.make(threadId) : null,
-      workspaceStrategy:
-        workspace === "root"
-          ? { type: "root" }
-          : workspace === "existing_worktree"
-            ? { type: "existing_worktree", worktreePath: checkoutPath }
-            : { type: "worktree", baseRef: get("base ref") || "main", startFromOrigin: get("start from origin").toLowerCase() !== "false" },
-      modelSelection: model,
-      runtimeMode: mode as RuntimeMode,
-      interactionMode: existing?.interactionMode ?? "default",
-      creationSource: "web",
-    },
-  };
+/** The workspace a template names, or null when it names none of the three. */
+function workspaceStrategyFor(
+  workspace: string,
+  checkoutPath: string,
+  get: (key: string) => string,
+): ScheduledTaskUpsertInput["workspaceStrategy"] | null {
+  switch (workspace) {
+    case "root":
+      return { type: "root" };
+    case "existing_worktree":
+      return { type: "existing_worktree", worktreePath: checkoutPath };
+    case "worktree":
+      return {
+        type: "worktree",
+        baseRef: get("base ref") || "main",
+        startFromOrigin: get("start from origin").toLowerCase() !== "false",
+      };
+    default:
+      return null;
+  }
 }
 
 function parseModel(text: string, base?: ModelSelection): ModelSelection | null {
@@ -207,32 +244,46 @@ function parseSchedule(text: string, existing?: ScheduledTask): ScheduleParse {
   const [kind = "", ...rest] = text.trim().split(/\s+/);
   if (kind === "interval") {
     const match = /^(\d+)\s*(m|h)?$/.exec(rest.join(" "));
-    const everyMs = match ? Number(match[1]) * (match[2] === "h" ? 3_600_000 : 60_000) : Number.NaN;
-    if (!Number.isSafeInteger(everyMs) || everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS) return { ok: false, error: "Invalid interval: enter an interval of at least one minute." };
+    const unitMs = match?.[2] === "h" ? 3_600_000 : 60_000;
+    const everyMs = match ? Number(match[1]) * unitMs : Number.NaN;
+    if (!Number.isSafeInteger(everyMs) || everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS) {
+      return { ok: false, error: "Invalid interval: enter an interval of at least one minute." };
+    }
     return { ok: true, schedule: { type: "interval", everyMs } };
   }
   if (kind === "fixed") {
     const timeOfDay = rest[0] ?? "";
-    if (!/^([01]?\d|2[0-3]):([0-5]\d)$/.test(timeOfDay)) return { ok: false, error: `Invalid schedule: "${text}" — use fixed HH:MM, interval 15m, or webhook.` };
-    const days = rest.slice(1).join(" ").split(/[,\s]+/).filter(Boolean);
+    if (!/^([01]?\d|2[0-3]):([0-5]\d)$/.test(timeOfDay)) {
+      return { ok: false, error: `Invalid schedule: "${text}" — use fixed HH:MM, interval 15m, or webhook.` };
+    }
+    const dayNames = rest.slice(1).join(" ").split(/[,\s]+/).filter(Boolean);
     const weekdays: number[] = [];
-    for (const day of days) {
+    for (const day of dayNames) {
       const index = WEEKDAY_BY_NAME.get(day.toLowerCase());
-      if (index === undefined) return { ok: false, error: `Unknown weekday "${day}": use ${WEEKDAY_NAMES.join(", ")}.` };
+      if (index === undefined) {
+        return { ok: false, error: `Unknown weekday "${day}": use ${WEEKDAY_NAMES.join(", ")}.` };
+      }
       weekdays.push(index);
     }
-    const everyDay = weekdays.length === 0 || new Set(weekdays).size === 7;
-    return { ok: true, schedule: { type: "fixed_time", timeOfDay, ...(everyDay ? {} : { weekdays: [...new Set(weekdays)].sort((a, b) => a - b) }) } };
+    const uniqueWeekdays = [...new Set(weekdays)].sort((a, b) => a - b);
+    const everyDay = weekdays.length === 0 || uniqueWeekdays.length === 7;
+    return {
+      ok: true,
+      schedule: { type: "fixed_time", timeOfDay, ...(everyDay ? {} : { weekdays: uniqueWeekdays }) },
+    };
   }
   if (kind === "webhook") {
     const current = existing?.schedule.type === "webhook" ? existing.schedule : null;
     if (!current) return { ok: true, schedule: { type: "webhook", signature: null, dedupe: {} } };
     // Filters stay stored when left out; a signature without a secret keeps the stored one.
+    const signature = current.signature
+      ? { header: current.signature.header, encoding: current.signature.encoding, prefix: current.signature.prefix }
+      : null;
     return {
       ok: true,
       schedule: {
         type: "webhook",
-        signature: current.signature ? { header: current.signature.header, encoding: current.signature.encoding, prefix: current.signature.prefix } : null,
+        signature,
         ...(current.maxDeliveryAgeMinutes !== undefined ? { maxDeliveryAgeMinutes: current.maxDeliveryAgeMinutes } : {}),
         dedupe: current.dedupe ?? {},
       },

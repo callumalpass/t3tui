@@ -77,51 +77,61 @@ export function rankComposerPullRequests(input: {
   const { projectId, repository, query } = input;
   const linked = composerPullRequestsFromLinks(input.links ?? [], projectId);
   const entries = input.result?.entries ?? [];
-  const exactEntry: PullRequestListEntry[] = input.exact
-    ? [
-        {
-          provider: input.exact.provider,
-          host: input.exact.capabilities ? "" : "",
-          projectId: input.exact.projectId,
-          projectTitle: input.exact.projectTitle,
-          repository: input.exact.repository,
-          number: input.exact.number,
-          title: input.exact.title,
-          url: input.exact.url,
-          author: input.exact.author,
-          headBranch: input.exact.headBranch,
-          baseBranch: input.exact.baseBranch,
-          state: input.exact.state,
-          isDraft: input.exact.isDraft,
-          mergeability: input.exact.mergeability,
-          additions: input.exact.additions,
-          deletions: input.exact.deletions,
-          createdAt: input.exact.createdAt,
-          updatedAt: input.exact.updatedAt,
-          viewerReviewRequested: false,
-          labels: input.exact.labels,
-        },
-      ]
-    : [];
+  const exactEntry: PullRequestListEntry[] = input.exact ? [listEntryFromDetail(input.exact)] : [];
+
   if (/^\d*$/u.test(query)) {
-    return filterComposerPullRequestMatches({
+    const filtered = filterComposerPullRequestMatches({
       entries: [...exactEntry, ...entries],
       linked,
       projectId,
       repository,
       query,
       limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
-    }).map(toComposerPullRequest);
+    });
+    return filtered.map(toComposerPullRequest);
   }
-  const matches = rankPullRequestMatches(
-    entries.filter((entry) => {
-      if (entry.projectId !== projectId || entry.repository.trim().toLowerCase() !== repository.trim().toLowerCase()) return false;
-      const provider = input.result?.providers.find((candidate) => candidate.host === entry.host);
-      return provider?.searchesOnHost === true || matchesPullRequestQuery(entry, query);
-    }),
+
+  const inRepository = entries.filter((entry) => {
+    if (entry.projectId !== projectId) return false;
+    if (entry.repository.trim().toLowerCase() !== repository.trim().toLowerCase()) return false;
+    // Host-searched results already matched on the host; the rest match here.
+    const provider = input.result?.providers.find((candidate) => candidate.host === entry.host);
+    return provider?.searchesOnHost === true || matchesPullRequestQuery(entry, query);
+  });
+  const matches = rankPullRequestMatches(inRepository, query);
+  const ranked = withLinkedComposerPullRequestsFirst({
+    matches,
+    linked,
     query,
-  );
-  return withLinkedComposerPullRequestsFirst({ matches, linked, query, limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT }).map(toComposerPullRequest);
+    limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+  });
+  return ranked.map(toComposerPullRequest);
+}
+
+/** A detail reshaped as a list entry, so an exact lookup ranks alongside the recent list. */
+function listEntryFromDetail(detail: PullRequestDetail): PullRequestListEntry {
+  return {
+    provider: detail.provider,
+    host: detail.capabilities ? "" : "",
+    projectId: detail.projectId,
+    projectTitle: detail.projectTitle,
+    repository: detail.repository,
+    number: detail.number,
+    title: detail.title,
+    url: detail.url,
+    author: detail.author,
+    headBranch: detail.headBranch,
+    baseBranch: detail.baseBranch,
+    state: detail.state,
+    isDraft: detail.isDraft,
+    mergeability: detail.mergeability,
+    additions: detail.additions,
+    deletions: detail.deletions,
+    createdAt: detail.createdAt,
+    updatedAt: detail.updatedAt,
+    viewerReviewRequested: false,
+    labels: detail.labels,
+  };
 }
 
 function toComposerPullRequest(entry: {
@@ -151,7 +161,8 @@ export function exactPullRequestNumber(query: string): number | null {
  * buildPullRequestReferenceContext + reviewCommentContextRecord build it.
  */
 export function pullRequestContextRecord(meta: PullRequestContextMetadata): { record: ReviewCommentContextRecord; replacement: string } {
-  const term = (sourceControlClients.findByChangeRequestUrl(meta.url) ?? sourceControlClients.get(undefined)).changeRequest.singular;
+  const client = sourceControlClients.findByChangeRequestUrl(meta.url) ?? sourceControlClients.get(undefined);
+  const term = client.changeRequest.singular;
   const comment = {
     id: `pr-reference:${meta.url}`,
     sectionId: `pull-request:${meta.number}`,
@@ -189,7 +200,8 @@ export function pullRequestContextRecord(meta: PullRequestContextMetadata): { re
     diff: "",
     pullRequest: comment.pullRequest,
   };
-  return { record, replacement: `${formatComposerContextReference({ kind: "review-comment", contextId, label: `#${meta.number}` })} ` };
+  const reference = formatComposerContextReference({ kind: "review-comment", contextId, label: `#${meta.number}` });
+  return { record, replacement: `${reference} ` };
 }
 
 function boundedField(value: string): string {
@@ -203,16 +215,21 @@ export function resolveLinkInput(input: {
   readonly project: OrchestrationProjectShell | undefined;
   readonly projects: readonly OrchestrationProjectShell[];
 }): { link: ThreadPullRequestKey & { url: string } } | { error: string } | null {
-  const resolved = resolveLinkPullRequestInput({
+  const hasProject = (reference: { host: string; repository: string; url: string }): boolean => {
+    const known = input.projects.some((project) => {
+      const identity = pullRequestLinkProject(project.repositoryIdentity);
+      if (identity === null) return false;
+      const sameHost = identity.host === reference.host;
+      const sameRepository = identity.repository.toLowerCase() === reference.repository.toLowerCase();
+      return sameHost && sameRepository;
+    });
+    return known || sourceControlClients.parseChangeRequestUrl(reference.url) !== null;
+  };
+  return resolveLinkPullRequestInput({
     reference: input.reference,
     project: pullRequestLinkProject(input.project?.repositoryIdentity),
-    hasProject: (reference) =>
-      input.projects.some((project) => {
-        const identity = pullRequestLinkProject(project.repositoryIdentity);
-        return identity !== null && identity.host === reference.host && identity.repository.toLowerCase() === reference.repository.toLowerCase();
-      }) || sourceControlClients.parseChangeRequestUrl(reference.url) !== null,
+    hasProject,
   });
-  return resolved;
 }
 
 export type PullRequestLineKind = "title" | "meta" | "body" | "check" | "review" | "comment" | "guide" | "faint";
@@ -223,75 +240,135 @@ export interface PullRequestLine {
 }
 
 /** The PR view's lines: what the web's summary and timeline tabs lead with, in terminal order. */
-export function pullRequestLines(detail: PullRequestDetail, activity: PullRequestActivity | null, guide: PullRequestReviewGuideResult | null, now = Date.now()): PullRequestLine[] {
+export function pullRequestLines(
+  detail: PullRequestDetail,
+  activity: PullRequestActivity | null,
+  guide: PullRequestReviewGuideResult | null,
+  now = Date.now(),
+): PullRequestLine[] {
   const lines: PullRequestLine[] = [];
+  pushHeaderLines(lines, detail, now);
+  pushCheckLines(lines, detail);
+  pushCommentLines(lines, activity, now);
+  pushCommitLines(lines, activity);
+  lines.push(...guideLines(guide));
+  return lines;
+}
+
+/** Title, state and description: the summary the view leads with. */
+function pushHeaderLines(lines: PullRequestLine[], detail: PullRequestDetail, now: number): void {
   const state = detail.state === "open" && detail.isDraft ? "draft" : detail.state;
+  const fileCount = `${detail.changedFiles} ${detail.changedFiles === 1 ? "file" : "files"}`;
+  const meta = [
+    state,
+    detail.author ? `by ${detail.author.login}` : "",
+    `${detail.headBranch} → ${detail.baseBranch}`,
+    `+${detail.additions} −${detail.deletions} · ${fileCount}`,
+    detail.mergeability !== "unknown" ? detail.mergeability : "",
+    `updated ${ago(detail.updatedAt, now)}`,
+  ];
+
   lines.push({ kind: "title", text: `#${detail.number} ${detail.title}` });
-  lines.push({
-    kind: "meta",
-    text: [
-      state,
-      detail.author ? `by ${detail.author.login}` : "",
-      `${detail.headBranch} → ${detail.baseBranch}`,
-      `+${detail.additions} −${detail.deletions} · ${detail.changedFiles} ${detail.changedFiles === 1 ? "file" : "files"}`,
-      detail.mergeability !== "unknown" ? detail.mergeability : "",
-      `updated ${ago(detail.updatedAt, now)}`,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-  });
+  lines.push({ kind: "meta", text: meta.filter(Boolean).join(" · ") });
   lines.push({ kind: "faint", text: detail.url });
-  if (detail.labels.length > 0) lines.push({ kind: "meta", text: `Labels: ${detail.labels.map((label) => label.name).join(", ")}` });
-  if (detail.reviewers.length > 0) lines.push({ kind: "meta", text: `Reviewers: ${detail.reviewers.map((actor) => actor.login).join(", ")}` });
+
+  if (detail.labels.length > 0) {
+    const names = detail.labels.map((label) => label.name);
+    lines.push({ kind: "meta", text: `Labels: ${names.join(", ")}` });
+  }
+  if (detail.reviewers.length > 0) {
+    const logins = detail.reviewers.map((actor) => actor.login);
+    lines.push({ kind: "meta", text: `Reviewers: ${logins.join(", ")}` });
+  }
   if (detail.body.trim()) {
     lines.push({ kind: "title", text: "Description" });
     for (const text of wrapBody(detail.body)) lines.push({ kind: "body", text });
   }
+}
+
+/** One line per check, or a note that the host reported none. */
+function pushCheckLines(lines: PullRequestLine[], detail: PullRequestDetail): void {
   lines.push({ kind: "title", text: `Checks (${detail.checks.length})` });
   if (detail.checks.length === 0) lines.push({ kind: "faint", text: "No checks reported." });
   for (const check of detail.checks) {
-    lines.push({ kind: "check", text: `${checkGlyph(check.status)} ${check.name}${check.description ? ` — ${check.description}` : ""}${check.required ? " (required)" : ""}` });
+    const description = check.description ? ` — ${check.description}` : "";
+    const required = check.required ? " (required)" : "";
+    lines.push({ kind: "check", text: `${checkGlyph(check.status)} ${check.name}${description}${required}` });
   }
+}
+
+/** Reviews, then the newest comments and review threads, as the timeline tab shows them. */
+function pushCommentLines(lines: PullRequestLine[], activity: PullRequestActivity | null, now: number): void {
   const reviews = latestReviews(activity);
   lines.push({ kind: "title", text: "Reviews" });
   if (reviews.length === 0) lines.push({ kind: "faint", text: "No reviews yet." });
   for (const review of reviews) lines.push({ kind: "review", text: review });
+
   const comments = activity?.comments ?? [];
-  lines.push({ kind: "title", text: `Comments (${activity?.commentCount ?? comments.length}${activity?.commentsTruncated ? ", cut short" : ""})` });
+  const commentCount = activity?.commentCount ?? comments.length;
+  const cutShort = activity?.commentsTruncated ? ", cut short" : "";
+  lines.push({ kind: "title", text: `Comments (${commentCount}${cutShort})` });
   if (comments.length === 0) lines.push({ kind: "faint", text: "No comments yet." });
   for (const comment of comments.slice(-20)) {
     const who = comment.author?.login ?? "ghost";
-    const kind = comment.kind === "review" ? `review${comment.reviewState ? ` · ${comment.reviewState}` : ""}` : comment.path ? `on ${comment.path}` : "comment";
-    lines.push({ kind: "comment", text: `${who} · ${kind} · ${ago(comment.createdAt, now)}` });
+    lines.push({ kind: "comment", text: `${who} · ${commentKindLabel(comment)} · ${ago(comment.createdAt, now)}` });
     for (const text of wrapBody(comment.body)) lines.push({ kind: "body", text: `  ${text}` });
   }
+
   const threads = activity?.reviewThreads ?? [];
-  if (threads.length > 0) {
-    lines.push({ kind: "title", text: `Review threads (${threads.length})` });
-    for (const thread of threads.slice(-20)) {
-      lines.push({ kind: "comment", text: `${thread.isResolved ? "✓ resolved" : "● open"} ${thread.path}${thread.line ? `:${thread.line}` : ""}` });
-      for (const comment of thread.comments.slice(-3)) {
-        lines.push({ kind: "comment", text: `  ${comment.author?.login ?? "ghost"} · ${ago(comment.createdAt, now)}` });
-        for (const text of wrapBody(comment.body)) lines.push({ kind: "body", text: `    ${text}` });
-      }
+  if (threads.length === 0) return;
+  lines.push({ kind: "title", text: `Review threads (${threads.length})` });
+  for (const thread of threads.slice(-20)) {
+    const state = thread.isResolved ? "✓ resolved" : "● open";
+    const atLine = thread.line ? `:${thread.line}` : "";
+    lines.push({ kind: "comment", text: `${state} ${thread.path}${atLine}` });
+    for (const comment of thread.comments.slice(-3)) {
+      const who = comment.author?.login ?? "ghost";
+      lines.push({ kind: "comment", text: `  ${who} · ${ago(comment.createdAt, now)}` });
+      for (const text of wrapBody(comment.body)) lines.push({ kind: "body", text: `    ${text}` });
     }
   }
-  const commits = activity?.commits ?? [];
-  if (commits.length > 0) {
-    lines.push({ kind: "title", text: `Commits (${commits.length})` });
-    for (const commit of commits.slice(-10)) lines.push({ kind: "meta", text: `${commit.oid.slice(0, 7)} ${commit.messageHeadline}` });
+}
+
+/** What a comment is, in the timeline's words: a review, a note on a file, or plain talk. */
+function commentKindLabel(comment: PullRequestActivity["comments"][number]): string {
+  if (comment.kind === "review") {
+    return comment.reviewState ? `review · ${comment.reviewState}` : "review";
   }
-  lines.push(...guideLines(guide));
-  return lines;
+  if (comment.path) return `on ${comment.path}`;
+  return "comment";
+}
+
+/** The newest commits, short hash first as in a log. */
+function pushCommitLines(lines: PullRequestLine[], activity: PullRequestActivity | null): void {
+  const commits = activity?.commits ?? [];
+  if (commits.length === 0) return;
+  lines.push({ kind: "title", text: `Commits (${commits.length})` });
+  for (const commit of commits.slice(-10)) {
+    lines.push({ kind: "meta", text: `${commit.oid.slice(0, 7)} ${commit.messageHeadline}` });
+  }
 }
 
 /** The review guide's lines, or its run state, as the web's guide tab leads with. */
 export function guideLines(guide: PullRequestReviewGuideResult | null): PullRequestLine[] {
   if (!guide) return [];
-  if (guide.run?._tag === "Running") return [{ kind: "title", text: "Review guide" }, { kind: "guide", text: "Writing the review guide…" }];
-  if (guide.run?._tag === "Failed" && !guide.guide) return [{ kind: "title", text: "Review guide" }, { kind: "guide", text: `The review guide failed: ${guide.run.detail}` }];
+  if (guide.run?._tag === "Running") {
+    return [
+      { kind: "title", text: "Review guide" },
+      { kind: "guide", text: "Writing the review guide…" },
+    ];
+  }
+  if (guide.run?._tag === "Failed" && !guide.guide) {
+    return [
+      { kind: "title", text: "Review guide" },
+      { kind: "guide", text: `The review guide failed: ${guide.run.detail}` },
+    ];
+  }
   if (!guide.guide) return [];
-  const lines: PullRequestLine[] = [{ kind: "title", text: guide.currentHeadSha && guide.guide.headSha !== guide.currentHeadSha ? "Review guide (out of date)" : "Review guide" }];
+  const outOfDate = guide.currentHeadSha && guide.guide.headSha !== guide.currentHeadSha;
+  const lines: PullRequestLine[] = [
+    { kind: "title", text: outOfDate ? "Review guide (out of date)" : "Review guide" },
+  ];
   for (const stop of guide.guide.stops) {
     lines.push({ kind: "guide", text: stop.title });
     for (const text of wrapBody(stop.summary)) lines.push({ kind: "body", text: `  ${text}` });
@@ -310,9 +387,12 @@ export function latestReviews(activity: PullRequestActivity | null): string[] {
     if (comment.kind !== "review" || !comment.reviewState) continue;
     const who = comment.author?.login ?? "ghost";
     const held = latest.get(who);
-    if (!held || comment.createdAt.localeCompare(held.at) >= 0) latest.set(who, { at: comment.createdAt, text: `${who}: ${comment.reviewState}` });
+    if (!held || comment.createdAt.localeCompare(held.at) >= 0) {
+      latest.set(who, { at: comment.createdAt, text: `${who}: ${comment.reviewState}` });
+    }
   }
-  return [...latest.values()].sort((a, b) => b.at.localeCompare(a.at)).map((entry) => entry.text);
+  const newestFirst = [...latest.values()].sort((a, b) => b.at.localeCompare(a.at));
+  return newestFirst.map((entry) => entry.text);
 }
 
 const ACTION_LABELS: Record<PullRequestAction, string> = {
@@ -337,19 +417,32 @@ export const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
 
 /** The runAction actions to offer: what the host can do and the viewer may, for this state. */
 export function offeredActions(detail: PullRequestDetail): readonly { action: PullRequestAction; label: string }[] {
-  const allowed = new Set(detail.capabilities.actions.filter((action) => detail.viewerPermissions.actions.includes(action)));
+  const allowed = new Set(
+    detail.capabilities.actions.filter((action) => detail.viewerPermissions.actions.includes(action)),
+  );
   const byState: readonly PullRequestAction[] =
     detail.state === "merged"
       ? ["revert", "delete-branch"]
       : detail.state === "closed"
         ? ["reopen", "delete-branch"]
-        : ["merge", detail.isDraft ? "ready" : "draft", "close", "update-branch", detail.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge", "approve-workflows"];
-  return byState.filter((action) => allowed.has(action)).map((action) => ({ action, label: ACTION_LABELS[action] }));
+        : [
+            "merge",
+            detail.isDraft ? "ready" : "draft",
+            "close",
+            "update-branch",
+            detail.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge",
+            "approve-workflows",
+          ];
+  const offered = byState.filter((action) => allowed.has(action));
+  return offered.map((action) => ({ action, label: ACTION_LABELS[action] }));
 }
 
 /** Merge methods to offer, from the host's capabilities as the detail reports them. */
 export function offeredMergeMethods(detail: PullRequestDetail): readonly PullRequestMergeMethod[] {
-  return (["merge", "squash", "rebase"] as const).filter((method) => detail.capabilities.mergeMethods.includes(method) && detail.mergeCapabilities[method]);
+  const methods: readonly PullRequestMergeMethod[] = ["merge", "squash", "rebase"];
+  return methods.filter((method) => {
+    return detail.capabilities.mergeMethods.includes(method) && detail.mergeCapabilities[method];
+  });
 }
 
 function checkGlyph(status: string): string {
@@ -370,7 +463,10 @@ function checkGlyph(status: string): string {
 
 /** Body text as plain lines: blank runs collapse, very long bodies stop. */
 export function wrapBody(body: string, maxLines = 60): string[] {
-  const lines = body.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd());
+  const lines = body
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd());
   const out: string[] = [];
   for (const line of lines) {
     if (line === "" && out.at(-1) === "") continue;

@@ -38,7 +38,10 @@ export function useWorkspace(input: {
   const activeThread = useRef(thread?.id);
   activeThread.current = thread?.id;
   const lastReady = useRef<string | null>(null);
-  useEffect(() => live ? session.watchTerminals(setTerminals) : undefined, [session, live]);
+  useEffect(() => {
+    if (!live) return undefined;
+    return session.watchTerminals(setTerminals);
+  }, [session, live]);
   useEffect(() => {
     setSetup(null);
     setSetupError(null);
@@ -48,26 +51,39 @@ export function useWorkspace(input: {
       setSetupError(state.status === "error" ? state.error ?? "Could not load worktree setup." : null);
     });
   }, [session, live, thread?.id]);
-  useEffect(() => session.watchServerLifecycle((state) => {
-    const event: ServerLifecycleStreamEvent | null = state.event;
-    if (event?.type === "ready" && event.payload.at !== lastReady.current) {
+  // Server restarts and updates are worth a line, but the first "ready" is just startup.
+  useEffect(() => {
+    return session.watchServerLifecycle((state) => {
+      const event: ServerLifecycleStreamEvent | null = state.event;
+      if (event?.type === "legacyThreadMigration") {
+        sayRef.current(`Thread migration ${event.payload.status} · ${event.payload.totalThreadCount} threads`);
+        return;
+      }
+      if (event?.type !== "ready" || event.payload.at === lastReady.current) return;
       const restarted = lastReady.current !== null;
       lastReady.current = event.payload.at;
       const outcome = event.payload.updateOutcome;
-      sayRef.current(outcome
-        ? `Server update ${outcome.targetVersion}: ${outcome.status}${outcome.reason ? ` · ${outcome.reason}` : ""}`
-        : `Server ${restarted ? "restarted" : "ready"} · ${event.payload.environment.serverVersion}`, outcome !== undefined && outcome.status !== "committed");
-    } else if (event?.type === "legacyThreadMigration") {
-      sayRef.current(`Thread migration ${event.payload.status} · ${event.payload.totalThreadCount} threads`);
-    }
-  }), [session]);
+      if (outcome) {
+        const reason = outcome.reason ? ` · ${outcome.reason}` : "";
+        sayRef.current(`Server update ${outcome.targetVersion}: ${outcome.status}${reason}`, outcome.status !== "committed");
+        return;
+      }
+      const version = event.payload.environment.serverVersion;
+      sayRef.current(`Server ${restarted ? "restarted" : "ready"} · ${version}`);
+    });
+  }, [session]);
 
   const threadTerminals = (terminals?.items ?? []).filter((terminal) => terminal.threadId === thread?.id);
   const cwd = thread?.worktreePath ?? project?.workspaceRoot;
   const label = (terminal: TerminalSummary) => resolveTerminalSessionLabel(terminal.terminalId, terminal);
   const enterTerminal = (terminal: Pick<TerminalSummary, "terminalId" | "cwd" | "worktreePath" | "label">) => {
     if (!thread) return;
-    attachTerminal(renderer, session, { threadId: thread.id, ...terminal, label: resolveTerminalSessionLabel(terminal.terminalId, terminal) }, (message) => {
+    const target = {
+      threadId: thread.id,
+      ...terminal,
+      label: resolveTerminalSessionLabel(terminal.terminalId, terminal),
+    };
+    attachTerminal(renderer, session, target, (message) => {
       if (message) say(message);
     });
   };
@@ -81,27 +97,53 @@ export function useWorkspace(input: {
   };
   const terminalMutation = (terminal: TerminalSummary, action: "close" | "clear") => {
     if (!thread) return;
-    run(action === "close" ? "Terminal closed" : "Terminal cleared", () => action === "close" ? session.closeTerminal(thread.id, terminal.terminalId) : session.clearTerminal(thread.id, terminal.terminalId));
+    if (action === "close") {
+      run("Terminal closed", () => session.closeTerminal(thread.id, terminal.terminalId));
+      return;
+    }
+    run("Terminal cleared", () => session.clearTerminal(thread.id, terminal.terminalId));
   };
-  const terminalItems = (action: "close" | "clear"): PickerItem[] => threadTerminals.map((terminal) => ({
-    id: `terminal:${action}:${terminal.terminalId}`, title: `${action === "close" ? "Close" : "Clear"} › ${label(terminal)}`,
-    run: () => terminalMutation(terminal, action),
-  }));
+
+  const terminalItems = (action: "close" | "clear"): PickerItem[] => {
+    const verb = action === "close" ? "Close" : "Clear";
+    return threadTerminals.map((terminal) => ({
+      id: `terminal:${action}:${terminal.terminalId}`,
+      title: `${verb} › ${label(terminal)}`,
+      run: () => terminalMutation(terminal, action),
+    }));
+  };
+  // Close/clear appear as one sub-picker each, plus search-only rows so typing finds them.
+  const terminalActionItems = (): PickerItem[] => {
+    const items: PickerItem[] = [{ id: "terminal:new", title: "New terminal", run: newTerminal }];
+    for (const action of ["close", "clear"] as const) {
+      const targets = terminalItems(action);
+      if (targets.length === 0) continue;
+      const verb = action === "close" ? "Close" : "Clear";
+      items.push({
+        id: `terminal:${action}`,
+        title: `${verb} terminal…`,
+        run: () => openPicker({ placeholder: `${verb} terminal`, groups: [{ label: "Terminals", items: targets }] }),
+      });
+      for (const target of targets) items.push({ ...target, searchOnly: true });
+    }
+    return items;
+  };
+
   const terminalPicker = () => {
     if (!thread || input.draft) return say("Open a thread first.", true);
-    openPicker({ placeholder: "Terminals · type close or clear for actions", groups: [
-      { label: "Terminals", items: threadTerminals.map((terminal) => ({ id: `terminal:${terminal.terminalId}`, title: label(terminal), hint: terminal.hasRunningSubprocess ? "busy" : terminal.status, run: () => enterTerminal(terminal) })) },
-      { label: "Actions", items: [
-        { id: "terminal:new", title: "New terminal", run: newTerminal },
-        ...(["close", "clear"] as const).flatMap((action) => {
-          const items = terminalItems(action);
-          return items.length ? [
-            { id: `terminal:${action}`, title: `${action === "close" ? "Close" : "Clear"} terminal…`, run: () => openPicker({ placeholder: `${action === "close" ? "Close" : "Clear"} terminal`, groups: [{ label: "Terminals", items }] }) },
-            ...items.map((item) => ({ ...item, searchOnly: true })),
-          ] : [];
-        }),
-      ] },
-    ] });
+    const openItems = threadTerminals.map((terminal) => ({
+      id: `terminal:${terminal.terminalId}`,
+      title: label(terminal),
+      hint: terminal.hasRunningSubprocess ? "busy" : terminal.status,
+      run: () => enterTerminal(terminal),
+    }));
+    openPicker({
+      placeholder: "Terminals · type close or clear for actions",
+      groups: [
+        { label: "Terminals", items: openItems },
+        { label: "Actions", items: terminalActionItems() },
+      ],
+    });
   };
   const openTerminal = () => {
     if (!thread || input.draft) return say("Open a thread first.", true);
@@ -113,48 +155,88 @@ export function useWorkspace(input: {
   const branchPicker = () => {
     if (!thread || !cwd || !project || input.draft) return say("Open a thread with a repository first.", true);
     say("Loading refs…");
-    session.listRefs(cwd).then((refs) => {
-      if (activeThread.current !== thread.id) return;
-      const updateWorkspace = (branch: string | null, path: string | null) => session.setThreadWorkspace(thread.id, branch, path, thread.worktreePath);
-      const promptBranch = (worktree: boolean) => confirm({
+    session.listRefs(cwd).then(
+      (refs) => {
+        if (activeThread.current !== thread.id) return;
+        openRefPicker(refs);
+      },
+      (error) => say(`Could not list refs: ${messageOf(error)}`, true),
+    );
+  };
+
+  const openRefPicker = (refs: Awaited<ReturnType<T3Session["listRefs"]>>) => {
+    if (!thread || !cwd || !project) return;
+    const updateWorkspace = (branch: string | null, path: string | null) =>
+      session.setThreadWorkspace(thread.id, branch, path, thread.worktreePath);
+
+    const promptBranch = (worktree: boolean) =>
+      confirm({
         title: worktree ? "Create a new worktree?" : "Create and switch ref",
         detail: worktree ? `Based on ${thread.branch ?? "HEAD"}. The thread will move to the new worktree.` : cwd,
-        message: { placeholder: "New branch name" }, confirmLabel: "create",
+        message: { placeholder: "New branch name" },
+        confirmLabel: "create",
         run: (raw) => {
           const name = sanitizeNewRefName(raw);
           if (!name) return say("Enter a branch name.", true);
           run(worktree ? "Worktree created" : "Branch created", async () => {
             if (worktree) {
-              const result = await session.createWorktree(cwd, thread.branch ?? "HEAD", name);
-              await updateWorkspace(result.worktree.refName, result.worktree.path);
+              const created = await session.createWorktree(cwd, thread.branch ?? "HEAD", name);
+              await updateWorkspace(created.worktree.refName, created.worktree.path);
             } else {
-              const result = await session.createRef(cwd, name);
-              await updateWorkspace(result.refName, thread.worktreePath);
+              const created = await session.createRef(cwd, name);
+              await updateWorkspace(created.refName, thread.worktreePath);
             }
           });
         },
       });
-      openPicker({ placeholder: "Select ref", groups: [
-        { label: "Refs", items: refs.map((ref) => ({
-          id: `ref:${ref.isRemote ? "remote:" : ""}${ref.name}`, title: ref.name,
-          hint: ref.current ? "current" : ref.worktreePath ? "worktree" : ref.isRemote ? "remote" : ref.isDefault ? "default" : "local",
-          run: () => run("Ref selected", async () => {
-            const target = resolveBranchSelectionTarget({ activeProjectCwd: project.workspaceRoot, activeWorktreePath: thread.worktreePath, refName: ref });
-            const result = target.reuseExistingWorktree ? null : await session.switchRef(target.checkoutCwd, ref.name);
-            await updateWorkspace(ref.isRemote ? result?.refName ?? deriveLocalBranchNameFromRemoteRef(ref.name) : ref.name, target.nextWorktreePath);
+
+    const selectRef = (ref: (typeof refs)[number]) => {
+      run("Ref selected", async () => {
+        const target = resolveBranchSelectionTarget({
+          activeProjectCwd: project.workspaceRoot,
+          activeWorktreePath: thread.worktreePath,
+          refName: ref,
+        });
+        const switched = target.reuseExistingWorktree ? null : await session.switchRef(target.checkoutCwd, ref.name);
+        const branch = ref.isRemote ? (switched?.refName ?? deriveLocalBranchNameFromRemoteRef(ref.name)) : ref.name;
+        await updateWorkspace(branch, target.nextWorktreePath);
+      });
+    };
+
+    const refItems = refs.map((ref) => ({
+      id: `ref:${ref.isRemote ? "remote:" : ""}${ref.name}`,
+      title: ref.name,
+      hint: refHint(ref),
+      run: () => selectRef(ref),
+    }));
+
+    const actionItems: PickerItem[] = [
+      { id: "branch:create", title: "Create and switch ref…", run: () => promptBranch(false) },
+      { id: "branch:pull", title: "Pull", run: () => run("Pulled", () => session.pull(cwd)) },
+      { id: "worktree:create", title: "Create worktree…", run: () => promptBranch(true) },
+    ];
+    if (thread.worktreePath) {
+      const worktreePath = thread.worktreePath;
+      actionItems.push({
+        id: "worktree:remove",
+        title: "Remove worktree…",
+        run: () =>
+          confirm({
+            title: "Remove this worktree?",
+            detail: `${worktreePath} · Stops this thread's provider session. Refuses shared worktrees and uncommitted changes.`,
+            confirmLabel: "remove",
+            run: () => run("Worktree removed", () => session.removeThreadWorktree(thread.id, project.workspaceRoot, worktreePath)),
           }),
-        })) },
-        { label: "Actions", items: [
-          { id: "branch:create", title: "Create and switch ref…", run: () => promptBranch(false) },
-          { id: "branch:pull", title: "Pull", run: () => run("Pulled", () => session.pull(cwd)) },
-          { id: "worktree:create", title: "Create worktree…", run: () => promptBranch(true) },
-          ...(thread.worktreePath ? [{ id: "worktree:remove", title: "Remove worktree…", run: () => confirm({
-            title: "Remove this worktree?", detail: `${thread.worktreePath} · Stops this thread's provider session. Refuses shared worktrees and uncommitted changes.`, confirmLabel: "remove",
-            run: () => run("Worktree removed", () => session.removeThreadWorktree(thread.id, project.workspaceRoot, thread.worktreePath!)),
-          }) }] : []),
-        ] },
-      ] });
-    }, (error) => say(`Could not list refs: ${messageOf(error)}`, true));
+      });
+    }
+
+    openPicker({
+      placeholder: "Select ref",
+      groups: [
+        { label: "Refs", items: refItems },
+        { label: "Actions", items: actionItems },
+      ],
+    });
   };
 
   const openInEditor = () => {
@@ -167,11 +249,22 @@ export function useWorkspace(input: {
     if (diff.path) return open(resolvePathLinkTarget(diff.path, diff.cwd));
     const files = splitPatch(diff.patch ?? "");
     if (!files.length) return say("No file to open in this diff.", true);
-    openPicker({ placeholder: "Open diff file in editor", groups: [{ label: "Files", items: files.map((file) => ({ id: `editor:${file.path}`, title: file.path, run: () => open(resolvePathLinkTarget(file.path, diff.cwd)) })) }] });
+    const fileItems = files.map((file) => ({
+      id: `editor:${file.path}`,
+      title: file.path,
+      run: () => open(resolvePathLinkTarget(file.path, diff.cwd)),
+    }));
+    openPicker({ placeholder: "Open diff file in editor", groups: [{ label: "Files", items: fileItems }] });
   };
+
   const cancelSetup = () => {
     if (!setup || setup.threadId !== thread?.id || setup.phase !== "running") return;
-    confirm({ title: "Cancel worktree setup?", detail: "Stops workspace preparation and its setup script.", confirmLabel: "cancel setup", run: () => run("Worktree setup cancellation requested", () => session.cancelWorktreeSetup(setup.threadId)) });
+    confirm({
+      title: "Cancel worktree setup?",
+      detail: "Stops workspace preparation and its setup script.",
+      confirmLabel: "cancel setup",
+      run: () => run("Worktree setup cancellation requested", () => session.cancelWorktreeSetup(setup.threadId)),
+    });
   };
   const commands: Command[] = thread && !input.draft ? [
     { id: "terminal", title: "Open terminal", shortcut: "ctrl+j", keywords: ["shell", "console"], run: openTerminal },
@@ -182,14 +275,45 @@ export function useWorkspace(input: {
     { id: "workspace-editor", title: input.diff ? "Open diff file in editor" : "Open workspace in editor", shortcut: "E", keywords: ["folder", "code", "vscode", "cursor"], run: openInEditor },
     ...(setup?.threadId === thread.id && setup.phase === "running" ? [{ id: "setup-cancel", title: "Cancel worktree setup…", keywords: ["preparation", "stop"], run: cancelSetup }] : []),
   ] : [];
-  const key = (key: KeyEvent): boolean => {
-    if (key.ctrl || key.meta) return false;
-    if (key.name === "t" && key.shift) return terminalPicker(), true;
-    if (key.name === "b" && !key.shift) return branchPicker(), true;
-    if (key.name === "e" && key.shift) return openInEditor(), true;
+  const key = (keyEvent: KeyEvent): boolean => {
+    if (keyEvent.ctrl || keyEvent.meta) return false;
+    if (keyEvent.name === "t" && keyEvent.shift) {
+      terminalPicker();
+      return true;
+    }
+    if (keyEvent.name === "b" && !keyEvent.shift) {
+      branchPicker();
+      return true;
+    }
+    if (keyEvent.name === "e" && keyEvent.shift) {
+      openInEditor();
+      return true;
+    }
     return false;
   };
-  return { commands, key, openTerminal, note: input.draft ? null : setupError ?? worktreeSetupNote(setup?.threadId === thread?.id ? setup : null), setupFailed: setup?.phase === "failed" || setupError !== null };
+
+  // Setup belongs to one thread; another thread's snapshot is not this one's note.
+  const setupForThread = setup?.threadId === thread?.id ? setup : null;
+  const note = input.draft ? null : (setupError ?? worktreeSetupNote(setupForThread));
+
+  return {
+    commands,
+    key,
+    openTerminal,
+    note,
+    setupFailed: setup?.phase === "failed" || setupError !== null,
+  };
 }
 
-const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
+/** Why a ref matters at a glance, in the web branch picker's order of importance. */
+function refHint(ref: { readonly current: boolean; readonly worktreePath: string | null; readonly isRemote?: boolean | undefined; readonly isDefault: boolean }): string {
+  if (ref.current) return "current";
+  if (ref.worktreePath) return "worktree";
+  if (ref.isRemote) return "remote";
+  if (ref.isDefault) return "default";
+  return "local";
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
