@@ -637,7 +637,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const quit = () => {
     void session.stop().finally(() => {
       renderer.destroy();
-      process.exit(0);
+      void renderer.closed.finally(() => process.exit(0));
     });
   };
 

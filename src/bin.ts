@@ -149,8 +149,9 @@ async function runUi(attachNeedle?: string) {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, useKittyKeyboard: {} });
   // OpenTUI answers SIGHUP and SIGTERM by tearing the screen down without exiting, and the
   // session's socket would keep a closed terminal's t3tui running for good.
+  // The terminal is restored once `closed` settles, after the destroy event.
   renderer.once("destroy", () => {
-    void Promise.race([session.stop(), Bun.sleep(1000)]).finally(() => process.exit(0));
+    void Promise.allSettled([Promise.race([session.stop(), Bun.sleep(1000)]), renderer.closed]).finally(() => process.exit(0));
   });
   // Bun collects so lazily that a streaming thread takes t3tui past 500 MB of garbage. A full
   // collection pauses for up to ~150 ms, so it waits for a few seconds without keys or clicks.
