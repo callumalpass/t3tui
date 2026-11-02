@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion, withWorking } from "./fixtures.ts";
 import { loadLayout } from "../../src/layout.ts";
-import { fakeSession, renderApp, v2ThreadId } from "./harness.tsx";
+import { fakeSession, renderApp, v2Projection, v2ThreadId } from "./harness.tsx";
 
 let app: Awaited<ReturnType<typeof renderApp>> | null = null;
 const open = async (...args: Parameters<typeof renderApp>) => (app = await renderApp(...args));
@@ -328,6 +329,52 @@ describe("command output", () => {
     await app.settle(50);
     expect(app.calls("turnItem")).toHaveLength(1);
     expect(app.hints()).toBe("Copied the output");
+  });
+});
+
+describe("details panel", () => {
+  const steps = Array.from({ length: 8 }, (_, index) => ({ id: `s${index}`, text: `Step ${index}`, status: index < 2 ? "completed" : index === 2 ? "running" : "pending" }));
+  const projection = {
+    ...v2Projection,
+    providerTurns: [{ tokenUsage: { usedTokens: 62_000, maxTokens: 100_000, updatedAt: "2026-06-20T00:00:00.000Z" } }],
+    turnItems: [{ id: "todo", type: "todo_list", planId: "p", steps }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const vcs = {
+    status: "live",
+    local: {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: true,
+      refName: "main",
+      hasWorkingTreeChanges: true,
+      workingTree: { files: [{ path: "README.md", insertions: 29, deletions: 167 }, { path: "docs/", insertions: 0, deletions: 0 }], insertions: 29, deletions: 167 },
+    },
+    remote: { hasUpstream: true, aheadCount: 0, behindCount: 0, pr: null },
+  };
+
+  test("shows the context left, tasks, changes and branch", async () => {
+    const app = await open({ width: 200, session: fakeSession({ projection, vcs }) });
+    const frame = app.frame();
+    expect(frame).toContain("Context  ████░░░░░░  38% left");
+    expect(frame).toMatch(/Tasks +2\/8/);
+    expect(frame).toContain("◐ Step 2");
+    expect(frame).not.toContain("Step 7");
+    expect(frame).toMatch(/M README\.md +\+29 −167/);
+    expect(frame).toMatch(/\? docs\/ +new/);
+    expect(frame).toContain("▸ View diff");
+    // Up to date: no ahead/behind counts, no hint.
+    expect(frame).toMatch(/┃ main +\n/);
+    expect(frame).not.toContain("↑0");
+    const more = app.find("› 3 more");
+    await app.click(more.x, more.y);
+    expect(app.frame()).toContain("Step 7");
+    expect(app.frame()).toContain("‹ fewer");
+  });
+
+  test("leaves out the context line without usage reports", async () => {
+    const app = await open({ width: 200 });
+    expect(app.frame()).not.toContain("Context");
+    expect(app.frame()).not.toContain("Tasks");
   });
 });
 

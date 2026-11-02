@@ -38,6 +38,8 @@ export function fakeSession(
     readonly snapshot?: OrchestrationV2ShellSnapshot;
     readonly projection?: OrchestrationV2ThreadProjection;
     readonly status?: ConnectionStatus;
+    /** Git status for every folder; loading by default. */
+    readonly vcs?: unknown;
     readonly results?: Record<string, unknown>;
     readonly failures?: Record<string, string>;
   } = {},
@@ -57,7 +59,7 @@ export function fakeSession(
     watchServers: live({ status: "live", items: [] }),
     watchAutomations: live({ status: "live", items: [] }),
     watchTerminals: live({ status: "live", items: [] }),
-    watchVcs: (_cwd: string, listener: (value: unknown) => void) => live({ status: "loading", local: null, remote: null })(listener),
+    watchVcs: (_cwd: string, listener: (value: unknown) => void) => live(state.vcs ?? { status: "loading", local: null, remote: null })(listener),
   };
   const session = new Proxy(known, {
     get(target, name) {
