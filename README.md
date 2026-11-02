@@ -43,6 +43,7 @@ Navigation:
 | `x` | dismiss the agent's question |
 | `e` | expand all folded turns and work groups |
 | `o` | load earlier turns |
+| `d` | show or hide thread details |
 | `z` | show the Settled and Snoozed sections |
 | `/` | filter threads by title or project |
 | `S` | stop the thread |
@@ -53,6 +54,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 
 - **Sidebar:** the same sections (Pinned, Active, Working, then Snoozed and Settled folded to a count) and the same status words: `Working 2m`, `Waiting`, `Approval`, `Input`, `Request`, `Limited`, `Failed`, `Done`. Threads that need you are bold.
 - **Conversation:** built by the web app's timeline logic. Each finished turn's work folds into one line (`Worked for 3m 12s`), your messages are right-aligned, and a running turn shows its live step and `Working for 12s`.
+- **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
 
 Long threads load as a bounded window of recent turns; press `o` for older ones. If the connection drops, tui3 reconnects with backoff and resubscribes.

@@ -11,6 +11,9 @@ import {
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ThreadId,
+  type VcsStatusLocalResult,
+  type VcsStatusRemoteResult,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
@@ -55,6 +58,14 @@ export interface ThreadState {
   readonly error?: string;
 }
 
+/** Git status of a working directory, as the server's status stream reports it. */
+export interface VcsState {
+  readonly status: "loading" | "live" | "error";
+  readonly local: VcsStatusLocalResult | null;
+  readonly remote: VcsStatusRemoteResult | null;
+  readonly error?: string;
+}
+
 type Listener<T> = (value: T) => void;
 
 /** Streaming deltas arrive far faster than a terminal can usefully redraw. */
@@ -73,6 +84,13 @@ export function debugLog(message: string): void {
 }
 
 const decodeHistoryPage = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage));
+
+interface VcsEntry {
+  state: VcsState;
+  readonly listeners: Set<Listener<VcsState>>;
+  fiber: Fiber.Fiber<unknown, unknown> | null;
+  lingerTimer: ReturnType<typeof setTimeout> | null;
+}
 
 interface ThreadEntry {
   state: ThreadState;
@@ -97,6 +115,7 @@ export class T3Session {
   private shell: ShellState = { status: { type: "connecting" }, snapshot: null, serverUrl: null };
   private readonly shellListeners = new Set<Listener<ShellState>>();
   private readonly threads = new Map<ThreadId, ThreadEntry>();
+  private readonly vcs = new Map<string, VcsEntry>();
 
   async start(): Promise<void> {
     const scope = Effect.runSync(Scope.make());
@@ -114,6 +133,7 @@ export class T3Session {
     this.setShell({ serverUrl: this.connection.target.httpBaseUrl });
     this.runInScope(this.shellStream());
     for (const [threadId, entry] of this.threads) entry.fiber = this.runInScope(this.threadStream(threadId));
+    for (const [cwd, entry] of this.vcs) entry.fiber = this.runInScope(this.vcsStream(cwd));
   }
 
   async stop(): Promise<void> {
@@ -157,6 +177,30 @@ export class T3Session {
         this.threads.delete(threadId);
         debugLog(`unsubscribe ${threadId}`);
         if (watched.notifyTimer) clearTimeout(watched.notifyTimer);
+        if (watched.fiber) Effect.runFork(Fiber.interrupt(watched.fiber));
+      }, THREAD_LINGER_MS);
+    };
+  }
+
+  /** Subscribes to a working directory's git status: branch, changes, and the remote's ahead/behind and PR. */
+  watchVcs(cwd: string, listener: Listener<VcsState>): () => void {
+    let entry = this.vcs.get(cwd);
+    if (!entry) {
+      entry = { state: { status: "loading", local: null, remote: null }, listeners: new Set(), fiber: null, lingerTimer: null };
+      this.vcs.set(cwd, entry);
+      if (this.connection) entry.fiber = this.runInScope(this.vcsStream(cwd));
+    }
+    if (entry.lingerTimer) clearTimeout(entry.lingerTimer);
+    entry.lingerTimer = null;
+    entry.listeners.add(listener);
+    listener(entry.state);
+    const watched = entry;
+    return () => {
+      watched.listeners.delete(listener);
+      if (watched.listeners.size > 0) return;
+      watched.lingerTimer = setTimeout(() => {
+        if (watched.listeners.size > 0 || this.vcs.get(cwd) !== watched) return;
+        this.vcs.delete(cwd);
         if (watched.fiber) Effect.runFork(Fiber.interrupt(watched.fiber));
       }, THREAD_LINGER_MS);
     };
@@ -309,6 +353,37 @@ export class T3Session {
     );
   }
 
+  private vcsStream(cwd: string) {
+    const rpc = this.requireConnection().rpc;
+    return rpc[WS_METHODS.subscribeVcsStatus]({ cwd, includeRemote: true }).pipe(
+      Stream.runForEach((event) =>
+        Effect.sync(() => {
+          switch (event._tag) {
+            case "snapshot":
+              return this.setVcs(cwd, { status: "live", local: event.local, remote: event.remote });
+            case "localUpdated":
+              return this.setVcs(cwd, { status: "live", local: event.local });
+            case "remoteUpdated":
+              return this.setVcs(cwd, { remote: event.remote });
+          }
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.sync(() => {
+          const message = prettyCause(cause);
+          if (!isSocketFailure(message)) this.setVcs(cwd, { status: "error", error: message });
+        }),
+      ),
+    );
+  }
+
+  private setVcs(cwd: string, patch: Partial<VcsState>): void {
+    const entry = this.vcs.get(cwd);
+    if (!entry) return;
+    entry.state = { ...entry.state, ...patch };
+    for (const listener of entry.listeners) listener(entry.state);
+  }
+
   private connectionLost(message: string): void {
     if (this.stopped || this.recovering) return;
     this.recovering = true;
@@ -332,6 +407,7 @@ export class T3Session {
     this.scope = null;
     this.connection = null;
     for (const entry of this.threads.values()) entry.fiber = null;
+    for (const entry of this.vcs.values()) entry.fiber = null;
     if (scope) await Effect.runPromise(Scope.close(scope, Exit.void));
   }
 

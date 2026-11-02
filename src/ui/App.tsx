@@ -11,10 +11,12 @@ import {
 import type { ProviderApprovalDecision, ThreadId } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { ShellState, T3Session, ThreadState } from "../client/session.ts";
+import type { ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
+import { detailsCwd, RUNTIME_MODE_LABELS, threadDetails } from "../model/details.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
 import { threadRows, type Section } from "../model/threads.ts";
 import { QuestionPanel } from "./QuestionPanel.tsx";
+import { DetailsPanel } from "./DetailsPanel.tsx";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { ThreadView } from "./ThreadView.tsx";
@@ -36,12 +38,11 @@ const COMPOSER_KEYS = [
   { name: "j", ctrl: true, action: "newline" },
 ] as const;
 
-const RUNTIME_MODE_LABELS: Record<string, string> = {
-  "approval-required": "Supervised",
-  "auto-accept-edits": "Auto-accept edits",
-  auto: "Auto",
-  "full-access": "Full access",
-};
+/** The details column opens by itself on terminals at least this wide. */
+const DETAILS_AUTO_WIDTH = 160;
+const DETAILS_WIDTH = 36;
+/** Below this, the details panel takes the conversation's place instead of a column beside it. */
+const MIN_CONVERSATION_WIDTH = 70;
 
 interface QuestionDraft {
   readonly index: number;
@@ -58,6 +59,8 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const [filter, setFilter] = useState("");
   const [showFolded, setShowFolded] = useState(false);
   const [expandAll, setExpandAll] = useState(false);
+  /** null follows the terminal width; d sets it for the rest of the session. */
+  const [detailsPref, setDetailsPref] = useState<boolean | null>(null);
   const [flash, setFlash] = useState<{ text: string; bad?: boolean } | null>(null);
   const [composerLines, setComposerLines] = useState(1);
   const [composerEmpty, setComposerEmpty] = useState(true);
@@ -115,6 +118,20 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     const timer = setTimeout(() => void session.visit(watchedId).catch(() => {}), VISIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [session, watchedId, unread]);
+
+  const showDetails = detailsPref ?? width >= DETAILS_AUTO_WIDTH;
+  const project = threadShell ? shell.snapshot?.projects.find((candidate) => candidate.id === threadShell.projectId) : undefined;
+  const vcsCwd = threadShell ? detailsCwd(threadShell, project) : null;
+  const [vcs, setVcs] = useState<{ cwd: string; state: VcsState } | null>(null);
+  useEffect(() => {
+    if (!showDetails || !vcsCwd || shell.status.type !== "live") return;
+    return session.watchVcs(vcsCwd, (state) => setVcs({ cwd: vcsCwd, state }));
+  }, [session, showDetails, vcsCwd, shell.status.type]);
+  const vcsState = vcs?.cwd === vcsCwd ? vcs.state : null;
+  const details = useMemo(
+    () => (showDetails && threadShell ? threadDetails(threadShell, project, vcsState, shell.snapshot) : null),
+    [showDetails, threadShell, project, vcsState, shell.snapshot],
+  );
 
   const previousTimeline = useRef<{ id: string; timeline: Timeline } | null>(null);
   const timeline = useMemo(() => {
@@ -254,6 +271,8 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
         return attachThreadId ? scroll?.scrollBy(-1) : move(-1);
       case "g":
         return key.shift ? scroll?.scrollTo(scroll.scrollHeight) : scroll?.scrollTo(0);
+      case "d":
+        return setDetailsPref(!showDetails);
       case "e":
         return setExpandAll((value) => !value);
       case "o":
@@ -290,6 +309,8 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
           ? "reconnecting…"
           : (shell.serverUrl ?? "");
   const listWidth = attachThreadId ? 0 : Math.min(46, Math.max(28, Math.floor(width * 0.3)));
+  const detailsColumn = showDetails && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
+  const detailsInPlace = showDetails && !detailsColumn;
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 2;
   const placeholder =
     mode !== "input"
@@ -326,7 +347,11 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
           <ThreadList rows={rows} collapsed={collapsed} selected={selectedIndex} focused={mode === "nav"} width={listWidth} height={height - 2} filter={filter} now={now} />
         )}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
-          {threadId ? (
+          {threadId && detailsInPlace ? (
+            <box flexGrow={1} minHeight={0} flexDirection="column">
+              <DetailsPanel details={details} width={width - listWidth} loading={vcsState?.status !== "live"} inPlace />
+            </box>
+          ) : threadId ? (
             <ThreadView
               project={threadRow?.projectName ?? ""}
               title={threadShell?.title ?? "Thread"}
@@ -387,6 +412,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
             </box>
           ) : null}
         </box>
+        {detailsColumn ? <DetailsPanel details={details} width={DETAILS_WIDTH} loading={vcsState?.status !== "live"} /> : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
         {flash ? (
@@ -409,7 +435,7 @@ function hints(mode: Mode, state: { readonly approval: boolean; readonly questio
     return parts.join(" · ");
   }
   const parts = state.attached ? ["j/k scroll"] : ["j/k threads", "/ filter", "z settled"];
-  parts.push("i type", "e expand", "o earlier", "S stop", "q quit");
+  parts.push("i type", "e expand", "o earlier", "d details", "S stop", "q quit");
   if (state.question) parts.unshift("1-9 pick · x dismiss");
   if (state.approval) parts.unshift("y approve · Y always · n decline");
   return parts.join(" · ");
