@@ -292,8 +292,9 @@ describe("mouse", () => {
 
   test("right-clicking a thread opens its actions", async () => {
     const app = await open();
-    const row = app.find("135d");
-    await app.click(row.x, row.y, 2);
+    // The list row is the "Thread" below the header; its relative age grows daily, so don't look for it.
+    const y = app.frame().split("\n").findIndex((line, index) => index > 0 && line.includes("Thread"));
+    await app.click(5, y, 2);
     expect(app.hints()).toBe("↑/↓ move · enter choose · esc close");
     expect(app.frame()).toContain("Mark unread");
   });
