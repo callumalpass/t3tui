@@ -26,10 +26,17 @@ import {
   type GitActionProgressEvent,
   type GitRunStackedActionResult,
   type GitStackedAction,
+  type AttachmentCreateUploadUrlInput,
+  type ChatAttachment,
   type ProjectId,
+  type ProviderConsumeResetCreditInput,
+  type ProviderConsumeResetCreditResult,
   type ReviewDiffPreviewSource,
   type ScheduledTask,
   type ScheduledTaskId,
+  type ScheduledTaskUpsertInput,
+  type UsageSummary,
+  type UsageSummaryInput,
   type ServerConfig,
   type ModelSelection,
   type OrchestrationMessageContext,
@@ -418,6 +425,41 @@ export class T3Session {
     return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.scheduledTasksRunNow]({ id }));
   }
 
+  upsertAutomation(input: ScheduledTaskUpsertInput): Promise<unknown> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.scheduledTasksUpsert](input));
+  }
+
+  deleteAutomation(id: ScheduledTaskId): Promise<unknown> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.scheduledTasksDelete]({ id }));
+  }
+
+  /**
+   * Uploads one attachment the way the web composer does: mint a signed upload URL,
+   * POST the bytes to it, and resolve with the ChatAttachment to send with the message.
+   */
+  async uploadAttachment(upload: AttachmentCreateUploadUrlInput, bytes: Uint8Array): Promise<ChatAttachment> {
+    const { rpc, target } = this.requireConnection();
+    const minted = await Effect.runPromise(rpc[WS_METHODS.attachmentsCreateUploadUrl](upload));
+    const url = new URL(minted.relativeUrl, target.httpBaseUrl);
+    const response = await fetch(url, { method: "POST", headers: { "content-type": upload.mimeType }, body: bytes as BodyInit });
+    if (!response.ok) throw new Error(`Upload rejected (${response.status})`);
+    return { type: upload.type === "file" ? "file" : "image", id: minted.attachmentId, name: upload.name, mimeType: upload.mimeType, sizeBytes: upload.sizeBytes } as ChatAttachment;
+  }
+
+  /** Deletes an unsent upload, as removing it in the web composer does. */
+  deleteAttachment(attachmentId: string): Promise<unknown> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.attachmentsDelete]({ attachmentId }));
+  }
+
+  /** Token and cost totals for a window, as the web's usage page reads them. */
+  usageSummary(input: UsageSummaryInput): Promise<UsageSummary> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.serverGetUsageSummary](input));
+  }
+
+  consumeResetCredit(input: ProviderConsumeResetCreditInput): Promise<ProviderConsumeResetCreditResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.providerConsumeResetCredit](input));
+  }
+
   stopServer(server: Pick<DiscoveredLocalServer, "pid" | "port">): Promise<unknown> {
     if (server.pid === null) return Promise.reject(new Error("The server's process is unknown."));
     return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.previewStopLocalServer]({ pid: server.pid, port: server.port }));
@@ -457,7 +499,7 @@ export class T3Session {
    */
   /** `modelSelection` switches the thread's model (and options) with this message, as the web composer does. */
   /** `context` carries the records for thread mentions in the text. */
-  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto", modelSelection?: ModelSelection, context?: OrchestrationMessageContext): Promise<void> {
+  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto", modelSelection?: ModelSelection, context?: OrchestrationMessageContext, attachments: readonly ChatAttachment[] = []): Promise<void> {
     const commandId = newCommandId();
     return this.dispatch({
       type: "message.dispatch",
@@ -465,7 +507,7 @@ export class T3Session {
       threadId,
       messageId: MessageId.make(commandId),
       text,
-      attachments: [],
+      attachments: [...attachments],
       ...(context ? { context } : {}),
       ...(modelSelection ? { modelSelection } : {}),
       ...(mode === "queue" ? { dispatchMode: { type: "queue_after_active" } } : { dispatchMode: { type: "start_immediately" }, deliveryIntent: mode }),
@@ -651,11 +693,11 @@ export class T3Session {
    * Creates a thread and sends its first message in one call, as the web app does when a
    * draft is first sent. Resolves with the new thread's id.
    */
-  async launchThread(input: Omit<OrchestrationV2ThreadLaunchInput, "commandId" | "initialMessage"> & { readonly text: string; readonly context?: OrchestrationMessageContext | undefined }): Promise<ThreadId> {
-    const { text, context, ...rest } = input;
+  async launchThread(input: Omit<OrchestrationV2ThreadLaunchInput, "commandId" | "initialMessage"> & { readonly text: string; readonly context?: OrchestrationMessageContext | undefined; readonly attachments?: readonly ChatAttachment[] }): Promise<ThreadId> {
+    const { text, context, attachments, ...rest } = input;
     const commandId = newCommandId();
     const result = await Effect.runPromise(
-      this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({ ...rest, commandId, initialMessage: { messageId: MessageId.make(commandId), text, ...(context ? { context } : {}), attachments: [] } }),
+      this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({ ...rest, commandId, initialMessage: { messageId: MessageId.make(commandId), text, ...(context ? { context } : {}), attachments: [...(attachments ?? [])] } }),
     );
     return result.threadId;
   }
