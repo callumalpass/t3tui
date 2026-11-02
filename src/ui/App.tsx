@@ -1,14 +1,18 @@
-import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRenderable } from "@opentui/core";
+import { decodePasteBytes, type KeyEvent, type MouseEvent, type PasteEvent, type ScrollBoxRenderable, type Selection, type TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { parseFileUrlHref, resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
+import { pastedImagePath } from "../model/attachments.ts";
+import { isWebUrl, pathAt } from "../model/links.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type T3tuiConfig } from "../config.ts";
 import { saveLayout, type Layout } from "../layout.ts";
@@ -31,7 +35,8 @@ import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
 import { useQuestion } from "./useQuestion.ts";
 import { useThreadMenu } from "./useThreadMenu.ts";
-import { editInEditor } from "./editor.ts";
+import { editorCommand, scratchFile } from "./editor.ts";
+import { TerminalPane, type PaneProgram } from "./TerminalPane.tsx";
 import { Palette } from "./Palette.tsx";
 import { ApprovalPanel } from "./ApprovalPanel.tsx";
 import { LiveStatus } from "./LiveStatus.tsx";
@@ -42,8 +47,11 @@ import { PullRequestView } from "./PullRequestView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
-import { copyText, desktopNotify, ring } from "./terminalOut.ts";
-import { colors, statusColor } from "./theme.ts";
+import { rendererClipboard, type Clipboard } from "./clipboard.ts";
+import { composerText, useComposerChips } from "./useComposerChips.ts";
+import { openInBrowser, screenTextAt } from "./links.ts";
+import { desktopNotify, ring } from "./terminalOut.ts";
+import { colors, statusColor, useMarkdownStyle } from "./theme.ts";
 import { BAR, NO_BORDER } from "./edges.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { useTurns } from "./useTurns.ts";
@@ -68,9 +76,10 @@ import { useUsageSummary } from "./useUsage.ts";
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
  * "details": j/k move through the details panel. "settings": j/k move through settings.
+ * "pane": every key but ctrl+\ goes to the program in the terminal pane.
  * The rest are overlays with their own input.
  */
-type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "find" | "pull-request";
+type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "find" | "pull-request" | "pane";
 
 /** Holding j/k skims past threads; only subscribe to one you stop on. */
 const SUBSCRIBE_DELAY_MS = 120;
@@ -84,6 +93,8 @@ const DETAILS_WIDTH = 38;
 const MIN_DETAILS_WIDTH = 28;
 /** Below this, the details panel takes the conversation's place instead of a column beside it. */
 const MIN_CONVERSATION_WIDTH = 70;
+/** The conversation this wide or wider shows diffs side by side. */
+const SPLIT_DIFF_WIDTH = 140;
 
 const COMPOSER_KEYS = {
   enter: [
@@ -99,10 +110,12 @@ const COMPOSER_KEYS = {
 /** The composer's key while a new thread is being drafted. */
 const DRAFT_KEY = "draft";
 
-export function App(props: { readonly session: T3Session; readonly config: T3tuiConfig; readonly layout?: Layout; readonly attachThreadId?: ThreadId }) {
+export function App(props: { readonly session: T3Session; readonly config: T3tuiConfig; readonly layout?: Layout; readonly attachThreadId?: ThreadId; readonly clipboard?: Clipboard }) {
   const { session, attachThreadId } = props;
   const attached = attachThreadId !== undefined;
   const renderer = useRenderer();
+  const [clipboard] = useState(() => props.clipboard ?? rendererClipboard(renderer));
+  const markdownStyle = useMarkdownStyle();
   const { width, height } = useTerminalDimensions();
   const [shell, setShell] = useState<ShellState>(session.getShell());
   // Any thread, listed or not: subagents open here too.
@@ -111,6 +124,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const [filter, setFilter] = useState("");
   const [showFolded, setShowFolded] = useState(false);
   const [expandAll, setExpandAll] = useState(false);
+  /** Side-by-side diffs, once toggled for the session; null follows the conversation's width. */
+  const [splitDiffPref, setSplitDiffPref] = useState<boolean | null>(null);
   /** Folds opened one at a time by a click, for the open thread. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
   /** The thread list's and details column's widths once their edges are dragged; null follows the window. */
@@ -134,6 +149,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   /** The edge being dragged. */
   const [resizing, setResizing] = useState<"list" | "details" | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
+  /** The program in the right-hand pane: one of T3's terminals, or $EDITOR. */
+  const [pane, setPane] = useState<PaneProgram | null>(null);
+  /** The conversation area's height, for the pane when it takes that place. */
+  const [contentHeight, setContentHeight] = useState(0);
   const [config, setConfig] = useState(props.config);
   const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
   const [serverConfig, setServerConfig] = useState<ServerConfigState | null>(null);
@@ -341,8 +360,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const copySelection = useEvent((selection: Selection) => {
     const text = selection.getSelectedText();
     if (!text.trim()) return;
-    copyText(renderer, text);
-    say(`Copied ${text.length === 1 ? "1 character" : `${text.length} characters`}`);
+    void clipboard.copy(text).then((copied) => (copied ? say("Copied") : say("Could not reach the clipboard.", true)));
   });
   useEffect(() => {
     renderer.on("selection", copySelection);
@@ -411,12 +429,14 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const attachCwd = draft ? (shell.snapshot?.projects.find((candidate) => candidate.id === draft.projectId)?.workspaceRoot ?? null) : (threadShell?.worktreePath ?? project?.workspaceRoot ?? null);
   const attach = useAttachments({
     session,
+    clipboard,
     composerKey,
     cwd: attachCwd,
     maxFileBytes: serverConfig?.config ? (serverConfig.config.environment.capabilities.fileAttachments?.maxUploadBytes ?? null) : undefined,
     confirm,
     say,
   });
+  const chips = useComposerChips({ composerRef, composerKey, pending: attach.pending, remove: attach.remove });
   const usage = useUsageSummary(session, settingsIndex !== null && live);
   const usageInfo = useMemo(() => usageLimits(serverConfig?.config ?? null, now), [serverConfig, now]);
   const spendResetCredit = (credit: (typeof usageInfo.credits)[number]) =>
@@ -459,6 +479,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     say,
     progress: (text) => setFlash({ text }),
     openThread,
+    editFile: (path, cwd) => editFile(path, cwd),
     focus: (focused) => setMode(focused ? "details" : "nav"),
   });
 
@@ -488,7 +509,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const runtimeMode = models.runtimeMode;
   const threadMenu = useThreadMenu({
     session,
-    renderer,
+    clipboard,
     snapshot: shell.snapshot,
     config: providerConfig,
     timestampFormat: config.timestampFormat,
@@ -513,17 +534,70 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     },
   });
 
-  const workspace = useWorkspace({ session, renderer, live, thread: threadShell, project, serverConfig: serverConfig?.config ?? null, draft: draft !== null, diff, openPicker, confirm, run, say });
+  /** Puts a program in the pane and gives it the keys. An editor there may hold unsaved work, so it isn't replaced. */
+  const showPane = (program: PaneProgram) => {
+    if (pane?.kind === "local" && pane.id !== program.id) return say("The editor in the pane is still open; ctrl+\\ there and quit it first.", true);
+    setPane(program);
+    setMode("pane");
+  };
+  const closePane = (message?: string) => {
+    setPane(null);
+    setMode((current) => (current === "pane" ? "nav" : current));
+    if (message) say(message);
+  };
+  const workspace = useWorkspace({
+    session,
+    renderer,
+    live,
+    thread: threadShell,
+    project,
+    serverConfig: serverConfig?.config ?? null,
+    draft: draft !== null,
+    diff,
+    openPicker,
+    openPane: (target) => showPane({ kind: "server", id: `server:${target.threadId}:${target.terminalId}`, title: `Terminal · ${target.label}`, target }),
+    confirm,
+    run,
+    say,
+  });
 
-  /** The composer's text in $EDITOR. */
-  const openEditor = async () => {
+  /** The composer's text in $EDITOR, in the pane; what's saved comes back when it exits. */
+  const openEditor = () => {
     const composer = composerRef.current;
     if (!composer) return;
-    const edited = await editInEditor(renderer, composer.plainText);
-    if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
-    composer.setText(edited);
-    composer.gotoBufferEnd();
-    setMode("input");
+    const key = composerKey;
+    const file = scratchFile(composerText(composer));
+    showPane({
+      kind: "local",
+      id: `message:${file.path}`,
+      title: "Message · save and quit to bring it back",
+      command: editorCommand(file.path),
+      onExit: (code) => {
+        const edited = code === 0 ? file.read() : null;
+        file.remove();
+        if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
+        putMessage(key, edited);
+        setMode((current) => (current === "pane" ? "input" : current));
+      },
+    });
+  };
+  /** A workspace file in $EDITOR, in the pane, when the workspace is on this machine. */
+  const editFile = (path: string, cwd: string | null) => {
+    const file = cwd ? resolvePathLinkTarget(path, cwd) : path;
+    if (!existsSync(file)) return say(`${path} isn't on this machine.`, true);
+    showPane({ kind: "local", id: `edit:${file}`, title: `Editing ${path}`, command: editorCommand(file), cwd: cwd ?? undefined, onExit: () => {} });
+  };
+
+  /** A click on a link opens it in the browser; on a path to a workspace file, in the editor pane. A drag doesn't. */
+  const openAt = (x: number, y: number) => {
+    if (renderer.getSelection()?.getSelectedText()) return;
+    const url = renderer.getLinkAt(x, y);
+    if (url && isWebUrl(url)) return openInBrowser(url, (reason) => say(`Could not open the browser (${reason}): ${url}`, true));
+    const shown = url ? null : screenTextAt(renderer, x, y);
+    const raw = url ? (url.startsWith("file:") ? decodeURIComponent(parseFileUrlHref(url)?.path ?? "") : url) : shown && pathAt(shown.text, shown.index);
+    if (!raw || !attachCwd) return;
+    const { path } = splitFilePathPosition(resolvePathLinkTarget(raw, attachCwd));
+    if (existsSync(path) && statSync(path).isFile()) editFile(path, attachCwd);
   };
 
   const settingsRows = settingRows(config);
@@ -545,6 +619,16 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     setMode("nav");
   };
 
+  /** Replaces a composer's text, the open one's or a stored draft's. */
+  const putMessage = (key: string, text: string) => {
+    const composer = composerRef.current;
+    if (key !== activeComposerKey.current || !composer) return void drafts.current.set(key, text);
+    chips.replaceText(composer, text);
+    composer.gotoBufferEnd();
+    setComposerLines(composerLineCount(composer));
+    setComposerEmpty(text.trim() === "");
+  };
+
   /**
    * A message that didn't go comes back to its composer, as the web's does: its text, its
    * attachments and its mentions, unless something new was typed there meanwhile.
@@ -552,8 +636,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const restoreMessage = (key: string, text: string, context: OrchestrationMessageContext | undefined, attachments: readonly ChatAttachment[]) => {
     const composer = composerRef.current;
     if (key === activeComposerKey.current && composer) {
-      if (composer.plainText.trim()) return;
-      composer.setText(text);
+      if (composerText(composer).trim()) return;
+      chips.replaceText(composer, text);
       composer.gotoBufferEnd();
       setComposerLines(composerLineCount(composer));
       setComposerEmpty(text === "");
@@ -577,7 +661,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   };
 
   const clearComposer = () => {
-    composerRef.current?.setText("");
+    if (composerRef.current) chips.replaceText(composerRef.current, "");
     if (threadId) drafts.current.delete(threadId);
     composerMenu.forget();
     setComposerLines(1);
@@ -587,11 +671,11 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   /** Enter in the composer; `alternate` is alt+enter, which flips steer and queue. */
   const submit = (alternate = false) => {
     const composer = composerRef.current;
-    const raw = composer?.plainText ?? "";
+    const raw = composer ? composerText(composer) : "";
     // A trailing backslash continues onto a new line, for terminals that can't send shift+enter.
     if (!alternate && config.sendShortcut === "enter" && composer && raw.endsWith("\\")) {
-      composer.setText(raw.slice(0, -1));
       composer.gotoBufferEnd();
+      composer.deleteCharBackward();
       composer.newLine();
       return;
     }
@@ -646,10 +730,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const turns = useTurns({ session, threadId, projection, timeline: current, config: providerConfig, cwd: panel.cwd, ignoreWhitespace: config.diffIgnoreWhitespace, enabled: draft === null, diff, setDiff, scrollRef, confirm, say,
     showConversation: () => { setMode("nav"); setDetailsPrefState((value) => (width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value)); },
     restorePrompt: (id, text) => {
-      const previous = id === activeComposerKey.current ? composerRef.current?.plainText ?? "" : drafts.current.get(id) ?? "";
+      const previous = id === activeComposerKey.current && composerRef.current ? composerText(composerRef.current) : drafts.current.get(id) ?? "";
       const next = text ? previous ? `${previous}\n\n${text}` : text : previous;
       drafts.current.set(id, next);
-      if (id === activeComposerKey.current) { composerRef.current?.setText(next); setMode("input"); }
+      if (id === activeComposerKey.current && composerRef.current) { chips.replaceText(composerRef.current, next); setMode("input"); }
     },
   });
 
@@ -657,6 +741,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const pullRequests = usePullRequests({
     session,
     renderer,
+    clipboard,
     threadShell,
     project: draft ? draftProject : project,
     projects: shell.snapshot?.projects ?? [],
@@ -724,12 +809,14 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const quitKey: Binding = { keys: ["ctrl+c"], run: quit };
   const paletteKey: Binding = { keys: ["ctrl+k"], run: openPalette };
   const terminalKey: Binding = { keys: ["ctrl+j"], run: workspace.openTerminal };
+  const paneKey: Binding | null = pane && { keys: ["ctrl+\\"], run: () => setMode(mode === "pane" ? "nav" : "pane"), hint: mode === "pane" ? "leave pane" : "pane", command: { id: "pane-focus", title: mode === "pane" ? "Leave the terminal pane" : "Focus the terminal pane", keywords: ["terminal", "editor"] } };
   const editorKey: Binding | null = hasComposer ? { keys: ["ctrl+g"], run: openEditor, command: { id: "editor", title: "Write the message in $EDITOR", keywords: ["vim", "editor", "compose"] } } : null;
   const nextThreadKey: Binding = { keys: ["ctrl+n", "alt+↓"], label: "ctrl+n/p", run: () => move(1) };
   const previousThreadKey: Binding = { keys: ["ctrl+p", "alt+↑"], run: () => move(-1) };
   // Anywhere with a text field, ctrl+u and ctrl+d edit (delete to line start, delete forward); page up/down still scroll.
   const lineInput = mode === "filter" || mode === "input" || mode === "find" || mode === "palette" || mode === "picker" || mode === "confirm";
   const globalKeys = keys(
+    paneKey,
     quitKey,
     paletteKey,
     terminalKey,
@@ -795,15 +882,20 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     cancelDraftKey,
   );
   // A diff and a draft name their own few keys; everything else names the lot.
-  const navHints = diff
-    ? [scrollDiffDown, closeDiff, detailsKey]
-    : draft
-      ? keys(hinted(typeKey, "write the first message"), projectKey, modelKey && hinted(modelKey, "model & mode"), worktreeKey, cancelDraftKey)
-      : navKeys;
+  const navHints = keys(
+    paneKey,
+    diff
+      ? [scrollDiffDown, closeDiff, detailsKey]
+      : draft
+        ? keys(hinted(typeKey, "write the first message"), projectKey, modelKey && hinted(modelKey, "model & mode"), worktreeKey, cancelDraftKey)
+        : navKeys,
+  );
 
   // Commands only the palette runs.
   const paletteOnly = keys(
     editorKey,
+    pane?.kind === "server" && { keys: [], run: () => closePane(), command: { id: "pane-close", title: "Close the terminal pane", keywords: ["detach", "hide"] } },
+    { keys: [], run: () => setSplitDiffPref(!splitDiff), command: { id: "split-diff", title: "Toggle split diff", keywords: ["side by side", "unified", "diff view"] } },
     queue.keys.input,
     queue.keys.palette,
     (projection?.subagents ?? []).filter((agent) => threadId && canStopSubagent(agent)).map((agent): Binding => ({ keys: [], run: () => run("Stop requested", () => session.stopSubagent(agent)), command: { id: `stop-subagent:${agent.id}`, title: `Stop subagent: ${agent.title ?? "subagent"}`, keywords: ["interrupt", "cancel", "kill"] } })),
@@ -814,7 +906,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     pullRequests.commands.map((command): Binding => ({ ...fromCommand(command), keys: [], ...(command.shortcut ? { label: command.shortcut } : {}) })),
     { keys: [], run: openSettings, command: { id: "settings", title: "Settings", keywords: ["preferences", "config", "options", "notifications", "alerts"] } },
   );
-  const commands = commandsFor([...navKeys, ...paletteOnly]);
+  const commands = commandsFor(keys(paneKey, navKeys, paletteOnly));
 
   // The composer. Enter and newlines are the textarea's own; their hints only explain.
   const sendKey = config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
@@ -828,6 +920,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     queue.keys.input,
     { keys: [], label: config.sendShortcut === "enter" ? "shift+enter or \\" : "enter", hint: "newline" },
     editorKey && hinted(editorKey, "editor"),
+    { keys: ["ctrl+v"], run: () => attach.paste((text) => composerRef.current?.insertText(text)) },
     { keys: ["esc"], run: () => setMode("nav"), hint: "navigate" },
     !attached && hinted(nextThreadKey, "thread"),
   );
@@ -888,6 +981,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         return { layers: [confirmKeys], hints: confirmKeys };
       }
     }
+    if (mode === "pane" && paneKey) return { layers: [[paneKey]], hints: [paneKey] };
     // The secret field takes every key while it's focused.
     if (secret.focused) return { layers: [secret.bindings, [quitKey]], hints: secret.bindings };
     switch (mode) {
@@ -921,7 +1015,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         return key.preventDefault();
       }
     }
-    if (secret.focused && mode !== "find" && mode !== "picker" && mode !== "palette" && mode !== "confirm") {
+    if (secret.focused && mode !== "find" && mode !== "picker" && mode !== "palette" && mode !== "confirm" && mode !== "pane") {
       secret.type(key);
       key.preventDefault();
     }
@@ -948,9 +1042,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     loadEarlier: useEvent(() => loadEarlier()),
     menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
     openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
+    click: useEvent((x: number, y: number) => openAt(x, y)),
   };
   const copy = (label: string, text: string) => {
-    copyText(renderer, text);
+    void clipboard.copy(text);
     say(`Copied ${label}`);
   };
   /** Long output stays on the server until it's asked for. */
@@ -985,7 +1080,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     });
   /** A click in the conversation, a diff or the PR view takes the keys there, out of the composer or details. */
   const focusConversation = (event: MouseEvent) => {
-    if (event.button !== 0 || (mode !== "input" && mode !== "details")) return;
+    if (event.button !== 0 || (mode !== "input" && mode !== "details" && mode !== "pane")) return;
     panel.leave();
   };
 
@@ -999,8 +1094,13 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   // Room for the details column and its edge beside the conversation; a dragged width gives way to the conversation first.
   const detailsRoom = width - listWidth - 1 - MIN_CONVERSATION_WIDTH;
   const detailsWidth = Math.min(detailsWidthPref ?? DETAILS_WIDTH, Math.max(DETAILS_WIDTH, detailsRoom));
-  const detailsColumn = panel.show && detailsWidth <= detailsRoom;
-  const detailsInPlace = panel.show && !detailsColumn;
+  // The pane takes the details column's place, or the conversation's when there's no room beside it.
+  const paneColumn = pane !== null && detailsWidth <= detailsRoom;
+  const detailsColumn = !pane && panel.show && detailsWidth <= detailsRoom;
+  const detailsInPlace = !pane && panel.show && !detailsColumn;
+  const rightColumn = paneColumn || detailsColumn;
+  const conversationWidth = width - (showList ? listWidth + 1 : 0) - (rightColumn ? detailsWidth + 1 : 0);
+  const splitDiff = splitDiffPref ?? conversationWidth >= SPLIT_DIFF_WIDTH;
   // The block's height: a row of padding on top, the text, then the model line inside it.
   // Padding row, text, a blank row, then the model line.
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 3;
@@ -1044,6 +1144,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       inPlace={inPlace}
       selected={mode === "details" || (mode === "confirm" && returnMode.current === "details") ? panel.selected : null}
       onActivate={panel.activateById}
+      onEdit={panel.edit}
     />
   );
 
@@ -1118,8 +1219,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               saveLayoutNow({ listWidth: null });
             }} />}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
-          <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation}>
-          {settingsIndex !== null ? (
+          <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation} onSizeChange={function (this: { height: number }) { setContentHeight(this.height); }}>
+          {pane && !paneColumn ? null : settingsIndex !== null ? (
             <SettingsView
               rows={settingsRows}
               server={serverSettingLines(serverConfig?.config ?? null)}
@@ -1135,7 +1236,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           ) : mode === "pull-request" && pullRequests.view ? (
             <PullRequestView view={pullRequests.view} scrollRef={scrollRef} onOpenUrl={() => pullRequests.commands.find((candidate) => candidate.id === "pr-open")?.run()} onMenu={openPullRequestMenu} onClose={pullRequests.close} />
           ) : diff ? (
-            <DiffView diff={diff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} onFile={turns.diffContext.click} />
+            <DiffView diff={diff} split={splitDiff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} onFile={turns.diffContext.click} />
           ) : draft ? (
             <DraftView lines={newThread.lines(models.open)} />
           ) : threadId && detailsInPlace && mode !== "find" ? (
@@ -1171,7 +1272,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
-          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? detailsWidth + 1 : 0) - 3} actions={queue.actions} /> : null}
+          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (rightColumn ? detailsWidth + 1 : 0) - 3} actions={queue.actions} /> : null}
           {mode !== "confirm" && questions.request && questions.draft ? <QuestionPanel
               request={questions.request}
               index={questions.draft.index}
@@ -1192,7 +1293,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               onCancel={closeOverlay}
             />
           ) : null}
-          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (detailsColumn ? detailsWidth + 1 : 0) - 2} onPick={composerMenu.pick} /> : null}
+          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (rightColumn ? detailsWidth + 1 : 0) - 2} onPick={composerMenu.pick} /> : null}
           {attach.pending.length > 0 ? (
             <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
               <text fg={colors.muted}>Attached:</text>
@@ -1236,12 +1337,23 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                   focusedBackgroundColor={colors.element}
                   wrapMode="word"
                   keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
+                  syntaxStyle={markdownStyle}
                   onSubmit={() => submit()}
+                  onPaste={(event: PasteEvent) => {
+                    const text = decodePasteBytes(event.bytes);
+                    // An empty paste is how terminals pass on a copied image they can't send as text.
+                    const path = text.trim() ? pastedImagePath(text, attachCwd) : null;
+                    if (text.trim() && !(path && existsSync(path))) return;
+                    event.preventDefault();
+                    if (path) attach.attachPath(path);
+                    else attach.paste();
+                  }}
                   onCursorChange={composerMenu.sync}
                   onContentChange={() => {
                     composerMenu.sync();
+                    chips.sync();
                     const composer = composerRef.current;
-                    const text = composer?.plainText ?? "";
+                    const text = composer ? composerText(composer) : "";
                     if (text) drafts.current.set(composerKey, text);
                     else drafts.current.delete(composerKey);
                     // Wrapped lines count too, so a long paragraph grows the box.
@@ -1275,14 +1387,24 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             </box>
           ) : null}
         </box>
-        {detailsColumn ? (
-          <>
-            <ResizeHandle active={resizing === "details"} onStart={() => setResizing("details")} onReset={() => {
-              setDetailsWidthPref(null);
-              saveLayoutNow({ detailsWidth: null });
-            }} />
-            {detailsPanel(false)}
-          </>
+        {rightColumn ? (
+          <ResizeHandle active={resizing === "details"} onStart={() => setResizing("details")} onReset={() => {
+            setDetailsWidthPref(null);
+            saveLayoutNow({ detailsWidth: null });
+          }} />
+        ) : null}
+        {detailsColumn ? detailsPanel(false) : null}
+        {/* One place in the tree in both layouts, so a narrower window doesn't restart its program. */}
+        {pane ? (
+          <TerminalPane
+            key={pane.id}
+            program={pane}
+            session={session}
+            focused={mode === "pane"}
+            onFocus={() => setMode("pane")}
+            onClose={closePane}
+            place={paneColumn ? { width: detailsWidth } : { left: showList ? listWidth + 1 : 0, height: contentHeight }}
+          />
         ) : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>

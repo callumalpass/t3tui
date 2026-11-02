@@ -128,6 +128,17 @@ describe("palette and pickers", () => {
     expect(app.hints()).toStartWith("j/k threads");
   });
 
+  test("settings offer the terminal's own colours", async () => {
+    const app = await open({ config: { theme: "light" } });
+    await app.press("k", { ctrl: true });
+    await app.type("settings");
+    await app.press("return");
+    const row = app.find("Colours");
+    expect(app.frame()).toMatch(/Colours\s+light/);
+    await app.click(row.x, row.y);
+    expect(app.frame()).toMatch(/Colours\s+the terminal's own colours/);
+  });
+
   test(". opens the thread's actions, and choosing one runs it", async () => {
     const app = await open();
     await app.press(".");

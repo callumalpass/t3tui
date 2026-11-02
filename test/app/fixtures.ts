@@ -166,3 +166,11 @@ export function withOmittedOutput(): OrchestrationV2ThreadProjection {
     visibleTurnItems: [{ position: 0, visibility: "local", sourceThreadId: omittedCommand.threadId, sourceItemId: omittedCommand.id, item: omittedCommand }],
   } as unknown as OrchestrationV2ThreadProjection;
 }
+
+/** The finished turn, its reply replaced by `text`, still streaming in if `streaming`. */
+export function withReply(text: string, streaming: boolean): OrchestrationV2ThreadProjection {
+  const turn = structuredClone(withCompletedTurn()) as unknown as { turnItems: Record<string, unknown>[]; visibleTurnItems: { item: Record<string, unknown> }[] };
+  for (const item of turn.turnItems) if (item.type === "assistant_message") Object.assign(item, { text, streaming, status: streaming ? "running" : "completed" });
+  for (const visible of turn.visibleTurnItems) visible.item = turn.turnItems.find((item) => item.id === visible.item.id)!;
+  return turn as unknown as OrchestrationV2ThreadProjection;
+}

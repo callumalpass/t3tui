@@ -10,7 +10,7 @@ import type { PaletteCommand, Picker, PickerItem } from "../model/palette.ts";
 import { newTerminalInput, preferredEditor, resolveBranchSelectionTarget, worktreeSetupNote } from "../model/workspace.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import { splitPatch, type DiffState } from "./DiffView.tsx";
-import { attachTerminal } from "./terminalAttach.ts";
+import { attachTerminal, type TerminalTarget } from "./terminalAttach.ts";
 
 type Command = PaletteCommand & { readonly run: () => void };
 
@@ -25,6 +25,8 @@ export function useWorkspace(input: {
   readonly draft: boolean;
   readonly diff: DiffState | null;
   readonly openPicker: (picker: Picker) => void;
+  /** Shows a terminal in the pane beside the conversation. */
+  readonly openPane: (target: TerminalTarget) => void;
   readonly confirm: (confirmation: Confirmation) => void;
   readonly run: (label: string, action: () => Promise<unknown>) => void;
   readonly say: (message: string, bad?: boolean) => void;
@@ -76,23 +78,35 @@ export function useWorkspace(input: {
   const threadTerminals = (terminals?.items ?? []).filter((terminal) => terminal.threadId === thread?.id);
   const cwd = thread?.worktreePath ?? project?.workspaceRoot;
   const label = (terminal: TerminalSummary) => resolveTerminalSessionLabel(terminal.terminalId, terminal);
-  const enterTerminal = (terminal: Pick<TerminalSummary, "terminalId" | "cwd" | "worktreePath" | "label">) => {
+  /** In the pane, or with the whole screen. */
+  const enterTerminal = (terminal: Pick<TerminalSummary, "terminalId" | "cwd" | "worktreePath" | "label">, fullScreen = false) => {
     if (!thread) return;
     const target = {
       threadId: thread.id,
       ...terminal,
       label: resolveTerminalSessionLabel(terminal.terminalId, terminal),
     };
+    if (!fullScreen) return input.openPane(target);
     void attachTerminal(renderer, session, target, (message) => {
       if (message) say(message);
     });
   };
-  const newTerminal = () => {
+  const newTerminal = (fullScreen = false) => {
     if (!thread || !project) return say("Open a thread with a project folder first.", true);
     const request = newTerminalInput(thread.id, project.workspaceRoot, thread.worktreePath, threadTerminals, terminals?.status === "live");
     run("Terminal opened", async () => {
       await session.openTerminal(request);
-      enterTerminal({ terminalId: request.terminalId, cwd: request.cwd, worktreePath: thread.worktreePath, label: "" });
+      enterTerminal({ terminalId: request.terminalId, cwd: request.cwd, worktreePath: thread.worktreePath, label: "" }, fullScreen);
+    });
+  };
+  /** The old way in: the terminal takes the screen until ctrl+j. */
+  const attachFullScreen = () => {
+    if (!thread || input.draft) return say("Open a thread first.", true);
+    if (threadTerminals.length === 0) return newTerminal(true);
+    if (threadTerminals.length === 1) return enterTerminal(threadTerminals[0]!, true);
+    openPicker({
+      placeholder: "Attach full screen",
+      groups: [{ label: "Terminals", items: threadTerminals.map((terminal) => ({ id: `terminal:full:${terminal.terminalId}`, title: label(terminal), run: () => enterTerminal(terminal, true) })) }],
     });
   };
   const terminalMutation = (terminal: TerminalSummary, action: "close" | "clear") => {
@@ -114,7 +128,10 @@ export function useWorkspace(input: {
   };
   // Close/clear appear as one sub-picker each, plus search-only rows so typing finds them.
   const terminalActionItems = (): PickerItem[] => {
-    const items: PickerItem[] = [{ id: "terminal:new", title: "New terminal", run: newTerminal }];
+    const items: PickerItem[] = [
+      { id: "terminal:new", title: "New terminal", run: () => newTerminal() },
+      { id: "terminal:full-screen", title: "Attach full screen", hint: "ctrl+j returns", run: attachFullScreen },
+    ];
     for (const action of ["close", "clear"] as const) {
       const targets = terminalItems(action);
       if (targets.length === 0) continue;
@@ -269,7 +286,8 @@ export function useWorkspace(input: {
   const commands: Command[] = thread && !input.draft ? [
     { id: "terminal", title: "Open terminal", shortcut: "ctrl+j", keywords: ["shell", "console"], run: openTerminal },
     { id: "terminal-picker", title: "Terminals…", shortcut: "T", keywords: ["shell", "close", "clear", "attach"], run: terminalPicker },
-    { id: "terminal-new", title: "New terminal", keywords: ["shell", "open"], run: newTerminal },
+    { id: "terminal-new", title: "New terminal", keywords: ["shell", "open"], run: () => newTerminal() },
+    { id: "terminal-full-screen", title: "Attach terminal full screen", keywords: ["shell", "console", "attach"], run: attachFullScreen },
     ...terminalItems("close"), ...terminalItems("clear"),
     { id: "branches", title: "Branches and worktrees…", shortcut: "b", keywords: ["git", "switch", "ref", "create", "remove", "pull"], run: branchPicker },
     { id: "workspace-editor", title: input.diff ? "Open diff file in editor" : "Open workspace in editor", shortcut: "E", keywords: ["folder", "code", "vscode", "cursor"], run: openInEditor },

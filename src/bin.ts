@@ -173,9 +173,14 @@ async function runUi(attachNeedle?: string) {
   setInterval(() => {
     if (Date.now() - lastInput > 5_000) Bun.gc(true);
   }, 30_000).unref();
-  const { applyTheme } = await import("./ui/theme.ts");
-  // Terminals that don't say what their background is get the dark palette.
-  applyTheme(config.theme === "auto" ? ((await renderer.waitForThemeMode(300)) ?? "dark") : config.theme);
+  const { applyTheme, terminalPalette, themeModeOf } = await import("./ui/theme.ts");
+  if (config.theme === "dark" || config.theme === "light") applyTheme(config.theme);
+  else {
+    // The terminal's colours through OSC 4, 10 and 11; terminals that don't answer get the dark palette.
+    const detected = await renderer.getPalette({ timeout: 300, size: 16 }).catch(() => null);
+    const mode = themeModeOf(detected) ?? renderer.themeMode ?? "dark";
+    applyTheme(config.theme === "terminal" ? (terminalPalette(detected) ?? mode) : mode);
+  }
   createRoot(renderer).render(createElement(App, { session, config, layout, ...(attachThreadId ? { attachThreadId } : {}) }));
 }
 

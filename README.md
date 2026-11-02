@@ -58,7 +58,10 @@ The keys you'll use most:
 | `c` | new thread |
 | `m` | model, reasoning and access mode |
 | `.` | thread actions: pin, snooze, rename, archive… |
-| `ctrl+j` | attach to the thread's terminal on the server |
+| `ctrl+j` | the thread's terminal on the server, in a pane beside the conversation |
+| `ctrl+\` | move the keys between the pane and the conversation |
+| `ctrl+g` | write the message in `$EDITOR`, in the pane |
+| `ctrl+v` | in the message box: attach the clipboard's image (or paste its text) |
 | `ctrl+c` | quit |
 
 In the message box, `/`, `$`, `@` and `#` suggest commands, skills, files and threads, and pull requests. Most things also work with the mouse.

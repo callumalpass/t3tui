@@ -3,7 +3,7 @@ import type { RefObject } from "react";
 
 import type { PullRequestLine } from "../model/pullRequests.ts";
 import { Button, isLeftClick, isRightClick, useHover } from "./Button.tsx";
-import { colors, type Palette } from "./theme.ts";
+import { colors, type Palette, scrollbarOptions } from "./theme.ts";
 
 export interface PullRequestViewState {
   readonly status: "loading" | "ready" | "error";
@@ -41,7 +41,7 @@ export function PullRequestView(props: { readonly view: PullRequestViewState; re
       </box>
       {view.status === "loading" ? <text fg={colors.muted} flexShrink={0}>Loading pull request…</text> : null}
       {view.status === "error" ? <text fg={colors.bad} flexShrink={0}>{`Could not load the pull request: ${view.error ?? "unknown error"}`}</text> : null}
-      <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
+      <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0} scrollbarOptions={scrollbarOptions()}>
         {view.lines.map((line, index) =>
           line.kind === "title" && index > 0 ? (
             <text key={index} fg={colors[LINE_COLORS[line.kind]]} marginTop={1}>

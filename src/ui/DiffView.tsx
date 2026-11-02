@@ -4,7 +4,7 @@ import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
 import type { RefObject } from "react";
 
 import { isLeftClick, useHover } from "./Button.tsx";
-import { colors, useMarkdownStyle } from "./theme.ts";
+import { colors, scrollbarOptions, useMarkdownStyle } from "./theme.ts";
 
 export interface DiffState {
   readonly cwd: string;
@@ -18,8 +18,8 @@ export interface DiffState {
   readonly error?: string;
 }
 
-/** Working-tree or checkpoint changes through the same unified diff renderer. */
-export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: RefObject<ScrollBoxRenderable | null>; readonly selected: number; readonly expanded: Readonly<Record<string, { patch?: string; error?: string }>>; readonly onFile: (index: number) => void }) {
+/** Working-tree or checkpoint changes through the same diff renderer: side by side when `split`, else unified. */
+export function DiffView(props: { readonly diff: DiffState; readonly split: boolean; readonly scrollRef: RefObject<ScrollBoxRenderable | null>; readonly selected: number; readonly expanded: Readonly<Record<string, { patch?: string; error?: string }>>; readonly onFile: (index: number) => void }) {
   const { diff } = props;
   const markdownStyle = useMarkdownStyle();
   const files = diff.patch ? splitPatch(diff.patch) : [];
@@ -37,14 +37,15 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
       {diff.status === "error" ? <text fg={colors.bad} flexShrink={0}>{`Could not load the diff: ${diff.error ?? "unknown error"}`}</text> : null}
       {diff.status === "ready" && files.length === 0 ? <text fg={colors.muted} flexShrink={0}>No changes.</text> : null}
       {diff.truncated ? <text fg={colors.warn} flexShrink={0}>The diff was too large and is cut short.</text> : null}
-      <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
+      <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0} scrollbarOptions={scrollbarOptions()}>
         {files.map((file, index) => (
           <box key={file.path} id={`diff-file-${index}`} flexDirection="column" marginTop={1}>
             <FileHeader path={file.path} selected={index === props.selected} canExpand={diff.source !== undefined} onPress={() => props.onFile(index)} />
             {props.expanded[file.path] && !props.expanded[file.path]?.patch ? <text fg={props.expanded[file.path]?.error ? colors.bad : colors.muted}>{props.expanded[file.path]?.error ?? "Loading full file…"}</text> : null}
             <diff
               diff={props.expanded[file.path]?.patch ?? file.patch}
-              view="unified"
+              view={props.split ? "split" : "unified"}
+              syncScroll
               {...(filetypeOf(file.path) ? { filetype: filetypeOf(file.path)! } : {})}
               syntaxStyle={markdownStyle}
               showLineNumbers
@@ -52,11 +53,16 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
               fg={colors.text}
               addedBg={colors.diffAddedBg}
               removedBg={colors.diffRemovedBg}
+              contextBg={colors.bg}
               addedContentBg={colors.diffAddedBg}
               removedContentBg={colors.diffRemovedBg}
-              addedSignColor={colors.good}
-              removedSignColor={colors.bad}
+              contextContentBg={colors.bg}
+              addedSignColor={colors.diffAddedSign}
+              removedSignColor={colors.diffRemovedSign}
               lineNumberFg={colors.faint}
+              lineNumberBg={colors.diffGutterBg}
+              addedLineNumberBg={colors.diffAddedGutterBg}
+              removedLineNumberBg={colors.diffRemovedGutterBg}
             />
           </box>
         ))}

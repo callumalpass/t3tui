@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
 import { MAX_DETAIL_FILES, type ChangedFile, type DetailsAction, type DetailsFold, type LineageLine, type ThreadDetails } from "../model/details.ts";
-import { ClickRow } from "./Button.tsx";
+import { Button, ClickRow } from "./Button.tsx";
 import { truncate } from "./text.ts";
-import { colors, statusColor } from "./theme.ts";
+import { colors, scrollbarOptions, statusColor } from "./theme.ts";
 
 /** Rows stay readable when the panel takes the conversation's place on a narrow terminal. */
 const IN_PLACE_MAX_WIDTH = 64;
@@ -25,6 +25,8 @@ export function DetailsPanel(props: {
   readonly selected: string | null;
   readonly unfolded: ReadonlySet<DetailsFold>;
   readonly onActivate: (id: string) => void;
+  /** Opens a changed file in $EDITOR, from its ▸ Edit. */
+  readonly onEdit: (path: string) => void;
   /** Shown when there are no details, which defaults to no thread being selected. */
   readonly empty?: string;
 }) {
@@ -44,11 +46,11 @@ export function DetailsPanel(props: {
       overflow="hidden"
       backgroundColor={colors.panel}
     >
-      <scrollbox flexGrow={1} minHeight={0} paddingLeft={1} paddingRight={1}>
+      <scrollbox flexGrow={1} minHeight={0} paddingLeft={1} paddingRight={1} scrollbarOptions={scrollbarOptions()}>
         {!details ? (
           <text fg={colors.faint}>{props.empty ?? "No thread selected."}</text>
         ) : (
-          <Sections details={details} inner={inner} loading={props.loading} unfolded={props.unfolded} selected={props.selected} onActivate={props.onActivate} />
+          <Sections details={details} inner={inner} loading={props.loading} unfolded={props.unfolded} selected={props.selected} onActivate={props.onActivate} onEdit={props.onEdit} />
         )}
       </scrollbox>
     </box>
@@ -60,7 +62,7 @@ interface LineProps {
   readonly onActivate: (id: string) => void;
 }
 
-function Sections({ details, inner, loading, unfolded, selected, onActivate }: { readonly details: ThreadDetails; readonly inner: number; readonly loading: boolean; readonly unfolded: ReadonlySet<DetailsFold> } & LineProps) {
+function Sections({ details, inner, loading, unfolded, selected, onActivate, onEdit }: { readonly details: ThreadDetails; readonly inner: number; readonly loading: boolean; readonly unfolded: ReadonlySet<DetailsFold>; readonly onEdit: (path: string) => void } & LineProps) {
   const { branch, changes, git, tasks } = details;
   const files = changes?.files ?? [];
   const line = { selected, onActivate };
@@ -102,9 +104,16 @@ function Sections({ details, inner, loading, unfolded, selected, onActivate }: {
       {changes ? (
         <Section title="Changes" right={<Counts insertions={changes.insertions} deletions={changes.deletions} />}>
           {files.slice(0, MAX_DETAIL_FILES).map((file) => (
-            <Selectable key={file.path} id={`diff:${file.path}`} {...line} inner={inner}>
-              <FileLine file={file} inner={inner} />
-            </Selectable>
+            <box key={file.path} flexDirection="column">
+              <Selectable id={`diff:${file.path}`} {...line} inner={inner}>
+                <FileLine file={file} inner={inner} />
+              </Selectable>
+              {selected === `diff:${file.path}` && !file.path.endsWith("/") ? (
+                <box flexDirection="row" marginLeft={1}>
+                  <Button label="▸ Edit" shortcut="o" plain onPress={() => onEdit(file.path)} />
+                </box>
+              ) : null}
+            </box>
           ))}
           {files.length > MAX_DETAIL_FILES ? <text fg={colors.faint}>{`… ${files.length - MAX_DETAIL_FILES} more files (in the full diff)`}</text> : null}
           {files.length === 0 ? <text fg={colors.faint}>Working tree clean</text> : null}

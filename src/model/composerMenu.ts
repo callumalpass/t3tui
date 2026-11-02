@@ -23,6 +23,8 @@ export interface ComposerItem {
   readonly label: string;
   readonly description: string;
   readonly replacement: string | null;
+  /** What the composer shows in place of the replacement, as one chip; the replacement is still what's sent. */
+  readonly chip?: string;
   /** A mention's record (a thread, or a pull request), sent with the message. */
   readonly record?: ComposerContextRecord;
   readonly action?: "model";
@@ -138,14 +140,19 @@ export function pathItems(entries: readonly ProjectEntry[]): ComposerItem[] {
       label: `${entry.path.slice(slash + 1)}${entry.kind === "directory" ? "/" : ""}`,
       description: slash > 0 ? entry.path.slice(0, slash) : "",
       replacement: `${serializeComposerFileLink(entry.path)} `,
+      chip: `@${entry.path}${entry.kind === "directory" ? "/" : ""}`,
     };
   });
 }
 
 /** The text with the trigger replaced; a trailing space swallows one already there, as the web does. */
 export function applyComposerItem(text: string, trigger: ComposerTrigger, replacement: string): { text: string; cursor: number } {
-  const end = replacement.endsWith(" ") && text[trigger.rangeEnd] === " " ? trigger.rangeEnd + 1 : trigger.rangeEnd;
-  return replaceTextRange(text, trigger.rangeStart, end, replacement);
+  return replaceTextRange(text, trigger.rangeStart, composerItemEnd(text, trigger, replacement), replacement);
+}
+
+/** Where the text a choice replaces ends: the trigger's range, and a space the replacement brings its own of. */
+export function composerItemEnd(text: string, trigger: ComposerTrigger, replacement: string): number {
+  return replacement.endsWith(" ") && text[trigger.rangeEnd] === " " ? trigger.rangeEnd + 1 : trigger.rangeEnd;
 }
 
 /** The records for the mentions (threads, pull requests) still in the text, as the message's context. */

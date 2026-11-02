@@ -39,13 +39,15 @@ import {
 } from "../model/pullRequests.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import { editInEditor } from "./editor.ts";
-import { copyText } from "./terminalOut.ts";
+import type { Clipboard } from "./clipboard.ts";
+import { openInBrowser } from "./links.ts";
 import { firstLine } from "./text.ts";
 import type { PullRequestViewState } from "./PullRequestView.tsx";
 
 export interface PullRequestDeps {
   readonly session: T3Session;
   readonly renderer: CliRenderer;
+  readonly clipboard: Clipboard;
   readonly threadShell: OrchestrationV2ThreadShell | undefined;
   readonly project: OrchestrationProjectShell | undefined;
   readonly projects: readonly OrchestrationProjectShell[];
@@ -157,23 +159,15 @@ export function usePullRequests(deps: PullRequestDeps) {
     })();
   };
 
-  const openInBrowser = () => {
+  const openPullRequest = () => {
     const url = loadedRef.current?.detail?.url ?? loadedRef.current?.link.url;
     if (!url) return;
     // Over SSH or without a desktop there may be no browser to open: copy the link instead.
     const fallBack = (reason: string) => {
-      copyText(deps.renderer, url);
+      void deps.clipboard.copy(url);
       deps.say(`Could not open the browser (${reason}); link copied: ${url}`, true);
     };
-    try {
-      const opener = process.platform === "darwin" ? "open" : "xdg-open";
-      const child = Bun.spawn([opener, url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-      void child.exited.then((code) => {
-        if (code !== 0) fallBack(`${opener} exited with ${code}`);
-      });
-    } catch (error) {
-      fallBack(messageOf(error));
-    }
+    openInBrowser(url, fallBack);
   };
 
   const reloadQuietly = () => {
@@ -432,7 +426,7 @@ export function usePullRequests(deps: PullRequestDeps) {
   const current = loaded;
   const viewKeys: Binding[] = current
     ? keys(
-        { keys: ["o"], run: openInBrowser, hint: "open" },
+        { keys: ["o"], run: openPullRequest, hint: "open" },
         { keys: ["r"], run: refresh, hint: "refresh" },
         current.detail && [
           { keys: ["c"], run: comment, hint: "comment" },
@@ -478,7 +472,7 @@ export function usePullRequests(deps: PullRequestDeps) {
     commands.push({ id: "pr-comment", title: `Comment on pull request #${number}`, shortcut: "c", keywords: ["comment", "pull request"], run: comment });
     commands.push({ id: "pr-review", title: `Review pull request #${number}…`, shortcut: "R", keywords: ["review", "approve", "request changes"], run: review });
     commands.push({ id: "pr-actions", title: `Pull request #${number} actions…`, shortcut: "a", keywords: ["merge", "close", "ready", "draft"], run: actions });
-    commands.push({ id: "pr-open", title: `Open pull request #${number} in browser`, shortcut: "o", keywords: ["open", "browser"], run: openInBrowser });
+    commands.push({ id: "pr-open", title: `Open pull request #${number} in browser`, shortcut: "o", keywords: ["open", "browser"], run: openPullRequest });
     commands.push({ id: "pr-refresh", title: "Refresh pull request", shortcut: "r", keywords: ["refresh", "reload"], run: refresh });
   }
 

@@ -1,11 +1,11 @@
 import type { ChatAttachment } from "@t3tools/contracts";
-import { spawnSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { useState } from "react";
 
 import type { T3Session } from "../client/session.ts";
-import { attachmentLine, checkAttachment, clipboardImageCommands, expandAttachmentPath } from "../model/attachments.ts";
+import { attachmentLine, checkAttachment, expandAttachmentPath, isRemoteTerminal, pastedImageName } from "../model/attachments.ts";
 import type { PaletteCommand } from "../model/palette.ts";
+import type { Clipboard } from "./clipboard.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 
 export interface Attachments {
@@ -16,6 +16,10 @@ export interface Attachments {
   readonly commands: readonly (PaletteCommand & { readonly run: () => void })[];
   /** Prompts for a path and uploads it; the `a` key and the palette both call this. */
   readonly attachFile: () => void;
+  /** Uploads the file at this path, as a pasted or dropped path does. */
+  readonly attachPath: (path: string) => void;
+  /** Attaches the clipboard's image; with `insert`, its text goes there when there is no image. */
+  readonly paste: (insert?: (text: string) => void) => void;
   readonly remove: (attachment: ChatAttachment) => void;
   /** Hands the pending attachments to a send and clears them. */
   readonly take: () => readonly ChatAttachment[];
@@ -29,6 +33,7 @@ export interface Attachments {
  */
 export function useAttachments(deps: {
   readonly session: T3Session;
+  readonly clipboard: Clipboard;
   /** The composer they belong to; switching threads keeps each one's list. */
   readonly composerKey: string;
   /** Relative paths resolve here: the thread's worktree or project folder. */
@@ -38,7 +43,7 @@ export function useAttachments(deps: {
   readonly confirm: (confirmation: Confirmation) => void;
   readonly say: (text: string, bad?: boolean) => void;
 }): Attachments {
-  const { session, composerKey, cwd, maxFileBytes, confirm, say } = deps;
+  const { session, clipboard, composerKey, cwd, maxFileBytes, confirm, say } = deps;
   const [byComposer, setByComposer] = useState<ReadonlyMap<string, readonly ChatAttachment[]>>(new Map());
   const pending = byComposer.get(composerKey) ?? [];
 
@@ -74,6 +79,17 @@ export function useAttachments(deps: {
     );
   };
 
+  const attachPath = (path: string) => {
+    void (async () => {
+      const info = await stat(path);
+      if (!info.isFile()) throw new Error("not a file");
+      return readFile(path);
+    })().then(
+      (bytes) => upload(path, bytes, Bun.file(path).type || undefined),
+      () => say(`Could not read ${path}.`, true),
+    );
+  };
+
   const attachFile = () =>
     confirm({
       title: "Attach file",
@@ -81,30 +97,18 @@ export function useAttachments(deps: {
       message: { placeholder: "~/screenshot.png or ./report.pdf" },
       confirmLabel: "attach",
       run: (text) => {
-        const path = text.trim();
-        if (!path) return;
-        const resolved = expandAttachmentPath(path, cwd);
-        void (async () => {
-          const info = await stat(resolved);
-          if (!info.isFile()) throw new Error("not a file");
-          return readFile(resolved);
-        })().then(
-          (bytes) => upload(resolved, bytes, Bun.file(resolved).type || undefined),
-          () => say(`Could not read ${resolved}.`, true),
-        );
+        if (text.trim()) attachPath(expandAttachmentPath(text, cwd));
       },
     });
 
-  const pasteImage = () => {
-    let missing = true;
-    for (const [command, ...args] of clipboardImageCommands(process.platform)) {
-      const result = spawnSync(command!, args, { maxBuffer: 64 * 1024 * 1024 });
-      if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      missing = false;
-      if (result.status === 0 && result.stdout.length > 0) return upload("pasted-image.png", result.stdout, "image/png");
-      break;
-    }
-    say(missing ? "No clipboard image tool found (wl-paste, xclip, or pngpaste)." : "No image on the clipboard.", true);
+  const paste = (insert?: (text: string) => void) => {
+    if (isRemoteTerminal(process.env)) return say("Over SSH the clipboard is on the other machine; attach the file with a.", true);
+    void clipboard.readImage().then(async (image) => {
+      if (typeof image !== "string") return upload(pastedImageName(image.mimeType), image.bytes, image.mimeType);
+      const text = insert ? await clipboard.readText() : null;
+      if (text) return insert?.(text);
+      say(image === "no-tool" ? "No clipboard image tool found (wl-paste, xclip, pngpaste or osascript)." : "No image on the clipboard.", true);
+    });
   };
 
   const remove = (attachment: ChatAttachment) => {
@@ -121,7 +125,7 @@ export function useAttachments(deps: {
 
   const commands: Attachments["commands"][number][] = [
     { id: "attach-file", title: "Attach file…", shortcut: "a", keywords: ["attachment", "image", "upload", "file"], run: attachFile },
-    { id: "attach-paste-image", title: "Paste image from clipboard", keywords: ["attachment", "image", "screenshot", "clipboard"], run: pasteImage },
+    { id: "attach-paste-image", title: "Paste image from clipboard", keywords: ["attachment", "image", "screenshot", "clipboard"], run: () => paste() },
     ...pending.map((attachment) => ({
       id: `attach-remove:${attachment.id}`,
       title: `Remove attachment: ${attachment.name}`,
@@ -135,6 +139,8 @@ export function useAttachments(deps: {
     line: attachmentLine(pending),
     commands,
     attachFile,
+    attachPath,
+    paste,
     remove,
     take: () => {
       const taken = byComposer.get(composerKey) ?? [];

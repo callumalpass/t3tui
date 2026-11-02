@@ -3,8 +3,9 @@ import type { ComposerContextRecord, EnvironmentId, OrchestrationMessageContext,
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { T3Session } from "../client/session.ts";
-import { applyComposerItem, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
+import { composerItemEnd, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
 import { keys, type Binding } from "../model/keymap.ts";
+import { markChip } from "./useComposerChips.ts";
 import { useComposerPullRequests } from "./usePullRequests.ts";
 
 /**
@@ -96,10 +97,17 @@ export function useComposerMenu(deps: {
   const choose = (item: ComposerItem | undefined) => {
     const composer = composerRef.current;
     if (!item || !trigger || !composer) return;
-    const next = applyComposerItem(state.text, trigger, item.replacement ?? "");
-    composer.setText(next.text);
-    const at = cursorAtIndex(next.text, next.cursor);
-    composer.setCursor(at.row, at.col);
+    // An edit in place rather than new text, which would take the chips already there with it.
+    const replacement = item.replacement ?? "";
+    const from = cursorAtIndex(state.text, trigger.rangeStart);
+    const to = cursorAtIndex(state.text, composerItemEnd(state.text, trigger, replacement));
+    composer.deleteRange(from.row, from.col, to.row, to.col);
+    composer.setCursor(from.row, from.col);
+    const sent = replacement.trimEnd();
+    const start = composer.cursorOffset;
+    composer.insertText(item.chip ?? sent);
+    if (item.chip) markChip(composer, start, composer.cursorOffset, { sent });
+    composer.insertText(replacement.slice(sent.length));
     if (item.record) {
       const records = mentions.current.get(composerKey) ?? new Map<string, ComposerContextRecord>();
       records.set(item.record.contextId, item.record);

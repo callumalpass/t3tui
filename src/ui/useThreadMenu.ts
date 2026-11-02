@@ -1,4 +1,3 @@
-import type { CliRenderer } from "@opentui/core";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { ContextMenuItem, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadShell, ServerConfig, ThreadId } from "@t3tools/contracts";
 
@@ -8,14 +7,14 @@ import type { Binding } from "../model/keymap.ts";
 import type { Picker, PickerItem } from "../model/palette.ts";
 import { parseSnooze, pickSnooze, threadHasRuntime, threadMenu, topPinOrderKey, type ThreadActionMenuId } from "../model/threadMenu.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
-import { copyText } from "./terminalOut.ts";
+import type { Clipboard } from "./clipboard.ts";
 
 type SnoozePresets = ReturnType<typeof threadMenu>["snoozePresets"];
 
 /** The web sidebar's thread menu as a picker: separators become groups, submenus open their own picker. */
 export function useThreadMenu(deps: {
   readonly session: T3Session;
-  readonly renderer: CliRenderer;
+  readonly clipboard: Clipboard;
   readonly snapshot: OrchestrationV2ShellSnapshot | null;
   readonly config: ServerConfig | null;
   readonly timestampFormat: T3tuiConfig["timestampFormat"];
@@ -34,10 +33,10 @@ export function useThreadMenu(deps: {
   readonly keepUnread: (id: ThreadId) => void;
   readonly startDraftOn: (target: OrchestrationV2ThreadShell) => void;
 }) {
-  const { session, renderer, config, run, say } = deps;
+  const { session, clipboard, config, run, say } = deps;
 
   const copy = (text: string, message: string) => {
-    copyText(renderer, text);
+    void clipboard.copy(text);
     say(message);
   };
 

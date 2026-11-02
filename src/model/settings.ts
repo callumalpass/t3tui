@@ -21,7 +21,7 @@ const LABELS: { readonly [K in keyof T3tuiConfig]: { readonly label: string; rea
     values: { off: "off", sound: "bell", notifications: "desktop notifications", "notifications-and-sound": "bell and desktop notifications" },
   },
   inAppNotificationsEnabled: { label: "In-app alerts", help: "a line at the bottom for other threads", values: { true: "on", false: "off" } },
-  theme: { label: "Colours", help: "from the next start", values: { auto: "match the terminal", dark: "dark", light: "light" } },
+  theme: { label: "Colours", help: "from the next start", values: { auto: "dark or light, as the terminal is", dark: "dark", light: "light", terminal: "the terminal's own colours" } },
 };
 
 /** t3tui's own settings, in display order, each cycled with enter. */
