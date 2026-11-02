@@ -12,7 +12,7 @@ Built with Bun and [OpenTUI](https://github.com/anomalyco/opentui) (React). t3tu
 
 ## Install
 
-You need [Bun](https://bun.sh) and a T3 Code server running on the same machine (or a token for a remote one; see [How it connects](#how-it-connects)).
+You need [Bun](https://bun.sh) 1.3.14 or later and a T3 Code server running on the same machine (or a token for a remote one; see [How it connects](#how-it-connects)).
 
 ```sh
 git clone --recurse-submodules https://github.com/callumalpass/t3tui.git && cd t3tui
