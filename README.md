@@ -35,6 +35,16 @@ Any mode:
 
 Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`); save and quit to bring it back.
 
+As in T3 Code's message box, typing a trigger opens a list of suggestions above the box:
+
+| Trigger | Suggests | Inserts |
+| --- | --- | --- |
+| `/` | `/model`, then the provider's commands (only at the start of the message) and skills | `/command`, or `$skill` for a skill; `/model` opens the model picker |
+| `$` | the provider's skills | `$skill` |
+| `@` | threads, then files and folders in the thread's worktree or project | a markdown link to the file, or a link to the thread (sent along with the message, as T3 does) |
+
+`↑`/`↓` or `ctrl+n`/`ctrl+p` move, `tab` or `enter` chooses, a click chooses, and `esc` closes the list. Links show as raw markdown in the box; T3 shows them as chips. `#` (pull requests) isn't supported yet.
+
 Navigation:
 
 | Key | Action |
@@ -134,4 +144,4 @@ Type errors after a bump point at the protocol changes to adapt to.
 
 ## Not yet supported
 
-Editing queued messages, plan follow-ups, attachments, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.
+Editing queued messages, `#` pull request mentions, plan follow-ups, attachments, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.

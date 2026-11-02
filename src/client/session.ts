@@ -21,6 +21,8 @@ import {
   type ScheduledTaskId,
   type ServerConfig,
   type ModelSelection,
+  type OrchestrationMessageContext,
+  type ProjectEntry,
   type RuntimeMode,
   type TerminalAttachStreamEvent,
   type TerminalSummary,
@@ -373,7 +375,8 @@ export class T3Session {
    * "steer" (into the active run) or "queue" (after it). See resolveComposerDispatchMode.
    */
   /** `modelSelection` switches the thread's model (and options) with this message, as the web composer does. */
-  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto", modelSelection?: ModelSelection): Promise<void> {
+  /** `context` carries the records for thread mentions in the text. */
+  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto", modelSelection?: ModelSelection, context?: OrchestrationMessageContext): Promise<void> {
     const commandId = newCommandId();
     return this.dispatch({
       type: "message.dispatch",
@@ -382,6 +385,7 @@ export class T3Session {
       messageId: MessageId.make(commandId),
       text,
       attachments: [],
+      ...(context ? { context } : {}),
       ...(modelSelection ? { modelSelection } : {}),
       ...(mode === "queue" ? { dispatchMode: { type: "queue_after_active" } } : { dispatchMode: { type: "start_immediately" }, deliveryIntent: mode }),
       createdBy: "user",
@@ -421,13 +425,19 @@ export class T3Session {
    * Creates a thread and sends its first message in one call, as the web app does when a
    * draft is first sent. Resolves with the new thread's id.
    */
-  async launchThread(input: Omit<OrchestrationV2ThreadLaunchInput, "commandId" | "initialMessage"> & { readonly text: string }): Promise<ThreadId> {
-    const { text, ...rest } = input;
+  async launchThread(input: Omit<OrchestrationV2ThreadLaunchInput, "commandId" | "initialMessage"> & { readonly text: string; readonly context?: OrchestrationMessageContext | undefined }): Promise<ThreadId> {
+    const { text, context, ...rest } = input;
     const commandId = newCommandId();
     const result = await Effect.runPromise(
-      this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({ ...rest, commandId, initialMessage: { messageId: MessageId.make(commandId), text, attachments: [] } }),
+      this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({ ...rest, commandId, initialMessage: { messageId: MessageId.make(commandId), text, ...(context ? { context } : {}), attachments: [] } }),
     );
     return result.threadId;
+  }
+
+  /** Files and folders under `cwd` matching `query`, as the composer's @ menu searches them. */
+  async searchEntries(cwd: string, query: string, limit: number): Promise<readonly ProjectEntry[]> {
+    const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.projectsSearchEntries]({ cwd, query, limit }));
+    return result.entries;
   }
 
   /** Whether `cwd` is a repository, and its default branch (else the current one), for a new worktree's base. */

@@ -13,8 +13,10 @@ import { DEFAULT_TERMINAL_ID, type DiscoveredLocalServer, type ModelSelection, t
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { OrchestrationMessageContext, ProjectEntry, ThreadContextRecord } from "@t3tools/contracts";
 import type { FeedState, ServerConfigState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
+import { applyComposerItem, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
 import { draftDefaults, lockedProviderInstance, modelSummary, optionDescriptors, optionValue, optionValueLabel, providerName, RUNTIME_MODES, sameSelection, selectableProviders, withModel, withOption, type DraftThread } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
@@ -22,6 +24,7 @@ import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type 
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
 import { threadRows, type Section } from "../model/threads.ts";
+import { ComposerMenu } from "./ComposerMenu.tsx";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
 import { DiffView, type DiffState } from "./DiffView.tsx";
@@ -111,6 +114,14 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [flash, setFlash] = useState<{ text: string; bad?: boolean } | null>(null);
   const [composerLines, setComposerLines] = useState(1);
   const [composerEmpty, setComposerEmpty] = useState(true);
+  /** The composer's text and cursor (a string index), for the / $ @ menu. */
+  const [composerState, setComposerState] = useState({ text: "", cursor: 0 });
+  const [menuIndex, setMenuIndex] = useState(0);
+  /** The trigger esc closed the menu for; typing on reopens it. */
+  const [menuDismissed, setMenuDismissed] = useState<string | null>(null);
+  const [pathResults, setPathResults] = useState<{ key: string; entries: readonly ProjectEntry[] } | null>(null);
+  /** Thread mentions per composer, sent as the message's context. */
+  const mentions = useRef(new Map<string, Map<string, ThreadContextRecord>>());
   const [questionDrafts, setQuestionDrafts] = useState<ReadonlyMap<string, QuestionDraft>>(new Map());
   const [now, setNow] = useState(Date.now());
   const scrollRef = useRef<ScrollBoxRenderable | null>(null);
@@ -157,6 +168,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const selectedIndex = rows.findIndex((row) => row.thread.id === threadId);
   const threadRow = allRows.find((row) => row.thread.id === threadId);
   const threadShell = threadRow?.thread ?? shell.snapshot?.threads.find((thread) => thread.id === threadId) ?? (threadId ? familyShells.get(threadId) : undefined);
+  const composerKey: string = draft ? DRAFT_KEY : (threadId ?? "");
   // Pin the initial selection to a thread, or it would follow whatever sorts first.
   useEffect(() => {
     if (selectedId === undefined && rows[0]) setSelectedId(rows[0].thread.id);
@@ -562,7 +574,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     });
   };
   const toggleWorkspace = () => draft && setDraft({ ...draft, envMode: draft.envMode === "local" ? "worktree" : "local" });
-  const launchDraft = (text: string) => {
+  const launchDraft = (text: string, context?: OrchestrationMessageContext) => {
     if (!draft || !draftProject) return;
     const launching = draft;
     const project = draftProject;
@@ -583,6 +595,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         interactionMode: "default",
         workspaceStrategy,
         text,
+        context,
       });
     })().then(
       (id) => {
@@ -662,6 +675,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const clearComposer = () => {
     composerRef.current?.setText("");
     if (threadId) drafts.current.delete(threadId);
+    mentions.current.delete(composerKey);
     setComposerLines(1);
     setComposerEmpty(true);
   };
@@ -707,10 +721,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return;
     }
     const text = raw.trim();
+    const context = messageContext(text, mentions.current.get(composerKey) ?? new Map());
     if (draft) {
       if (!text) return;
       clearComposer();
-      return launchDraft(text);
+      return launchDraft(text, context);
     }
     if (!threadId) return;
     if (pendingInput && questionDraft) {
@@ -725,7 +740,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     if (pendingApproval) {
       // As in the web composer: the message declines the request and redirects the agent.
       if (pendingApproval.supportsFeedback) return run("Declined with feedback", () => session.respond(threadId, pendingApproval.requestId, "decline", text));
-      return run("Declined and redirected", () => session.sendMessage(threadId, text, "steer"));
+      return run("Declined and redirected", () => session.sendMessage(threadId, text, "steer", undefined, context));
     }
     const dispatchMode = resolveComposerDispatchMode({ running: working, alternateModifier: alternate, activeTurnDefault: config.followUpBehavior });
     const pendingModel = pendingModels.get(threadId);
@@ -736,7 +751,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         return next;
       });
     }
-    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, text, dispatchMode, pendingModel));
+    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, text, dispatchMode, pendingModel, context));
   };
 
   const loadEarlier = () => {
@@ -828,7 +843,89 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     return false;
   };
 
+  // The / $ @ menu: the web composer's suggestions for the trigger under the cursor.
+  const composerCwd = draft ? (draftProject?.workspaceRoot ?? null) : (threadShell?.worktreePath ?? project?.workspaceRoot ?? null);
+  const composerProvider = currentModel ? providerConfig?.providers.find((candidate) => candidate.instanceId === currentModel.instanceId) : undefined;
+  const trigger = mode === "input" && (threadId || draft) ? composerTrigger(composerState.text, composerState.cursor) : null;
+  const triggerKey = trigger ? `${composerKey}:${trigger.kind}:${trigger.rangeStart}:${trigger.query}` : null;
+  const pathKey = trigger?.kind === "path" && trigger.query.trim() && composerCwd ? `${composerCwd}\u0000${trigger.query.trim()}` : null;
+  useEffect(() => {
+    if (!pathKey) return;
+    const [cwd, query] = pathKey.split("\u0000") as [string, string];
+    // Debounced as the web's path search is.
+    const timer = setTimeout(() => {
+      session.searchEntries(cwd, query, PATH_SEARCH_LIMIT).then(
+        (entries) => setPathResults({ key: pathKey, entries }),
+        () => setPathResults({ key: pathKey, entries: [] }),
+      );
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [session, pathKey]);
+  const menu = ((): { items: ComposerItem[]; empty: string; loading: boolean } | null => {
+    if (!trigger || triggerKey === menuDismissed) return null;
+    switch (trigger.kind) {
+      case "slash-command":
+      case "slash-model":
+        return { items: slashItems({ provider: composerProvider, cwd: composerCwd, text: composerState.text, trigger }), empty: "No matching command.", loading: false };
+      case "skill":
+        return { items: skillItems(composerProvider, composerCwd, trigger.query), empty: "No skills found. Try / to browse provider commands.", loading: false };
+      case "path": {
+        if (!trigger.query.trim()) return { items: [], empty: "Type to search files, folders and threads.", loading: false };
+        const threads = threadItems({ snapshot: shell.snapshot, environmentId: providerConfig?.environment.environmentId ?? null, excludeThreadId: draft ? null : (threadId ?? null), query: trigger.query, now });
+        const fresh = pathResults?.key === pathKey;
+        return { items: [...threads, ...(fresh ? pathItems(pathResults.entries) : [])], empty: fresh ? "No matching files or folders." : "Searching…", loading: !fresh };
+      }
+      default:
+        return null;
+    }
+  })();
+  const menuOpen = menu !== null;
+  const menuSelected = menu ? Math.min(menuIndex, Math.max(0, menu.items.length - 1)) : 0;
+  useEffect(() => setMenuIndex(0), [triggerKey]);
+  // A different composer (another thread, or the draft) mounts with its own text.
+  useEffect(() => {
+    const timer = setTimeout(syncComposerState, 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncComposerState reads the ref.
+  }, [composerKey]);
+  const syncComposerState = () => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    const text = composer.plainText;
+    const { row, col } = composer.logicalCursor;
+    setComposerState({ text, cursor: indexAtCursor(text, row, col) });
+  };
+  const chooseMenuItem = (item: ComposerItem | undefined) => {
+    const composer = composerRef.current;
+    if (!item || !trigger || !composer) return;
+    const next = applyComposerItem(composerState.text, trigger, item.replacement ?? "");
+    composer.setText(next.text);
+    const at = cursorAtIndex(next.text, next.cursor);
+    composer.setCursor(at.row, at.col);
+    if (item.record) {
+      const records = mentions.current.get(composerKey) ?? new Map<string, ThreadContextRecord>();
+      records.set(item.record.contextId, item.record);
+      mentions.current.set(composerKey, records);
+    }
+    syncComposerState();
+    setComposerLines(composerLineCount(composer));
+    if (item.action === "model") openModelPicker();
+  };
+  /** Keys the menu takes while it's open; the rest go to the message box. */
+  const menuKey = (key: KeyEvent): boolean => {
+    if (!menu) return false;
+    if (key.name === "escape") return setMenuDismissed(triggerKey), true;
+    // Enter waits for a search in flight rather than sending the half-typed mention.
+    if (menu.loading && key.name === "return") return true;
+    if (menu.items.length === 0) return false;
+    if (key.name === "down" || (key.ctrl && key.name === "n")) return setMenuIndex(Math.min(menu.items.length - 1, menuSelected + 1)), true;
+    if (key.name === "up" || (key.ctrl && key.name === "p")) return setMenuIndex(Math.max(0, menuSelected - 1)), true;
+    if (key.name === "tab" || (key.name === "return" && !key.shift && !key.meta)) return chooseMenuItem(menu.items[menuSelected]), true;
+    return false;
+  };
+
   useKeyboard((key) => {
+    if (mode === "input" && menuKey(key)) return key.preventDefault();
     if (mode === "picker") {
       if (key.ctrl && key.name === "c") return quit();
       if (key.name === "escape") {
@@ -1019,7 +1116,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 : "Steer the agent (alt+enter to queue instead)"
               : "Ask anything";
   // The model with its options, then the mode when it isn't full access; click or m to change.
-  const composerKey: string = draft ? DRAFT_KEY : (threadId ?? "");
   const pendingModel = !draft && threadShell ? pendingModels.get(threadShell.id) : undefined;
   const footer =
     currentModel && runtimeMode
@@ -1136,6 +1232,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               }}
             />
           ) : null}
+          {menu ? <ComposerMenu items={menu.items} selected={menuSelected} empty={menu.empty} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} onPick={(index) => chooseMenuItem(menu.items[index])} /> : null}
           {threadId || draft ? (
             <box
               border
@@ -1160,14 +1257,15 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 wrapMode="word"
                 keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
                 onSubmit={() => submit()}
+                onCursorChange={syncComposerState}
                 onContentChange={() => {
+                  syncComposerState();
                   const composer = composerRef.current;
                   const text = composer?.plainText ?? "";
                   if (text) drafts.current.set(composerKey, text);
                   else drafts.current.delete(composerKey);
                   // Wrapped lines count too, so a long paragraph grows the box.
-                  // The wrapped count can lag a programmatic newline, so hard lines are a floor.
-                  setComposerLines(Math.max(text.split("\n").length, composer?.virtualLineCount ?? 1));
+                  setComposerLines(composer ? composerLineCount(composer) : 1);
                   setComposerEmpty(text.trim() === "");
                 }}
               />
@@ -1185,6 +1283,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
         {flash ? (
           <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text>
+        ) : menuOpen ? (
+          <text fg={colors.faint}>↑/↓ move · tab or enter choose · esc close</text>
         ) : (
           <text fg={colors.faint}>{hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined })}</text>
         )}
@@ -1256,6 +1356,16 @@ function hints(
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The composer's height in lines, wrapped lines included. The wrapped count can lag a
+ * programmatic change, so the hard lines, each wrapped at the box's width, are a floor.
+ */
+function composerLineCount(composer: TextareaRenderable): number {
+  const width = Math.max(1, composer.width);
+  const estimate = composer.plainText.split("\n").reduce((lines, line) => lines + Math.max(1, Math.ceil(Bun.stringWidth(line) / width)), 0);
+  return Math.max(estimate, composer.virtualLineCount);
+}
 
 function firstLine(text: string): string {
   const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
