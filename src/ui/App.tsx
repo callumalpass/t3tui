@@ -6,10 +6,9 @@ import { type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type Th
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { ComposerContextRecord, OrchestrationV2Subagent, ProjectEntry } from "@t3tools/contracts";
+import type { OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
-import { applyComposerItem, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { RUNTIME_MODE_LABELS } from "../model/details.ts";
@@ -24,6 +23,7 @@ import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
 import { DiffView, type DiffState } from "./DiffView.tsx";
 import { DraftView } from "./DraftView.tsx";
+import { useComposerMenu } from "./useComposerMenu.ts";
 import { useDetails } from "./useDetails.ts";
 import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
@@ -37,7 +37,7 @@ import { SecretPanel } from "./SecretPanel.tsx";
 import { PullRequestView } from "./PullRequestView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
-import { useComposerPullRequests, usePullRequests } from "./usePullRequests.ts";
+import { usePullRequests } from "./usePullRequests.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
@@ -125,14 +125,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [flash, setFlash] = useState<{ text: string; bad?: boolean } | null>(null);
   const [composerLines, setComposerLines] = useState(1);
   const [composerEmpty, setComposerEmpty] = useState(true);
-  /** The composer's text and cursor (a string index), for the / $ @ menu. */
-  const [composerState, setComposerState] = useState({ text: "", cursor: 0 });
-  const [menuIndex, setMenuIndex] = useState(0);
-  /** The trigger esc closed the menu for; typing on reopens it. */
-  const [menuDismissed, setMenuDismissed] = useState<string | null>(null);
-  const [pathResults, setPathResults] = useState<{ key: string; entries: readonly ProjectEntry[] } | null>(null);
-  /** Mentions per composer (threads, pull requests), sent as the message's context. */
-  const mentions = useRef(new Map<string, Map<string, ComposerContextRecord>>());
   const [now, setNow] = useState(Date.now());
   const scrollRef = useRef<ScrollBoxRenderable | null>(null);
   const composerRef = useRef<TextareaRenderable | null>(null);
@@ -521,7 +513,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const clearComposer = () => {
     composerRef.current?.setText("");
     if (threadId) drafts.current.delete(threadId);
-    mentions.current.delete(composerKey);
+    composerMenu.forget();
     setComposerLines(1);
     setComposerEmpty(true);
   };
@@ -539,7 +531,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     }
     const text = raw.trim();
     const attachedFiles = attach.pending;
-    const context = messageContext(text, mentions.current.get(composerKey) ?? new Map());
+    const context = composerMenu.context(text);
     if (draft) {
       if (!text && attachedFiles.length === 0) return;
       const taken = attach.take();
@@ -631,80 +623,28 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   // The / $ @ # menu: the web composer's suggestions for the trigger under the cursor.
   const composerCwd = draft ? (draftProject?.workspaceRoot ?? null) : (threadShell?.worktreePath ?? project?.workspaceRoot ?? null);
-  const composerProvider = currentModel ? providerConfig?.providers.find((candidate) => candidate.instanceId === currentModel.instanceId) : undefined;
-  const trigger = mode === "input" && (threadId || draft) ? composerTrigger(composerState.text, composerState.cursor) : null;
-  const triggerKey = trigger ? `${composerKey}:${trigger.kind}:${trigger.rangeStart}:${trigger.query}` : null;
-  const pathKey = trigger?.kind === "path" && trigger.query.trim() && composerCwd ? `${composerCwd}\u0000${trigger.query.trim()}` : null;
-  useEffect(() => {
-    if (!pathKey) return;
-    const [cwd, query] = pathKey.split("\u0000") as [string, string];
-    // Debounced as the web's path search is.
-    const timer = setTimeout(() => {
-      session.searchEntries(cwd, query, PATH_SEARCH_LIMIT).then(
-        (entries) => setPathResults({ key: pathKey, entries }),
-        () => setPathResults({ key: pathKey, entries: [] }),
-      );
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [session, pathKey]);
-  const composerPullRequests = useComposerPullRequests({
+  const composerMenu = useComposerMenu({
     session,
-    query: trigger?.kind === "pull-request" ? trigger.query : null,
-    projectId: providerConfig ? (draft ? draft.projectId : (threadShell?.projectId ?? null)) : null,
-    repository: providerConfig ? pullRequestRepository(draft ? draftProject : project) : null,
-    links: threadShell?.pullRequests,
+    composerRef,
+    composerKey,
+    active: mode === "input" && (threadId !== undefined || draft !== null),
+    cwd: composerCwd,
+    provider: currentModel ? providerConfig?.providers.find((candidate) => candidate.instanceId === currentModel.instanceId) : undefined,
+    snapshot: shell.snapshot,
+    environmentId: providerConfig?.environment.environmentId ?? null,
+    threadId: draft ? null : (threadId ?? null),
+    now,
+    pullRequests: {
+      projectId: providerConfig ? (draft ? draft.projectId : (threadShell?.projectId ?? null)) : null,
+      repository: providerConfig ? pullRequestRepository(draft ? draftProject : project) : null,
+      links: threadShell?.pullRequests,
+    },
+    onChosen: (item) => {
+      if (composerRef.current) setComposerLines(composerLineCount(composerRef.current));
+      if (item.action === "model") models.open();
+    },
   });
-  const menu = ((): { items: ComposerItem[]; empty: string; loading: boolean } | null => {
-    if (!trigger || triggerKey === menuDismissed) return null;
-    switch (trigger.kind) {
-      case "slash-command":
-      case "slash-model":
-        return { items: slashItems({ provider: composerProvider, cwd: composerCwd, text: composerState.text, trigger }), empty: "No matching command.", loading: false };
-      case "skill":
-        return { items: skillItems(composerProvider, composerCwd, trigger.query), empty: "No skills found. Try / to browse provider commands.", loading: false };
-      case "path": {
-        if (!trigger.query.trim()) return { items: [], empty: "Type to search files, folders and threads.", loading: false };
-        const threads = threadItems({ snapshot: shell.snapshot, environmentId: providerConfig?.environment.environmentId ?? null, excludeThreadId: draft ? null : (threadId ?? null), query: trigger.query, now });
-        const fresh = pathResults?.key === pathKey;
-        return { items: [...threads, ...(fresh ? pathItems(pathResults.entries) : [])], empty: fresh ? "No matching files or folders." : "Searching…", loading: !fresh };
-      }
-      case "pull-request":
-        return composerPullRequests;
-      default:
-        return null;
-    }
-  })();
-  const menuSelected = menu ? Math.min(menuIndex, Math.max(0, menu.items.length - 1)) : 0;
-  useEffect(() => setMenuIndex(0), [triggerKey]);
-  // A different composer (another thread, or the draft) mounts with its own text.
-  useEffect(() => {
-    const timer = setTimeout(syncComposerState, 0);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncComposerState reads the ref.
-  }, [composerKey]);
-  const syncComposerState = () => {
-    const composer = composerRef.current;
-    if (!composer) return;
-    const text = composer.plainText;
-    const { row, col } = composer.logicalCursor;
-    setComposerState({ text, cursor: indexAtCursor(text, row, col) });
-  };
-  const chooseMenuItem = (item: ComposerItem | undefined) => {
-    const composer = composerRef.current;
-    if (!item || !trigger || !composer) return;
-    const next = applyComposerItem(composerState.text, trigger, item.replacement ?? "");
-    composer.setText(next.text);
-    const at = cursorAtIndex(next.text, next.cursor);
-    composer.setCursor(at.row, at.col);
-    if (item.record) {
-      const records = mentions.current.get(composerKey) ?? new Map<string, ComposerContextRecord>();
-      records.set(item.record.contextId, item.record);
-      mentions.current.set(composerKey, records);
-    }
-    syncComposerState();
-    setComposerLines(composerLineCount(composer));
-    if (item.action === "model") models.open();
-  };
+  const menu = composerMenu.menu;
   // Keys. Each state has its bindings in hint order; the first one that takes a key runs it.
   // The same bindings name the hints, make them clickable, and give the palette its shortcuts.
   const hasComposer = threadId !== undefined || draft !== null;
@@ -821,19 +761,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     { keys: ["esc"], run: () => setMode("nav"), hint: "navigate" },
     !attached && hinted(nextThreadKey, "thread"),
   );
-  const menuKeys = menu
-    ? keys(
-        { keys: [], label: "↑/↓", hint: "move" },
-        menu.items.length > 0 && [
-          { keys: ["↓", "ctrl+n"], run: () => setMenuIndex(Math.min(menu.items.length - 1, menuSelected + 1)) },
-          { keys: ["↑", "ctrl+p"], run: () => setMenuIndex(Math.max(0, menuSelected - 1)) },
-        ],
-        // Enter waits for a search in flight rather than sending the half-typed mention.
-        menu.loading && { keys: ["enter"], run: () => {} },
-        menu.items.length > 0 ? { keys: ["tab", "enter"], label: "tab or enter", hint: "choose", run: () => chooseMenuItem(menu.items[menuSelected]) } : { keys: [], label: "tab or enter", hint: "choose" },
-        { keys: ["esc"], run: () => setMenuDismissed(triggerKey), hint: "close" },
-      )
-    : [];
+  const menuKeys = composerMenu.bindings;
 
   // Lists and overlays.
   const listMove = (step: (delta: number) => void): Binding[] => [
@@ -1180,7 +1108,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               onCancel={closeOverlay}
             />
           ) : null}
-          {menu ? <ComposerMenu items={menu.items} selected={menuSelected} empty={menu.empty} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} onPick={(index) => chooseMenuItem(menu.items[index])} /> : null}
+          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} onPick={composerMenu.pick} /> : null}
           {attach.pending.length > 0 ? (
             <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
               <text fg={colors.muted}>Attached:</text>
@@ -1214,9 +1142,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 wrapMode="word"
                 keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
                 onSubmit={() => submit()}
-                onCursorChange={syncComposerState}
+                onCursorChange={composerMenu.sync}
                 onContentChange={() => {
-                  syncComposerState();
+                  composerMenu.sync();
                   const composer = composerRef.current;
                   const text = composer?.plainText ?? "";
                   if (text) drafts.current.set(composerKey, text);

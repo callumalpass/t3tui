@@ -78,6 +78,16 @@ describe("keys falling through", () => {
     await app.press("escape");
     expect(app.hints()).toStartWith("j/k threads");
   });
+
+  test("tab chooses from the / menu: /model opens the model picker", async () => {
+    const app = await open();
+    await app.press("i");
+    await app.type("/mo");
+    expect(app.frame()).toContain("/model");
+    await app.press("tab");
+    // Without the server's providers the picker says so rather than opening empty.
+    expect(app.hints()).toBe("Still loading the server's providers.");
+  });
 });
 
 describe("palette and pickers", () => {
