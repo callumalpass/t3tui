@@ -2,7 +2,7 @@ import type { MouseEvent } from "@opentui/core";
 import type { BoxProps as OpenTuiBoxProps } from "@opentui/react";
 import { useState, type ReactNode } from "react";
 
-import { BAR } from "./edges.ts";
+import { BAR, NO_BORDER } from "./edges.ts";
 import { colors } from "./theme.ts";
 
 /** Hover state for a clickable box. Moving between a box and its own text sends out then over, so it settles on the right value. */
@@ -75,28 +75,61 @@ export function wheelStep(event: MouseEvent): -1 | 0 | 1 {
 }
 
 /**
- * The 1-column drag target between the conversation and the list or details. At rest it is invisible
+ * The 1-column drag target between the conversation and the list or details, or with
+ * `horizontal` the 1-row one above the terminal drawer. At rest it is invisible
  * (the panel/background shade change is the edge, and the bar is drawn in the background
  * colour, which also keeps it findable on screen for tests); under the pointer or while
  * dragging it shows as an accent bar. OpenTUI sends a drag to whatever is under the
  * pointer, so the app's root follows the drag (see App).
  */
-export function ResizeHandle(props: { readonly active: boolean; readonly onStart: () => void; readonly onReset: () => void }) {
+export function ResizeHandle(props: { readonly active: boolean; readonly horizontal?: boolean; readonly onStart: (event: MouseEvent) => void; readonly onReset: () => void }) {
   const [hover, hoverProps] = useHover();
   return (
     <box
-      width={1}
+      {...(props.horizontal ? { height: 1, border: ["top"] as const, customBorderChars: { ...NO_BORDER, horizontal: "━" } } : { width: 1, border: ["left"] as const, customBorderChars: BAR })}
       flexShrink={0}
-      border={["left"]}
-      customBorderChars={BAR}
       borderColor={hover || props.active ? colors.accent : colors.bg}
       backgroundColor={colors.bg}
       {...hoverProps}
       onMouseDown={(event: MouseEvent) => {
         event.stopPropagation();
         if (isRightClick(event)) props.onReset();
-        else if (isLeftClick(event)) props.onStart();
+        else if (isLeftClick(event)) props.onStart(event);
       }}
     />
+  );
+}
+
+/**
+ * A one-line strip of tabs: the active one in the accent on a raised block, the rest muted.
+ * A click switches; anything after the tabs (a `+`, a key hint) goes in `children`.
+ */
+export function Tabs(props: { readonly tabs: readonly { readonly id: string; readonly label: string }[]; readonly active: string | null; readonly onPick: (id: string) => void; readonly children?: ReactNode }) {
+  return (
+    <box flexDirection="row" height={1} flexShrink={0} flexGrow={1} overflow="hidden">
+      {props.tabs.map((tab) => (
+        <Tab key={tab.id} label={tab.label} active={tab.id === props.active} onPress={() => props.onPick(tab.id)} />
+      ))}
+      {props.children}
+    </box>
+  );
+}
+
+export function Tab(props: { readonly label: string; readonly active?: boolean; readonly onPress: () => void }) {
+  const [hover, hoverProps] = useHover();
+  return (
+    <box
+      flexShrink={0}
+      paddingLeft={1}
+      paddingRight={1}
+      backgroundColor={props.active ? colors.element : hover ? colors.hoverBg : "transparent"}
+      {...hoverProps}
+      onMouseDown={(event: MouseEvent) => {
+        event.stopPropagation();
+        if (isLeftClick(event)) props.onPress();
+      }}
+    >
+      <text fg={props.active ? colors.accent : hover ? colors.text : colors.muted} wrapMode="none" selectable={false}>{props.label}</text>
+    </box>
   );
 }

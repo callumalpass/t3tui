@@ -16,9 +16,13 @@ export interface Layout {
   readonly listHidden: boolean;
   /** The details column shown or hidden with `d`; null follows the window's width. */
   readonly details: boolean | null;
+  /** The terminal drawer's height once its edge is dragged; null is the default height. */
+  readonly drawerHeight: number | null;
+  /** Where terminals open: in a drawer below the conversation, or in the right-hand column. */
+  readonly terminalPlacement: "bottom" | "side";
 }
 
-export const DEFAULT_LAYOUT: Layout = { listWidth: null, detailsWidth: null, listHidden: false, details: null };
+export const DEFAULT_LAYOUT: Layout = { listWidth: null, detailsWidth: null, listHidden: false, details: null, drawerHeight: null, terminalPlacement: "bottom" };
 
 const layoutPath = () => join(configDir(), "layout.json");
 
@@ -38,6 +42,8 @@ export function parseLayout(raw: unknown): Layout {
     detailsWidth: positiveInteger(record.detailsWidth),
     listHidden: record.listHidden === true,
     details: typeof record.details === "boolean" ? record.details : null,
+    drawerHeight: positiveInteger(record.drawerHeight),
+    terminalPlacement: record.terminalPlacement === "side" ? "side" : "bottom",
   };
 }
 
