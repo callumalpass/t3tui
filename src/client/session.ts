@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { appendFileSync } from "node:fs";
 
@@ -189,9 +190,12 @@ export class T3Session {
     }
   }
 
-  sendMessage(threadId: ThreadId, text: string, mode: "queue" | "steer" = "queue"): Promise<void> {
+  /**
+   * Sends a message the way the web composer does: "auto" when idle, otherwise
+   * "steer" (into the active run) or "queue" (after it). See resolveComposerDispatchMode.
+   */
+  sendMessage(threadId: ThreadId, text: string, mode: ComposerDispatchMode = "auto"): Promise<void> {
     const commandId = newCommandId();
-    const running = this.threads.get(threadId)?.state.projection?.runs.findLast((run) => isActiveRun(run.status));
     return this.dispatch({
       type: "message.dispatch",
       commandId,
@@ -199,17 +203,29 @@ export class T3Session {
       messageId: MessageId.make(commandId),
       text,
       attachments: [],
-      dispatchMode:
-        mode === "steer" && running
-          ? { type: "steer_active", targetRunId: running.id }
-          : { type: "queue_after_active" },
+      ...(mode === "queue" ? { dispatchMode: { type: "queue_after_active" } } : { dispatchMode: { type: "start_immediately" }, deliveryIntent: mode }),
       createdBy: "user",
       creationSource: "web",
     });
   }
 
-  respond(threadId: ThreadId, requestId: RuntimeRequestId, decision: ProviderApprovalDecision): Promise<void> {
-    return this.dispatch({ type: "runtime-request.respond", commandId: newCommandId(), threadId, requestId, decision });
+  respond(threadId: ThreadId, requestId: RuntimeRequestId, decision: ProviderApprovalDecision, feedback?: string): Promise<void> {
+    return this.dispatch({ type: "runtime-request.respond", commandId: newCommandId(), threadId, requestId, decision, ...(feedback ? { feedback } : {}) });
+  }
+
+  /** Answers a user-input request; answers map question id to an option value, typed text, or several values. */
+  answer(threadId: ThreadId, requestId: RuntimeRequestId, answers: Record<string, string | readonly string[]>): Promise<void> {
+    return this.dispatch({ type: "runtime-request.respond", commandId: newCommandId(), threadId, requestId, answers: answers as Record<string, string | string[]> });
+  }
+
+  dismissQuestion(threadId: ThreadId, requestId: RuntimeRequestId): Promise<void> {
+    return this.dispatch({ type: "thread.user-input.dismiss", commandId: newCommandId(), threadId, requestId });
+  }
+
+  /** Moves the thread's read watermark, as opening it in the web app does. TUI3_NO_VISIT=1 peeks without it. */
+  visit(threadId: ThreadId): Promise<void> {
+    if (process.env.TUI3_NO_VISIT === "1") return Promise.resolve();
+    return this.dispatch({ type: "thread.visit", commandId: newCommandId(), threadId, visitedAt: new Date().toISOString(), opened: true });
   }
 
   /** Stops whatever the thread is running, the way the GUI's stop button does. */
@@ -351,8 +367,6 @@ export class T3Session {
     else entry.notifyTimer = setTimeout(notify, THREAD_NOTIFY_MS);
   }
 }
-
-const isActiveRun = (status: string) => status === "preparing" || status === "starting" || status === "running" || status === "waiting";
 
 const isSocketFailure = (message: string) => /Socket(Close|Open|Generic)?Error|socket/i.test(message);
 

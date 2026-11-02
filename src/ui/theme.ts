@@ -1,5 +1,6 @@
 import { SyntaxStyle } from "@opentui/core";
 
+import type { StatusTone } from "../model/threads.ts";
 import type { Tone } from "../model/transcript.ts";
 
 export const colors = {
@@ -17,7 +18,20 @@ export const colors = {
   bad: "#f7768e",
   warn: "#e0af68",
   selectedBg: "#283457",
+  /** The web app's sky / indigo / violet status hues. */
+  info: "#7dcfff",
+  input: "#bb9af7",
+  plan: "#c099ff",
 } as const;
+
+export const statusColor: Record<StatusTone, string> = {
+  info: colors.info,
+  muted: colors.muted,
+  warn: colors.warn,
+  input: colors.input,
+  bad: colors.bad,
+  good: colors.good,
+};
 
 export const toneColor: Record<Tone, string> = {
   normal: colors.text,

@@ -2,7 +2,7 @@
 import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 
 import { T3Session } from "./client/session.ts";
-import { findThread, lastActivity, relativeTime, shortId, threadRows } from "./model/threads.ts";
+import { findThread, lastActivity, relativeTime, rowTime, shortId, statusLabel, threadRows } from "./model/threads.ts";
 
 const USAGE = `tui3: a terminal client for T3 Code
 
@@ -62,13 +62,13 @@ async function connectedSession(): Promise<{ session: T3Session; snapshot: Orche
 
 async function list(json: boolean) {
   const { session, snapshot } = await connectedSession();
-  const rows = threadRows(snapshot, { recentLimit: 40 });
+  const rows = threadRows(snapshot, { settledLimit: 20 });
   if (json) {
-    console.log(JSON.stringify(rows.map((row) => ({ id: row.thread.id, title: row.thread.title, project: row.projectName, group: row.group, status: row.thread.status, updatedAt: new Date(lastActivity(row.thread)).toISOString() })), null, 2));
+    console.log(JSON.stringify(rows.map((row) => ({ id: row.thread.id, title: row.thread.title, project: row.projectName, section: row.section, status: row.status, unread: row.unread, updatedAt: new Date(lastActivity(row.thread)).toISOString() })), null, 2));
   } else {
     for (const row of rows) {
-      const mark = row.group === "needs-you" ? "!" : row.group === "running" ? "~" : " ";
-      console.log(`${mark} ${shortId(row.thread.id)}  ${relativeTime(lastActivity(row.thread)).padStart(4)}  ${row.projectName.padEnd(20).slice(0, 20)}  ${row.thread.title}`);
+      const status = statusLabel(row)?.text ?? relativeTime(rowTime(row.thread));
+      console.log(`${shortId(row.thread.id)}  ${row.section.padEnd(8)}  ${status.padEnd(12)}  ${row.projectName.padEnd(20).slice(0, 20)}  ${row.thread.title}`);
     }
   }
   await session.stop();

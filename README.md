@@ -31,23 +31,31 @@ Any mode:
 | `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation |
 | `ctrl+c` | quit |
 
-Typing: `enter` sends (queued after the current run if the thread is busy), `shift+enter` or `ctrl+j` adds a newline.
+Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` or `ctrl+j` adds a newline.
 
 Navigation:
 
 | Key | Action |
 | --- | --- |
 | `j`/`k`, arrows | next / previous thread (scroll, in `attach`) |
-| `y` / `Y` / `n` | accept / accept for session / decline the pending approval |
-| `e` | expand folded work and long messages |
+| `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
+| `1`–`9` | pick an option when the agent asks a question (also in an empty message box) |
+| `x` | dismiss the agent's question |
+| `e` | expand all folded turns and work groups |
+| `o` | load earlier turns |
+| `z` | show the Settled and Snoozed sections |
 | `/` | filter threads by title or project |
 | `S` | stop the thread |
 | `g` / `G` | top / bottom of the conversation |
 | `q` | quit |
 
-The conversation shows your messages and the agent's replies; each run of tool calls and reasoning between them folds into one summary line (`▸ 5 commands · 3 edits`), with the latest step shown while it's running.
+The layout follows T3 Code's web app, and much of it uses the web app's own code (vendored from upstream):
 
-Threads are grouped into **Needs you** (waiting on an approval), **Running**, and **Recent**.
+- **Sidebar:** the same sections (Pinned, Active, Working, then Snoozed and Settled folded to a count) and the same status words: `Working 2m`, `Waiting`, `Approval`, `Input`, `Request`, `Limited`, `Failed`, `Done`. Threads that need you are bold.
+- **Conversation:** built by the web app's timeline logic. Each finished turn's work folds into one line (`Worked for 3m 12s`), your messages are right-aligned, and a running turn shows its live step and `Working for 12s`.
+- **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
+
+Long threads load as a bounded window of recent turns; press `o` for older ones. If the connection drops, tui3 reconnects with backoff and resubscribes.
 
 ## How it connects
 
@@ -70,4 +78,4 @@ Type errors after a bump point at the protocol changes to adapt to.
 
 ## Not yet supported
 
-Answering agent questions (`user_input` requests), starting new threads, attachments, diffs, and the integrated terminal. Use the T3 Code app for those.
+Starting new threads, editing queued messages, plan follow-ups, attachments, diffs, and the integrated terminal. Use the T3 Code app for those.

@@ -16,11 +16,17 @@
     "@opentui/core": "0.2.7",
     "@opentui/react": "0.2.7",
     "effect": "4.0.5",
-    "react": "19"
+    "mdast-util-directive": "^3.2.0",
+    "micromark-extension-directive": "^4.0.0",
+    "react": "19",
+    "remark-parse": "^11.0.0",
+    "zustand": "5.0.11"
   },
   "devDependencies": {
+    "@noble/hashes": "1.8.0",
     "@types/bun": "latest",
     "@types/react": "^19.3.0",
+    "jose": "^6.2.14",
     "typescript": "^5.9.0"
   }
 }

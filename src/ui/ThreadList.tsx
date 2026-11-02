@@ -1,66 +1,75 @@
-import { GROUP_LABELS, lastActivity, relativeTime, type ThreadRow } from "../model/threads.ts";
-import { colors } from "./theme.ts";
+import { needsAttention, relativeTime, rowTime, SECTION_LABELS, statusLabel, type Section, type ThreadRow } from "../model/threads.ts";
+import { colors, statusColor } from "./theme.ts";
 
-const STATUS_GLYPH: Record<string, { glyph: string; color: string }> = {
-  "needs-you": { glyph: "●", color: colors.warn },
-  running: { glyph: "◐", color: colors.accent },
-  failed: { glyph: "✕", color: colors.bad },
-  interrupted: { glyph: "◌", color: colors.muted },
-  completed: { glyph: "✓", color: colors.faint },
-  idle: { glyph: "·", color: colors.faint },
-};
-
-function glyphFor(row: ThreadRow) {
-  if (row.group !== "recent") return STATUS_GLYPH[row.group]!;
-  return STATUS_GLYPH[row.thread.status] ?? STATUS_GLYPH.idle!;
-}
-
-export function ThreadList(props: { readonly rows: readonly ThreadRow[]; readonly selected: number; readonly focused: boolean; readonly width: number; readonly height: number; readonly filter: string }) {
-  const { rows, selected, focused, width, height } = props;
-  // Rows take two lines and up to three group headers take one each; keep the selection in view.
-  const visibleCount = Math.max(1, Math.floor((height - 3) / 2));
+/**
+ * The web sidebar as a list: section headers, then two-line rows of
+ * project + status (or time), and the title, bold when it needs you and
+ * dimmed while it works or once read.
+ */
+export function ThreadList(props: {
+  readonly rows: readonly ThreadRow[];
+  /** Sections folded to a header with a count, like the web's Snoozed and Settled. */
+  readonly collapsed: ReadonlyMap<Section, number>;
+  readonly selected: number;
+  readonly focused: boolean;
+  readonly width: number;
+  readonly height: number;
+  readonly filter: string;
+  readonly now: number;
+}) {
+  const { rows, selected, focused, width, height, now } = props;
+  // Rows take two lines plus a header per section; keep the selection in view.
+  const visibleCount = Math.max(1, Math.floor((height - 6) / 2));
   const start = Math.max(0, Math.min(selected - Math.floor(visibleCount / 2), rows.length - visibleCount));
   const windowRows = rows.slice(start, start + visibleCount);
-  const titleWidth = Math.max(8, width - 12);
-  const now = Date.now();
+  const inner = Math.max(8, width - 3);
+  // Active goes unlabelled when it leads the list, as in the web sidebar.
+  const labelActive = rows.some((row) => row.section === "pinned");
   const lines: React.ReactNode[] = [];
-  let previousGroup = start > 0 ? rows[start - 1]?.group : undefined;
+  let previousSection = start > 0 ? rows[start - 1]?.section : undefined;
   windowRows.forEach((row, offset) => {
     const index = start + offset;
-    if (row.group !== previousGroup) {
-      lines.push(
-        <text key={`h-${row.group}`} fg={row.group === "needs-you" ? colors.warn : colors.muted}>
-          <strong>{GROUP_LABELS[row.group]}</strong>
-        </text>,
-      );
-      previousGroup = row.group;
+    if (row.section !== previousSection) {
+      if (row.section !== "active" || labelActive) lines.push(<SectionHeader key={`h-${row.section}`} label={SECTION_LABELS[row.section]} />);
+      else if (previousSection !== undefined) lines.push(<text key="h-gap"> </text>);
+      previousSection = row.section;
     }
-    const { glyph, color } = glyphFor(row);
     const isSelected = index === selected;
-    const title = truncate(row.thread.title || "(untitled)", titleWidth);
+    const status = statusLabel(row, now);
+    const right = status?.text ?? relativeTime(rowTime(row.thread), now);
+    const left = truncate(row.projectName || "No project", Math.max(4, inner - right.length - 1));
+    const attention = needsAttention(row);
+    const recede = !isSelected && (row.status === "working" || row.status === "waiting" || (row.status === "ready" && !row.unread));
+    const title = truncate(row.thread.title || "New thread", inner);
     lines.push(
-      <box key={row.thread.id} flexDirection="row" backgroundColor={isSelected ? (focused ? colors.selectedBg : colors.border) : "transparent"}>
-        <text fg={color}>{` ${glyph} `}</text>
-        <box flexGrow={1} flexDirection="column">
-          <text fg={isSelected ? colors.text : colors.text}>{title}</text>
-          <text fg={colors.faint}>{truncate(`${row.projectName} · ${relativeTime(lastActivity(row.thread), now)}`, titleWidth)}</text>
+      <box key={row.thread.id} flexDirection="column" paddingLeft={1} paddingRight={1} backgroundColor={isSelected ? (focused ? colors.selectedBg : colors.panel) : "transparent"}>
+        <box flexDirection="row">
+          <text fg={colors.faint}>{left}</text>
+          <box flexGrow={1} />
+          <text fg={status ? statusColor[status.tone] : colors.faint}>{right}</text>
         </box>
+        <text fg={recede ? colors.muted : colors.text}>{attention ? <strong>{title}</strong> : title}</text>
       </box>,
     );
   });
+  const collapsed = [...props.collapsed].filter(([, count]) => count > 0);
   return (
-    <box
-      border={["right"]}
-      borderColor={colors.border}
-      width={width}
-      flexShrink={0}
-      overflow="hidden"
-      flexDirection="column"
-      paddingLeft={0}
-    >
+    <box border={["right"]} borderColor={colors.border} width={width} flexShrink={0} overflow="hidden" flexDirection="column">
       {props.filter ? <text fg={colors.accent}>{` /${props.filter}`}</text> : null}
-      {rows.length === 0 ? <text fg={colors.muted}> no threads</text> : lines}
+      {rows.length === 0 ? <text fg={colors.muted}>{props.filter ? " no matches" : " no threads"}</text> : lines}
+      <box flexGrow={1} />
+      {collapsed.map(([section, count]) => (
+        <text key={section} fg={colors.faint}>{` › ${SECTION_LABELS[section]} ${count}`}</text>
+      ))}
     </box>
+  );
+}
+
+function SectionHeader({ label }: { readonly label: string }) {
+  return (
+    <text fg={colors.muted} paddingLeft={1}>
+      <strong>{label}</strong>
+    </text>
   );
 }
 

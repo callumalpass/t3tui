@@ -1,145 +1,248 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, type RefObject } from "react";
 
-import { summarizeWork, type Segment, type Step, type Transcript } from "../model/transcript.ts";
+import type { ThreadHistory } from "../client/session.ts";
+import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
+import { blockFor } from "../model/transcript.ts";
 import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
 
+/** The conversation, row for row as the web app derives it (MessagesTimeline.logic). */
 export function ThreadView(props: {
+  readonly project: string;
   readonly title: string;
-  readonly subtitle: string;
-  readonly transcript: Transcript | null;
+  readonly detail: string;
+  readonly timeline: Timeline | null;
+  readonly history: ThreadHistory | null;
   readonly loading: boolean;
   readonly error?: string | undefined;
-  readonly working: boolean;
-  readonly expandWork: boolean;
+  readonly workspaceRoot: string | undefined;
+  readonly now: number;
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
 }) {
-  const { transcript } = props;
-  const last = transcript?.segments.at(-1);
-  // The folded work line already says it's working; otherwise show it at the bottom.
-  const showWorking = props.working && !(last?.kind === "work" && last.active) && !(last?.kind === "assistant" && last.streaming);
+  const { timeline, history } = props;
+  const pendingIds = new Set<string>(timeline?.pending.approvals.map((approval) => approval.requestId) ?? []);
   return (
     <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
       <box flexDirection="row" flexShrink={0} height={1}>
+        <text fg={colors.muted}>{props.project ? `${props.project} / ` : ""}</text>
         <text fg={colors.text}>
           <strong>{props.title}</strong>
         </text>
-        <text fg={colors.faint}>{props.subtitle ? `  ${props.subtitle}` : ""}</text>
+        <box flexGrow={1} />
+        <text fg={colors.faint}>{props.detail}</text>
       </box>
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
-        {props.loading && !transcript ? <text fg={colors.muted}>loading…</text> : null}
-        {transcript && transcript.hiddenCount > 0 ? <text fg={colors.faint}>{`… ${transcript.hiddenCount} earlier items`}</text> : null}
-        {transcript?.segments.map((segment) => <SegmentView key={segment.id} segment={segment} expandWork={props.expandWork} />)}
-        {showWorking ? <text fg={colors.accent} marginTop={1}>◐ working…</text> : null}
+        {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
+        {history?.hasMore || history?.error ? <LoadEarlier history={history} /> : null}
+        {timeline?.rows.map((row) => (
+          <Row
+            key={row.id}
+            row={row}
+            pending={row.kind === "event" && pendingIds.has(eventRequestId(row) ?? "")}
+            workspaceRoot={props.workspaceRoot}
+            now={row.kind === "working" ? props.now : 0}
+            workStartedAt={timeline.workStartedAt}
+          />
+        ))}
       </scrollbox>
     </box>
   );
 }
 
-/** Memoized: unchanged segments keep their object identity across updates, so only what changed re-renders. */
-const SegmentView = memo(function SegmentView({ segment, expandWork }: { readonly segment: Segment; readonly expandWork: boolean }) {
-  switch (segment.kind) {
-    case "user": {
-      const { text, hidden } = expandWork ? { text: segment.text.trim(), hidden: 0 } : clip(segment.text.trim());
+function LoadEarlier({ history }: { readonly history: ThreadHistory }) {
+  const label = history.loading ? "Loading earlier turns…" : history.error ? `Could not load earlier turns: ${history.error} (o to retry)` : "Load earlier turns (o)";
+  return <Divider label={label} color={history.error ? colors.bad : colors.faint} />;
+}
+
+function Divider({ label, color }: { readonly label: string; readonly color: string }) {
+  return (
+    <box flexDirection="row" marginTop={1}>
+      <box flexGrow={1} border={["bottom"]} borderColor={colors.border} height={1} />
+      <text fg={color}>{` ${label} `}</text>
+      <box flexGrow={1} border={["bottom"]} borderColor={colors.border} height={1} />
+    </box>
+  );
+}
+
+/**
+ * Memoized: computeStableMessagesTimelineRows keeps unchanged rows identical,
+ * so a streamed update re-renders only its own rows. `now` is nonzero only for
+ * the working row, which ticks.
+ */
+const Row = memo(function Row(props: {
+  readonly row: MessagesTimelineRow;
+  readonly pending: boolean;
+  readonly workspaceRoot: string | undefined;
+  readonly now: number;
+  readonly workStartedAt: string | null;
+}) {
+  const { row, workspaceRoot } = props;
+  switch (row.kind) {
+    case "message": {
+      const { message } = row;
+      if (message.role === "user") return <UserMessage text={message.text} />;
+      if (message.role === "system") return <text marginTop={1} fg={colors.muted}>{message.text}</text>;
       return (
-        <box marginTop={1} border={["left"]} borderColor={colors.user} backgroundColor={colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column">
-          <text fg={colors.text}>{text}</text>
-          {hidden > 0 ? <text fg={colors.faint}>{`… ${hidden} more lines (e to expand)`}</text> : null}
+        <box marginTop={1}>
+          <markdown content={message.text || "…"} syntaxStyle={getMarkdownStyle()} streaming={message.streaming} conceal />
         </box>
       );
     }
-    case "assistant":
+    case "turn-fold":
+    case "attempt-fold":
+      // The finished turn's work, folded: the web's turn separator.
       return (
-        <box marginTop={1} paddingLeft={1}>
-          <markdown content={segment.markdown || "…"} syntaxStyle={getMarkdownStyle()} streaming={segment.streaming} conceal />
+        <box marginTop={1} border={["bottom"]} borderColor={colors.border} flexDirection="row">
+          <text fg={colors.muted}>{`${row.label} ${row.expanded ? "⌄" : "›"}`}</text>
+        </box>
+      );
+    case "work-toggle":
+      return (
+        <box marginTop={1} flexDirection="row">
+          <text fg={row.hasFailure ? colors.bad : colors.muted}>{`${SUMMARY_GLYPH[row.summaryKind] ?? "•"} ${row.summary} ${row.expanded ? "⌄" : "›"}`}</text>
         </box>
       );
     case "work":
-      return expandWork ? <ExpandedWork steps={segment.steps} /> : <FoldedWork steps={segment.steps} active={segment.active} />;
-    case "approval":
       return (
-        <box marginTop={1} border borderStyle="rounded" borderColor={segment.pending ? colors.warn : colors.border} flexDirection="column" paddingLeft={1} paddingRight={1}>
-          <text fg={segment.pending ? colors.warn : colors.muted}>
-            <strong>{segment.pending ? "Needs approval" : "Approval"}</strong>
-          </text>
-          <text fg={colors.text}>{segment.title}</text>
-          {segment.detail ? <text fg={colors.muted}>{segment.detail}</text> : null}
-          {segment.pending ? <text fg={colors.faint}>esc, then y accept · Y accept for session · n decline</text> : null}
-        </box>
-      );
-    case "question":
-      return (
-        <box marginTop={1} border borderStyle="rounded" borderColor={segment.pending ? colors.warn : colors.border} flexDirection="column" paddingLeft={1} paddingRight={1}>
-          <text fg={segment.pending ? colors.warn : colors.muted}>
-            <strong>{segment.pending ? "Question for you" : "Question"}</strong>
-          </text>
-          {segment.questions.map((question, index) => (
-            <text key={index} fg={colors.text}>{question}</text>
+        <box marginTop={row.continuesWorkLog ? 0 : 1} flexDirection="column">
+          {row.groupedEntries.map((entry) => (
+            <WorkEntry key={entry.id} entry={entry} label={row.displayLabel && row.groupedEntries.length === 1 ? row.displayLabel : workEntryDisplayLabel(entry, workspaceRoot)} />
           ))}
-          {segment.pending ? <text fg={colors.faint}>Answer this in the T3 Code app for now.</text> : null}
         </box>
       );
-    case "alert":
-      return <text marginTop={1} paddingLeft={1} fg={toneColor[segment.tone]}>{segment.text}</text>;
+    case "work-live":
+      return (
+        <box marginTop={1} flexDirection="column">
+          {row.thought?.detail ? <text fg={colors.faint}>{`∴ ${liveThoughtLine(row.thought.detail)}`}</text> : null}
+          <text fg={row.active ? colors.info : colors.muted}>{`${row.active ? "◐" : glyphFor(row.entry)} ${liveWorkEntryLabel(row.entry, workspaceRoot, row.active)}`}</text>
+        </box>
+      );
+    case "working": {
+      const since = props.workStartedAt ? Date.parse(props.workStartedAt) : NaN;
+      const verb = row.compacting ? "Compacting" : "Working";
+      return <text marginTop={1} fg={colors.info}>{Number.isFinite(since) ? `◐ ${verb} for ${formatWorkingDurationLabel(props.now - since)}` : `◐ ${verb}…`}</text>;
+    }
+    case "thinking":
+      return <text marginTop={1} fg={colors.faint}>∴ Thinking…</text>;
+    case "context-compaction":
+      return <Divider label={row.failed ? `${row.title ?? "Compaction failed"}${row.failure ? `: ${row.failure}` : ""}` : (row.title ?? row.label)} color={row.failed ? colors.bad : colors.faint} />;
+    case "proposed-plan":
+      return (
+        <box marginTop={1} border borderStyle="rounded" borderColor={colors.plan} flexDirection="column" paddingLeft={1} paddingRight={1}>
+          <text fg={colors.plan}>
+            <strong>Plan</strong>
+          </text>
+          <markdown content={row.proposedPlan.planMarkdown} syntaxStyle={getMarkdownStyle()} conceal />
+        </box>
+      );
+    case "event":
+      return <EventRow item={row.projectedItem.item} pending={props.pending} />;
+    case "worktree-setup":
+      return <text marginTop={1} fg={colors.info}>◐ Setting up worktree…</text>;
+    default:
+      // assistant-meta, html-render, mcp-app: nothing a terminal can show.
+      return null;
   }
 });
 
-function FoldedWork({ steps, active }: { readonly steps: readonly Step[]; readonly active: boolean }) {
-  const latest = active ? steps.at(-1) : undefined;
+const USER_FOLD_LINES = 8;
+const USER_FOLD_CHARS = 600;
+
+/** The web's user bubble: right-aligned, at most 80% wide, folded past 8 lines or 600 characters. */
+function UserMessage({ text }: { readonly text: string }) {
+  const trimmed = text.trim();
+  const lines = trimmed.split("\n");
+  let shown = lines.slice(0, USER_FOLD_LINES).join("\n");
+  if (shown.length > USER_FOLD_CHARS) shown = `${shown.slice(0, USER_FOLD_CHARS).trimEnd()}…`;
+  const folded = shown.length < trimmed.length;
   return (
-    <box marginTop={1} paddingLeft={1} flexDirection="column">
-      <text fg={active ? colors.accent : colors.faint}>{`${active ? "◐" : "▸"} ${summarizeWork(steps)}`}</text>
-      {latest ? <text fg={colors.muted}>{`  ${stepLine(latest)}`}</text> : null}
+    <box marginTop={1} alignSelf="flex-end" maxWidth="80%" backgroundColor={colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column">
+      <text fg={colors.text}>{shown}</text>
+      {folded ? <text fg={colors.faint}>{`… ${Math.max(1, lines.length - shown.split("\n").length)} more lines`}</text> : null}
     </box>
   );
 }
 
-function ExpandedWork({ steps }: { readonly steps: readonly Step[] }) {
-  return (
-    <box marginTop={1} paddingLeft={1} flexDirection="column">
-      {steps.map((step) => (
-        <box key={step.id} flexDirection="column">
-          <text fg={step.kind === "reasoning" ? colors.faint : toneColor[step.tone]}>{stepLine(step)}</text>
-          {step.kind === "tool" && step.detail ? <text fg={colors.faint}>{indent(step.detail, "    ")}</text> : null}
-        </box>
-      ))}
-    </box>
-  );
+function WorkEntry({ entry, label }: { readonly entry: WorkLogEntry; readonly label: string }) {
+  const failed = workEntryDisplayIndicatesToolFailure(entry);
+  const tone = failed || entry.tone === "error" ? colors.bad : entry.tone === "thinking" ? colors.faint : colors.muted;
+  return <text fg={tone}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}`}</text>;
 }
 
-function stepLine(step: Step): string {
-  switch (step.kind) {
-    case "tool":
-      return `${step.icon} ${step.label}`;
-    case "reasoning":
-      return `∴ ${firstLine(step.text)}`;
+function EventRow({ item, pending }: { readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {
+  if (item.type === "approval_request" && pending) {
+    return (
+      <box marginTop={1} border borderStyle="rounded" borderColor={colors.warn} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <text fg={colors.warn}>
+          <strong>{approvalTitle(item.requestKind)}</strong>
+        </text>
+        {item.prompt ? <text fg={colors.text}>{item.prompt}</text> : null}
+        {item.reason ? <text fg={colors.muted}>{item.reason}</text> : null}
+        <text fg={colors.faint}>Waiting for approval · y Approve · Y Always allow this session · n Decline</text>
+      </box>
+    );
+  }
+  const block = blockFor(item, new Set());
+  if (!block) return null;
+  switch (block.kind) {
     case "notice":
-      return `· ${step.text}`;
+      return <text marginTop={1} fg={toneColor[block.tone]}>{block.text}</text>;
+    case "tool":
+      return <text marginTop={1} fg={toneColor[block.tone]}>{`${block.icon} ${block.label}`}</text>;
+    case "approval":
+      return <text marginTop={1} fg={colors.muted}>{`Approval requested: ${block.title}`}</text>;
+    case "question":
+      return <text marginTop={1} fg={colors.muted}>{block.pending ? "Input requested" : "Answered questions"}</text>;
+    default:
+      return null;
   }
 }
 
-const CLIP_LINES = 6;
-const CLIP_CHARS = 480;
+function approvalTitle(kind: string): string {
+  if (kind.includes("command")) return "Command approval";
+  if (kind.includes("read")) return "File read approval";
+  if (kind.includes("file")) return "File change approval";
+  if (kind.includes("access")) return "App access approval";
+  if (kind.includes("permission")) return "App permission approval";
+  return "Approval";
+}
 
-/** Long prompts (delegation briefs, pasted logs) shrink to their opening lines. */
-function clip(text: string): { readonly text: string; readonly hidden: number } {
-  const lines = text.split("\n");
-  let kept = lines.slice(0, CLIP_LINES).join("\n");
-  if (kept.length > CLIP_CHARS) kept = `${kept.slice(0, CLIP_CHARS).trimEnd()}…`;
-  const keptLines = kept.split("\n").length;
-  const hidden = lines.length - keptLines;
-  return kept.length < text.length ? { text: kept, hidden: Math.max(hidden, 1) } : { text, hidden: 0 };
+function eventRequestId(row: Extract<MessagesTimelineRow, { kind: "event" }>): string | undefined {
+  const item = row.projectedItem.item;
+  return item.type === "approval_request" ? item.requestId : undefined;
+}
+
+/** Terminal stand-ins for the web's lucide icons. */
+const SUMMARY_GLYPH: Partial<Record<ToolGroupSummaryKind, string>> = {
+  read: "◉",
+  edit: "✎",
+  command: "$",
+  "code-search": "⌕",
+  search: "⌕",
+  browser: "◍",
+  reasoning: "∴",
+  "thread-create": "↳",
+  "agent-tool": "↳",
+  "pull-request": "⇅",
+  "dynamic-tool": "⚙",
+  other: "⚙",
+  mixed: "•",
+};
+
+function glyphFor(entry: WorkLogEntry): string {
+  if (entry.tone === "thinking" || entry.itemType === "reasoning") return "∴";
+  if (entry.command) return "$";
+  if (entry.changedFiles?.length) return "✎";
+  if (entry.itemType === "subagent") return "↳";
+  if (entry.itemType === "file_search" || entry.itemType === "web_search") return "⌕";
+  if (entry.itemType === "todo_list") return "☐";
+  return "·";
 }
 
 function firstLine(text: string): string {
-  const line = (text.trim().split("\n")[0] ?? "").replace(/\*\*(.+?)\*\*/g, "$1");
-  return line.length > 120 ? `${line.slice(0, 117)}…` : line;
-}
-
-function indent(text: string, prefix: string): string {
-  return text
-    .split("\n")
-    .map((line) => prefix + line)
-    .join("\n");
+  const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
+  return line.length > 200 ? `${line.slice(0, 197)}…` : line;
 }

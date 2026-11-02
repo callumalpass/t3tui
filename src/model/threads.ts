@@ -1,66 +1,142 @@
-import type { OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadShell, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadShell, ProjectId } from "@t3tools/contracts";
+import { formatWorkingDurationLabel, presentThreadShell, resolveThreadWorkingStartedAt, type EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isThreadWorking, sortInboxThreadsByReturn, sortWorkingThreadsBySend } from "@t3tools/client-runtime/state/thread-inbox";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { sortPinnedThreadsByOrderKey, sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import * as DateTime from "effect/DateTime";
 
-export type ThreadGroup = "needs-you" | "running" | "recent";
+/** The web sidebar's sections, in its order. Active has no header unless others show. */
+export type Section = "pinned" | "active" | "working" | "snoozed" | "settled";
+
+/** The web sidebar's row status (resolveSidebarThreadStatus). */
+export type ThreadStatus = "approval" | "input" | "request" | "waiting" | "working" | "limited" | "failed" | "ready";
 
 export interface ThreadRow {
   readonly thread: OrchestrationV2ThreadShell;
-  readonly group: ThreadGroup;
+  readonly shell: EnvironmentThreadShell;
+  readonly section: Section;
+  readonly status: ThreadStatus;
+  /** Finished since you last opened it. */
+  readonly unread: boolean;
   readonly projectName: string;
 }
 
-export const GROUP_LABELS: Record<ThreadGroup, string> = {
-  "needs-you": "Needs you",
-  running: "Running",
-  recent: "Recent",
+export const SECTION_LABELS: Record<Section, string> = {
+  pinned: "Pinned",
+  active: "Active",
+  working: "Working",
+  snoozed: "Snoozed",
+  settled: "Settled",
 };
 
-const ACTIVE_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
+export const SECTION_ORDER: readonly Section[] = ["pinned", "active", "working", "snoozed", "settled"];
 
-export function needsUser(thread: OrchestrationV2ThreadShell): boolean {
-  return thread.pendingRuntimeRequest !== null && thread.pendingRuntimeRequest.blocking !== false;
+/** Only one server, so any constant id works for presentThreadShell. */
+const LOCAL_ENVIRONMENT = "local" as EnvironmentId;
+
+export function resolveStatus(shell: EnvironmentThreadShell): ThreadStatus {
+  if (shell.hasPendingApprovals || shell.pendingSubagentRequest === "approval") return "approval";
+  if (shell.hasPendingUserInput || shell.pendingSubagentRequest === "user_input") return "input";
+  if ((shell.pendingGuestMessageCount ?? 0) > 0) return "request";
+  const runtime = shell.runtime;
+  if (runtime?.status === "running" && shell.blockedOnThreadWait) return "waiting";
+  if (runtime && ["preparing", "queued", "starting", "running", "waiting"].includes(runtime.status)) return "working";
+  if (runtime?.status === "idle") return "waiting";
+  if (runtime?.status === "failed") return runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  return "ready";
 }
 
-export function isRunning(thread: OrchestrationV2ThreadShell): boolean {
-  return thread.activeRunId !== null || ACTIVE_STATUSES.has(thread.status);
+export function hasUnseenCompletion(shell: EnvironmentThreadShell): boolean {
+  const completedAt = Date.parse(shell.latestRun?.completedAt ?? "");
+  if (Number.isNaN(completedAt) || !shell.lastVisitedAt) return false;
+  const visitedAt = Date.parse(shell.lastVisitedAt);
+  return Number.isNaN(visitedAt) || completedAt > visitedAt;
 }
 
-export function groupOf(thread: OrchestrationV2ThreadShell): ThreadGroup {
-  if (needsUser(thread)) return "needs-you";
-  if (isRunning(thread)) return "running";
-  return "recent";
+/** Whether the thread is waiting on you: the rows the web sidebar shows in bold. */
+export function needsAttention(row: Pick<ThreadRow, "status" | "unread">): boolean {
+  return row.status === "approval" || row.status === "input" || row.status === "request" || row.status === "failed" || row.status === "limited" || row.unread;
+}
+
+/** The sidebar's top-right status word, or null to show the time instead. */
+export function statusLabel(row: ThreadRow, now = Date.now()): { readonly text: string; readonly tone: StatusTone } | null {
+  switch (row.status) {
+    case "working": {
+      const label = row.shell.goal?.status === "active" ? "Goal" : "Working";
+      const since = resolveThreadWorkingStartedAt(row.shell);
+      return { text: since ? `${label} ${formatWorkingDurationLabel(now - Date.parse(since))}` : label, tone: "info" };
+    }
+    case "waiting":
+      return { text: "Waiting", tone: "muted" };
+    case "approval":
+      return { text: "Approval", tone: "warn" };
+    case "input":
+      return { text: "Input", tone: "input" };
+    case "request":
+      return { text: "Request", tone: "input" };
+    case "limited":
+      return { text: "Limited", tone: "warn" };
+    case "failed":
+      return { text: "Failed", tone: "bad" };
+    case "ready":
+      return row.unread ? { text: "Done", tone: "good" } : null;
+  }
+}
+
+export type StatusTone = "info" | "muted" | "warn" | "input" | "bad" | "good";
+
+/** Threads in the web sidebar's sections and order. Subagent threads stay under their parent, so they're left out. */
+export function threadRows(
+  snapshot: OrchestrationV2ShellSnapshot | null,
+  options: { readonly query?: string; readonly settledLimit?: number; readonly now?: string } = {},
+): ThreadRow[] {
+  if (!snapshot) return [];
+  const projects = new Map<ProjectId, OrchestrationProjectShell>(snapshot.projects.map((project) => [project.id, project]));
+  const query = options.query?.trim().toLowerCase();
+  const now = options.now ?? new Date().toISOString();
+  const bySection: Record<Section, EnvironmentThreadShell[]> = { pinned: [], active: [], working: [], snoozed: [], settled: [] };
+  for (const thread of snapshot.threads) {
+    if (thread.archivedAt !== null || thread.deletedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
+    const projectName = projectLabel(projects.get(thread.projectId));
+    if (query && !thread.title.toLowerCase().includes(query) && !projectName.toLowerCase().includes(query)) continue;
+    const shell = presentThreadShell(LOCAL_ENVIRONMENT, thread);
+    const section: Section = effectiveSnoozed(shell, { now })
+      ? "snoozed"
+      : shell.settledOverride === "settled"
+        ? "settled"
+        : shell.pinnedAt != null
+          ? "pinned"
+          : isThreadWorking(shell)
+            ? "working"
+            : "active";
+    bySection[section].push(shell);
+  }
+  const sorted: Record<Section, EnvironmentThreadShell[]> = {
+    pinned: sortPinnedThreadsByOrderKey(bySection.pinned),
+    active: sortInboxThreadsByReturn(bySection.active),
+    working: sortWorkingThreadsBySend(bySection.working),
+    snoozed: bySection.snoozed.toSorted((a, b) => Date.parse(a.snoozedUntil ?? "") - Date.parse(b.snoozedUntil ?? "")),
+    settled: sortSettledThreads(bySection.settled).slice(0, options.settledLimit ?? 30),
+  };
+  return SECTION_ORDER.flatMap((section) =>
+    sorted[section].map((shell) => ({
+      thread: shell.source as OrchestrationV2ThreadShell,
+      shell,
+      section,
+      status: resolveStatus(shell),
+      unread: hasUnseenCompletion(shell),
+      projectName: projectLabel(projects.get(shell.projectId)),
+    })),
+  );
 }
 
 export function lastActivity(thread: OrchestrationV2ThreadShell): number {
   return DateTime.toEpochMillis(thread.updatedAt);
 }
 
-const millis = (value: DateTime.Utc | null | undefined) => (value ? DateTime.toEpochMillis(value) : 0);
-
-/**
- * Sort key within a group. Active threads update every second while they
- * stream, so they sort by something that holds still: when they started
- * waiting on you, or when their run began.
- */
-export function sortKey(thread: OrchestrationV2ThreadShell, group: ThreadGroup): number {
-  if (group === "needs-you") return millis(thread.pendingRuntimeRequest?.createdAt) || millis(thread.createdAt);
-  if (group === "running") return millis(thread.latestRunStartedAt) || millis(thread.latestRunRequestedAt) || millis(thread.createdAt);
-  return lastActivity(thread);
-}
-
-/** Threads in display order: the ones waiting on you, then running, then the most recent. */
-export function threadRows(snapshot: OrchestrationV2ShellSnapshot | null, options: { readonly recentLimit?: number; readonly query?: string } = {}): ThreadRow[] {
-  if (!snapshot) return [];
-  const projects = new Map<ProjectId, OrchestrationProjectShell>(snapshot.projects.map((project) => [project.id, project]));
-  const query = options.query?.trim().toLowerCase();
-  const order: ThreadGroup[] = ["needs-you", "running", "recent"];
-  const rows = snapshot.threads
-    .map((thread) => ({ thread, group: groupOf(thread), projectName: projectLabel(projects.get(thread.projectId)) }))
-    .filter((row) => !query || row.thread.title.toLowerCase().includes(query) || row.projectName.toLowerCase().includes(query))
-    .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || sortKey(b.thread, b.group) - sortKey(a.thread, a.group) || a.thread.id.localeCompare(b.thread.id));
-  const limit = options.recentLimit ?? 60;
-  let recent = 0;
-  return rows.filter((row) => row.group !== "recent" || recent++ < limit);
+/** The time the sidebar shows: your latest message, else the last update. */
+export function rowTime(thread: OrchestrationV2ThreadShell): number {
+  return thread.latestUserMessageAt ? DateTime.toEpochMillis(thread.latestUserMessageAt) : lastActivity(thread);
 }
 
 export function projectLabel(project: OrchestrationProjectShell | undefined): string {
@@ -84,8 +160,10 @@ export function shortId(id: string): string {
   return id.slice(-8);
 }
 
+/** Compact relative time, like the sidebar's: "now", "45s", "3m", "2h", "4d". */
 export function relativeTime(ms: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - ms) / 1000));
+  if (seconds < 5) return "now";
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m`;

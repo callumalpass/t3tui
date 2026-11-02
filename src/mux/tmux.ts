@@ -1,6 +1,6 @@
 import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 
-import { threadRows, type ThreadRow } from "../model/threads.ts";
+import { needsAttention, threadRows, type ThreadRow } from "../model/threads.ts";
 
 /** Window option that ties a tmux window to the thread it attaches to. */
 const THREAD_OPTION = "@tui3_thread";
@@ -22,7 +22,7 @@ async function tmux(args: readonly string[], allowFailure = false): Promise<stri
 const shellJoin = (parts: readonly string[]) => parts.map((part) => `'${part.replaceAll("'", `'\\''`)}'`).join(" ");
 
 export function windowName(row: ThreadRow): string {
-  const mark = row.group === "needs-you" ? "● " : row.group === "running" ? "" : "✓ ";
+  const mark = needsAttention(row) && row.status !== "ready" ? "● " : row.status === "working" || row.status === "waiting" ? "" : "✓ ";
   const title = (row.thread.title || "thread").replace(/\s+/g, " ");
   return mark + (title.length > TITLE_WIDTH ? `${title.slice(0, TITLE_WIDTH - 1)}…` : title);
 }
@@ -42,8 +42,10 @@ export async function syncTmux(snapshot: OrchestrationV2ShellSnapshot, options: 
     const [windowId, threadId] = line.split("\t");
     if (windowId && threadId) windows.set(threadId, windowId);
   }
-  const rows = threadRows(snapshot, { recentLimit: 0 });
-  const byId = new Map(threadRows(snapshot, { recentLimit: Number.MAX_SAFE_INTEGER }).map((row) => [row.thread.id as string, row]));
+  const all = threadRows(snapshot, { settledLimit: 0 });
+  // A window per thread that's working or waiting on you.
+  const rows = all.filter((row) => row.section === "working" || row.status === "approval" || row.status === "input" || row.status === "request");
+  const byId = new Map(all.map((row) => [row.thread.id as string, row]));
   let opened = 0;
   for (const row of rows) {
     if (windows.has(row.thread.id)) continue;
