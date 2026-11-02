@@ -9,11 +9,34 @@ const after = (seconds: number) => DateTime.makeUnsafe(DateTime.toEpochMillis(at
 
 /** The thread with a command waiting for approval. */
 export function withApproval(supportsFeedback = false): OrchestrationV2ThreadProjection {
+  const item = {
+    id: "item-approval",
+    threadId: v2Projection.thread.id,
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "waiting",
+    title: null,
+    startedAt: at,
+    completedAt: null,
+    updatedAt: at,
+    type: "approval_request",
+    requestId: "approval-1",
+    requestKind: "command",
+    prompt: "rm -rf dist && bun run build",
+    reason: "Deletes dist/ and rebuilds it.",
+  };
   return {
     ...v2Projection,
     runtimeRequests: [
       { id: "approval-1", nodeId: "node-1", providerTurnId: null, nativeRequestRef: null, kind: "command", status: "pending", responseCapability: { type: "live", providerSessionId: "session-1", ...(supportsFeedback ? { supportsFeedback } : {}) }, createdAt: at, resolvedAt: null },
     ],
+    turnItems: [item],
+    visibleTurnItems: [{ position: 0, visibility: "local", sourceThreadId: v2Projection.thread.id, sourceItemId: item.id, item }],
   } as unknown as OrchestrationV2ThreadProjection;
 }
 

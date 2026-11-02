@@ -1,5 +1,5 @@
 import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
-import type { ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
+import type { ThreadId, TurnItemId } from "@t3tools/contracts";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, useEffect, useState, type RefObject } from "react";
@@ -7,7 +7,7 @@ import { findTextSegments } from "../model/search.ts";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
 import { FindText } from "./FindText.tsx";
-import { Button, Buttons, isLeftClick, isRightClick, useHover } from "./Button.tsx";
+import { isLeftClick, isRightClick, useHover } from "./Button.tsx";
 import { checkpointFileTotals, type ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import type { Tui3Config } from "../config.ts";
@@ -27,7 +27,6 @@ export type ConversationTarget =
   | { readonly kind: "command"; readonly command: string; readonly output: string; readonly omitted: boolean; readonly source: { readonly threadId: ThreadId; readonly itemId: TurnItemId } | null };
 
 export interface ConversationMouse {
-  readonly respond: (decision: ProviderApprovalDecision) => void;
   /** A click on a prompt: the turn cursor, as [ and ] move it. */
   readonly selectTurn: (messageId: string) => void;
   /** A click on a folded turn or work group: its own expansion, apart from e. */
@@ -73,7 +72,7 @@ export function ThreadView(props: {
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
         {history?.hasMore || history?.error ? <LoadEarlier history={history} onLoad={props.mouse.loadEarlier} /> : null}
-        {timeline?.rows.map((row) => (
+        {timeline?.rows.filter((row) => !isPendingApprovalRow(row, pendingIds)).map((row) => (
           <Row
             key={row.id}
             row={row}
@@ -83,7 +82,6 @@ export function ThreadView(props: {
             scrollRef={props.scrollRef}
             findQuery={props.findQuery ?? ""}
             activeOccurrence={props.findMatch?.entryId === row.id ? props.findMatch.occurrence : null}
-            pending={row.kind === "event" && pendingIds.has(eventRequestId(row) ?? "")}
             workspaceRoot={props.workspaceRoot}
             footer={assistantFooter(row, timeline, props.timestampFormat, props.now)}
             now={row.kind === "working" ? props.now : 0}
@@ -157,7 +155,6 @@ const Row = memo(function Row(props: {
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
   readonly findQuery: string;
   readonly activeOccurrence: number | null;
-  readonly pending: boolean;
   readonly workspaceRoot: string | undefined;
   /** The turn footer's text for this row, or "" for none. */
   readonly footer: string;
@@ -247,7 +244,7 @@ const Row = memo(function Row(props: {
         </box>
       );
     case "event":
-      return <EventRow item={row.projectedItem.item} pending={props.pending} onRespond={mouse.respond} />;
+      return <EventRow item={row.projectedItem.item} />;
     case "worktree-setup":
       return (
         <text marginTop={1} fg={colors.muted}>
@@ -400,23 +397,7 @@ export function childThreadOf(entry: WorkLogEntry): ThreadId | null {
   return item?.type === "subagent" ? (item.childThreadId ?? null) : null;
 }
 
-function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision: ProviderApprovalDecision) => void; readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {
-  if (item.type === "approval_request" && pending) {
-    return (
-      <box marginTop={1} border={["left"]} customBorderChars={BAR} borderColor={colors.warn} backgroundColor={colors.panel} flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
-        <text fg={colors.warn}>
-          <strong>{approvalTitle(item.requestKind)}</strong>
-        </text>
-        {item.prompt ? <text fg={colors.text}>{item.prompt}</text> : null}
-        {item.reason ? <text fg={colors.muted}>{item.reason}</text> : null}
-        <Buttons>
-          <Button label="Approve" shortcut="y" color={colors.good} onPress={() => onRespond("accept")} />
-          <Button label="Always allow this session" shortcut="Y" onPress={() => onRespond("acceptForSession")} />
-          <Button label="Decline" shortcut="n" color={colors.bad} onPress={() => onRespond("decline")} />
-        </Buttons>
-      </box>
-    );
-  }
+function EventRow({ item }: { readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never }) {
   const block = blockFor(item, new Set());
   if (!block) return null;
   switch (block.kind) {
@@ -438,18 +419,22 @@ function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision:
   }
 }
 
-function approvalTitle(kind: string): string {
-  if (kind.includes("command")) return "Command approval";
-  if (kind.includes("read")) return "File read approval";
-  if (kind.includes("file")) return "File change approval";
-  if (kind.includes("access")) return "App access approval";
-  if (kind.includes("permission")) return "App permission approval";
-  return "Approval";
-}
-
 function eventRequestId(row: Extract<MessagesTimelineRow, { kind: "event" }>): string | undefined {
   const item = row.projectedItem.item;
   return item.type === "approval_request" ? item.requestId : undefined;
+}
+
+function entryRequestId(entry: WorkLogEntry): string | undefined {
+  const item = entry.structuredPayload;
+  return item?.type === "approval_request" ? item.requestId : undefined;
+}
+
+/** A live approval shows in the composer's place, not again as a timeline row. */
+function isPendingApprovalRow(row: MessagesTimelineRow, pendingIds: ReadonlySet<string>): boolean {
+  if (pendingIds.size === 0) return false;
+  if (row.kind === "event") return pendingIds.has(eventRequestId(row) ?? "");
+  if (row.kind === "work-live") return pendingIds.has(entryRequestId(row.entry) ?? "");
+  return row.kind === "work" && row.groupedEntries.length > 0 && row.groupedEntries.every((entry) => pendingIds.has(entryRequestId(entry) ?? ""));
 }
 
 /** A folded turn or work group: a click opens or closes just this one. */

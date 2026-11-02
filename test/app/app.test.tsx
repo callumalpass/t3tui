@@ -164,6 +164,19 @@ describe("a finished turn", () => {
 });
 
 describe("approvals", () => {
+  test("the request shows in the composer's place, with its buttons, and not in the timeline", async () => {
+    const app = await open({ session: fakeSession({ projection: withApproval() }) });
+    const frame = app.frame();
+    expect(frame).toContain("Command approval");
+    expect(frame).toContain("Deletes dist/ and rebuilds it.");
+    // Only the composer block names the command; its timeline row is hidden.
+    expect(frame.split("rm -rf dist && bun run build")).toHaveLength(2);
+    expect(frame).not.toContain("Press i to type");
+    const approve = app.find("Approve");
+    await app.click(approve.x, approve.y);
+    expect(app.calls("respond").map((call) => call.args[2])).toEqual(["accept"]);
+  });
+
   test("y, Y and n answer the request", async () => {
     const app = await open({ session: fakeSession({ projection: withApproval() }) });
     expect(app.hints()).toStartWith("y approve · Y always · n decline · j/k threads");

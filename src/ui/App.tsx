@@ -32,6 +32,7 @@ import { useQuestion } from "./useQuestion.ts";
 import { useThreadMenu } from "./useThreadMenu.ts";
 import { editInEditor } from "./editor.ts";
 import { Palette } from "./Palette.tsx";
+import { ApprovalPanel } from "./ApprovalPanel.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
 import { QueuePanel } from "./QueuePanel.tsx";
 import { SecretPanel } from "./SecretPanel.tsx";
@@ -910,7 +911,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   // The mouse in the conversation: stable callbacks, since its rows are memoized.
   const conversationMouse: ConversationMouse = {
-    respond: useEvent((decision: ProviderApprovalDecision) => respond(decision)),
     selectTurn: useEvent((messageId: string) => turns.select(messageId)),
     toggleFold: useEvent((id: string) =>
       setExpandedIds((previous) => {
@@ -1173,6 +1173,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           ) : null}
           {threadId || draft ? (
             <box flexDirection="column" flexShrink={0} marginTop={1} marginLeft={1} marginRight={1}>
+              {pendingApproval && !draft ? (
+                <ApprovalPanel approval={pendingApproval} onRespond={respond} />
+              ) : (
+                <>
               <box
                 border={["left"]}
                 customBorderChars={BAR}
@@ -1235,6 +1239,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               <box height={1} flexShrink={0} border={["left"]} borderColor={composerBarColor} customBorderChars={{ ...NO_BORDER, vertical: "╹" }}>
                 <box height={1} border={["bottom"]} borderColor={colors.element} customBorderChars={{ ...NO_BORDER, horizontal: "▀" }} />
               </box>
+                </>
+              )}
             </box>
           ) : null}
         </box>
