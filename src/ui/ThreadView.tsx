@@ -10,6 +10,7 @@ import { FindText } from "./FindText.tsx";
 import { Button, Buttons, isLeftClick, isRightClick, useHover } from "./Button.tsx";
 
 import { CommandOutput } from "./CommandOutput.tsx";
+import { BAR } from "./edges.ts";
 import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
@@ -34,9 +35,6 @@ export interface ConversationMouse {
 
 /** The conversation, row for row as the web app derives it (MessagesTimeline.logic). */
 export function ThreadView(props: {
-  readonly project: string;
-  readonly title: string;
-  readonly detail: string;
   readonly timeline: Timeline | null;
   readonly findQuery?: string | undefined;
   readonly findMatch?: OrchestrationV2SearchThreadResult["match"] | undefined;
@@ -59,15 +57,7 @@ export function ThreadView(props: {
   const { timeline, history } = props;
   const pendingIds = new Set<string>(timeline?.pending.approvals.map((approval) => approval.requestId) ?? []);
   return (
-    <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
-      <box flexDirection="row" flexShrink={0} height={1}>
-        <text fg={colors.muted}>{props.project ? `${props.project} / ` : ""}</text>
-        <text fg={colors.text}>
-          <strong>{props.title}</strong>
-        </text>
-        <box flexGrow={1} />
-        <text fg={colors.faint}>{props.detail}</text>
-      </box>
+    <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={2} paddingRight={1} backgroundColor={colors.bg}>
       {props.parent ? (
         <box flexShrink={0} height={1} onMouseDown={() => props.onOpenThread(props.parent!.threadId)}>
           <text fg={colors.accent}>{`↰ ${props.parent.title} (u)`}</text>
@@ -108,10 +98,8 @@ function LoadEarlier({ history, onLoad }: { readonly history: ThreadHistory; rea
 function Divider({ label, color, onPress }: { readonly label: string; readonly color: string; readonly onPress?: (() => void) | undefined }) {
   const [hover, hoverProps] = useHover();
   return (
-    <box flexDirection="row" marginTop={1} {...(onPress ? { ...hoverProps, onMouseDown: (event: MouseEvent) => isLeftClick(event) && onPress() } : {})}>
-      <box flexGrow={1} border={["bottom"]} borderColor={colors.border} height={1} />
+    <box flexDirection="row" justifyContent="center" marginTop={1} {...(onPress ? { ...hoverProps, onMouseDown: (event: MouseEvent) => isLeftClick(event) && onPress() } : {})}>
       <text fg={onPress && hover ? colors.text : color} selectable={!onPress}>{` ${label} `}</text>
-      <box flexGrow={1} border={["bottom"]} borderColor={colors.border} height={1} />
     </box>
   );
 }
@@ -157,14 +145,19 @@ const Row = memo(function Row(props: {
     case "attempt-fold":
       // The finished turn's work, folded: the web's turn separator.
       return (
-        <Toggle onPress={() => mouse.toggleFold(row.kind === "turn-fold" ? row.runId : row.attemptId)} border>
-          {(hover) => <text fg={hover ? colors.text : colors.muted} selectable={false}>{`${row.label} ${row.expanded ? "⌄" : "›"}`}</text>}
+        <Toggle onPress={() => mouse.toggleFold(row.kind === "turn-fold" ? row.runId : row.attemptId)}>
+          {(hover) => <text fg={hover ? colors.text : colors.faint} selectable={false}>{`${row.label} ${row.expanded ? "⌄" : "›"}`}</text>}
         </Toggle>
       );
     case "work-toggle":
       return (
         <Toggle onPress={() => mouse.toggleFold(row.groupId)}>
-          {(hover) => <text fg={row.hasFailure ? colors.bad : hover ? colors.text : colors.muted} selectable={false}>{`${SUMMARY_GLYPH[row.summaryKind] ?? "•"} ${row.summary} ${row.expanded ? "⌄" : "›"}`}</text>}
+          {(hover) => (
+            <text fg={hover ? colors.text : colors.muted} selectable={false}>
+              <span fg={row.hasFailure ? colors.bad : hover ? colors.text : colors.faint}>{SUMMARY_GLYPH[row.summaryKind] ?? "•"}</span>
+              {` ${row.summary} ${row.expanded ? "⌄" : "›"}`}
+            </text>
+          )}
         </Toggle>
       );
     case "work":
@@ -185,7 +178,12 @@ const Row = memo(function Row(props: {
     case "working": {
       const since = props.workStartedAt ? Date.parse(props.workStartedAt) : NaN;
       const verb = row.compacting ? "Compacting" : "Working";
-      return <text marginTop={1} fg={colors.info}>{Number.isFinite(since) ? `◐ ${verb} for ${formatWorkingDurationLabel(props.now - since)}` : `◐ ${verb}…`}</text>;
+      return (
+        <text marginTop={1} fg={colors.muted}>
+          <span fg={colors.info}>◐</span>
+          {Number.isFinite(since) ? ` ${verb} for ${formatWorkingDurationLabel(props.now - since)}` : ` ${verb}…`}
+        </text>
+      );
     }
     case "thinking":
       return <text marginTop={1} fg={colors.faint}>∴ Thinking…</text>;
@@ -194,7 +192,7 @@ const Row = memo(function Row(props: {
     case "proposed-plan":
       if (props.findQuery) return <FindText segments={findTextSegments(row.proposedPlan.planMarkdown)} query={props.findQuery} activeOccurrence={props.activeOccurrence} scrollRef={props.scrollRef} />;
       return (
-        <box marginTop={1} border borderStyle="rounded" borderColor={colors.plan} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <box marginTop={1} border={["left"]} customBorderChars={BAR} borderColor={colors.plan} backgroundColor={colors.element} flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
           <text fg={colors.plan}>
             <strong>Plan</strong>
           </text>
@@ -204,7 +202,12 @@ const Row = memo(function Row(props: {
     case "event":
       return <EventRow item={row.projectedItem.item} pending={props.pending} onRespond={mouse.respond} />;
     case "worktree-setup":
-      return <text marginTop={1} fg={colors.info}>◐ Setting up worktree…</text>;
+      return (
+        <text marginTop={1} fg={colors.muted}>
+          <span fg={colors.info}>◐</span>
+          {" Setting up worktree…"}
+        </text>
+      );
     default:
       // assistant-meta, html-render, mcp-app: nothing a terminal can show.
       return null;
@@ -214,7 +217,7 @@ const Row = memo(function Row(props: {
 const USER_FOLD_LINES = 8;
 const USER_FOLD_CHARS = 600;
 
-/** The web's user bubble: right-aligned, at most 80% wide, folded past 8 lines or 600 characters. */
+/** Your message: a full-width raised block, folded past 8 lines or 600 characters. */
 function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly text: string; readonly messageId: string; readonly selected: boolean; readonly onSelect: () => void; readonly onMenu: () => void }) {
   const [hover, hoverProps] = useHover();
   const trimmed = text.trim();
@@ -223,7 +226,7 @@ function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly
   if (shown.length > USER_FOLD_CHARS) shown = `${shown.slice(0, USER_FOLD_CHARS).trimEnd()}…`;
   const folded = shown.length < trimmed.length;
   return (
-    <box id={`turn-${messageId}`} border={selected ? ["left"] : []} borderColor={colors.accent} marginTop={1} alignSelf="flex-end" maxWidth="80%" backgroundColor={hover && !selected ? colors.selectedBg : colors.userBg} paddingLeft={1} paddingRight={1} flexDirection="column" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu() : isLeftClick(event) ? onSelect() : undefined)}>
+    <box id={`turn-${messageId}`} border={["left"]} customBorderChars={BAR} borderColor={selected ? colors.accent : colors.border} marginTop={1} backgroundColor={hover ? colors.elementHover : colors.element} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu() : isLeftClick(event) ? onSelect() : undefined)}>
       <text fg={colors.text}>{shown}</text>
       {folded ? <text fg={colors.faint}>{`… ${Math.max(1, lines.length - shown.split("\n").length)} more lines`}</text> : null}
     </box>
@@ -261,16 +264,29 @@ function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu
   const projected = entry.projectedItem;
   const failed = workEntryDisplayIndicatesToolFailure(entry);
   const child = childThreadOf(entry);
-  const tone = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : entry.tone === "thinking" ? colors.faint : colors.muted;
+  const glyphColor = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : colors.faint;
   const clickable = Boolean(command || child);
-  const text = <text fg={clickable && hover ? colors.text : tone} selectable={!clickable}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}${child ? "  ↗" : ""}`}</text>;
+  const labelColor = clickable && hover ? colors.text : entry.tone === "thinking" ? colors.faint : colors.muted;
+  const text = (
+    <text fg={labelColor} selectable={!clickable}>
+      <span fg={clickable && hover ? colors.text : glyphColor}>{failed ? "✕" : glyphFor(entry)}</span>
+      {` ${firstLine(label)}${child ? "  ↗" : ""}`}
+    </text>
+  );
   const source = projected ? { threadId: projected.sourceThreadId, itemId: projected.sourceItemId } : null;
   const streaming = expanded && streamCommandOutput && source !== null;
   if (command) return <box flexDirection="column">
     <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu({ kind: "command", command: command.input, output: command.output ?? "", omitted: command.outputOmitted === true, source }) : isLeftClick(event) ? setExpanded(!expanded) : undefined)}><text fg={colors.faint} selectable={false}>{expanded ? "⌄ " : "› "}</text>{text}</box>
-    {streaming ? <CommandOutput session={session} threadId={source.threadId} itemId={source.itemId} scrollRef={scrollRef} />
-      : expanded && command.outputOmitted ? <OmittedOutput session={session} source={source} />
-      : expanded ? <text fg={colors.muted}>{command.output || "No output."}</text> : null}
+    {expanded ? (
+      <box border={["left"]} customBorderChars={BAR} borderColor={colors.border} backgroundColor={colors.element} flexDirection="column" marginTop={1} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
+        <text fg={colors.text}>{`$ ${command.input}`}</text>
+        <box flexDirection="column" marginTop={1}>
+          {streaming ? <CommandOutput session={session} threadId={source.threadId} itemId={source.itemId} scrollRef={scrollRef} />
+            : command.outputOmitted ? <OmittedOutput session={session} source={source} />
+            : <text fg={colors.muted}>{command.output || "No output."}</text>}
+        </box>
+      </box>
+    ) : null}
   </box>;
   return child ? <box {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onOpenThread(child)}>{text}</box> : text;
 }
@@ -284,7 +300,7 @@ export function childThreadOf(entry: WorkLogEntry): ThreadId | null {
 function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision: ProviderApprovalDecision) => void; readonly item: MessagesTimelineRow extends infer R ? (R extends { kind: "event"; projectedItem: { item: infer I } } ? I : never) : never; readonly pending: boolean }) {
   if (item.type === "approval_request" && pending) {
     return (
-      <box marginTop={1} border borderStyle="rounded" borderColor={colors.warn} flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <box marginTop={1} border={["left"]} customBorderChars={BAR} borderColor={colors.warn} backgroundColor={colors.element} flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
         <text fg={colors.warn}>
           <strong>{approvalTitle(item.requestKind)}</strong>
         </text>
@@ -304,7 +320,12 @@ function EventRow({ item, pending, onRespond }: { readonly onRespond: (decision:
     case "notice":
       return <text marginTop={1} fg={toneColor(block.tone)}>{block.text}</text>;
     case "tool":
-      return <text marginTop={1} fg={toneColor(block.tone)}>{`${block.icon} ${block.label}`}</text>;
+      return (
+        <text marginTop={1} fg={colors.muted}>
+          <span fg={toneColor(block.tone)}>{block.icon}</span>
+          {` ${block.label}`}
+        </text>
+      );
     case "approval":
       return <text marginTop={1} fg={colors.muted}>{`Approval requested: ${block.title}`}</text>;
     case "question":
@@ -329,10 +350,10 @@ function eventRequestId(row: Extract<MessagesTimelineRow, { kind: "event" }>): s
 }
 
 /** A folded turn or work group: a click opens or closes just this one. */
-function Toggle({ onPress, border, children }: { readonly onPress: () => void; readonly border?: boolean; readonly children: (hover: boolean) => React.ReactNode }) {
+function Toggle({ onPress, children }: { readonly onPress: () => void; readonly children: (hover: boolean) => React.ReactNode }) {
   const [hover, hoverProps] = useHover();
   return (
-    <box marginTop={1} flexDirection="row" {...(border ? { border: ["bottom"] as const, borderColor: colors.border } : {})} {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onPress()}>
+    <box marginTop={1} flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onPress()}>
       {children(hover)}
     </box>
   );

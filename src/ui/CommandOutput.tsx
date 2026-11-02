@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import type { T3Session } from "../client/session.ts";
 import { colors } from "./theme.ts";
 
-/** Only expanded command rows in the viewport subscribe; the server bounds the output tail. */
+/** Only expanded command rows in the viewport subscribe; the server bounds the output tail. The row's element block gives the padding. */
 export function CommandOutput(props: { readonly session: T3Session; readonly threadId: ThreadId; readonly itemId: TurnItemId; readonly scrollRef: RefObject<ScrollBoxRenderable | null> }) {
   const box = useRef<BoxRenderable | null>(null);
   const [visible, setVisible] = useState(false);
@@ -28,7 +28,7 @@ export function CommandOutput(props: { readonly session: T3Session; readonly thr
     return props.session.watchCommandOutput(props.threadId, props.itemId, setView, setError);
   }, [props.session, props.threadId, props.itemId, visible]);
   const lines = view ? terminalOutputPlainText(view.output.text).trimEnd().split("\n") : [];
-  return <box ref={box} flexDirection="column" paddingLeft={2}>
+  return <box ref={box} flexDirection="column">
     {error ? <text fg={colors.bad}>{`Could not load output: ${error}`}</text> : null}
     {view?.output.truncated || lines.length > 12 ? <text fg={colors.faint}>Earlier output not shown</text> : null}
     <text fg={colors.muted}>{lines.slice(-12).join("\n") || (view ? view.running ? "Waiting for output…" : "No output." : "Loading output…")}</text>
