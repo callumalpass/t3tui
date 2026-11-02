@@ -10,6 +10,8 @@ const DARK = {
   panel: "#141414",
   /** Raised blocks on a panel or the background: the composer, your messages, tool output. */
   element: "#1e1e1e",
+  /** A raised block under the pointer: one step up from element. */
+  elementHover: "#282828",
   border: "#3c3c3c",
   borderFocused: "#5c9cf5",
   text: "#eeeeee",
@@ -40,6 +42,7 @@ const LIGHT: Palette = {
   bg: "#ffffff",
   panel: "#f5f5f5",
   element: "#ebebeb",
+  elementHover: "#e1e1e1",
   border: "#d4d4d4",
   borderFocused: "#3b7dd8",
   text: "#1a1a1a",
@@ -81,15 +84,17 @@ let markdownStyle: SyntaxStyle | undefined;
 export function getMarkdownStyle(): SyntaxStyle {
   markdownStyle ??= SyntaxStyle.fromStyles({
     default: { fg: colors.text },
-    "markup.heading": { fg: colors.accent, bold: true },
+    "markup.heading": { fg: colors.text, bold: true },
     "markup.strong": { bold: true },
     "markup.italic": { italic: true },
     "markup.strikethrough": { dim: true },
-    "markup.link": { fg: colors.user, underline: true },
-    "markup.link.label": { fg: colors.user },
-    "markup.link.url": { fg: colors.faint, underline: true },
+    // The renderer appends " (url)" after a link's text even with conceal on, and offers
+    // no way to hide it; keep the text as the link and the rest as quiet as it can be.
+    "markup.link": { fg: colors.faint },
+    "markup.link.label": { fg: colors.accent, underline: true },
+    "markup.link.url": { fg: colors.faint },
     "markup.quote": { fg: colors.muted, italic: true },
-    "markup.raw": { fg: colors.warn },
+    "markup.raw": { fg: colors.plan },
     "markup.raw.block": { fg: colors.text },
   });
   return markdownStyle;
