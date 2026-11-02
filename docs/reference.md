@@ -27,8 +27,9 @@ Any mode:
 | Key | Action |
 | --- | --- |
 | `ctrl+k` | command palette: every action below, plus thread search |
-| `ctrl+j` | open the thread's terminal in the pane (see [Terminals](#terminals)) |
-| `ctrl+\` | with the pane open: move the keys between it and the conversation |
+| `ctrl+j` | show or hide the thread's terminal drawer (see [Terminals](#terminals)) |
+| `ctrl+\` | with a terminal or editor open: move the keys between it and the conversation |
+| `alt+1`–`alt+9` | with the terminal drawer showing: switch to that terminal tab |
 | `ctrl+n` / `ctrl+p` (or `alt+↓`/`alt+↑`) | next / previous thread |
 | `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation (`ctrl+u`/`ctrl+d` only in navigation; while typing they edit the text) |
 | `ctrl+c` | quit |
@@ -42,7 +43,7 @@ Navigation:
 | `a` | attach a file to the next message (see [Attachments](#attachments)) |
 | `.` | thread actions (see [Thread actions](#thread-actions)); a right-click on a thread opens them too |
 | `m` | model, options (reasoning, fast mode…) and access mode |
-| `T` | terminals: open in the pane, attach full screen, new, close or clear |
+| `T` | terminals: open one in the drawer, attach full screen, new, close or clear |
 | `b` | branches and worktrees: switch, create, pull or remove |
 | `E` | open the workspace (or diff file) in the server's editor |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
@@ -58,10 +59,11 @@ Navigation:
 | `f` | find in the open thread; `enter` / `shift+enter` or `ctrl+n` / `ctrl+p` move between matches, `esc` closes |
 | `A` | show archived threads / return to active threads |
 | `J` / `K` | move the selected pinned thread down / up |
-| `d` | show or hide thread details (kept for the next run) |
+| `d` | show or hide the right-hand column: thread details, and an editor or terminal tab when one is open (kept for the next run) |
+| `{` / `}` | previous / next tab in the right-hand column |
 | `B` | hide or show the thread list (kept for the next run) |
 | `P` | show the thread's linked pull request |
-| `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `o` edits the selected changed file in the pane, `t` turns an automation on or off, `esc` comes back |
+| `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `o` edits the selected changed file in the column's Editor tab, `t` turns an automation on or off, `esc` comes back |
 | `u` | go to the parent thread (from a fork or subagent) |
 | `:` | command palette |
 | `z` | show the Settled and Snoozed sections; `Show more settled threads` in the palette loads older rows |
@@ -74,7 +76,7 @@ Navigation:
 
 `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run; the `followUpBehavior` setting swaps the two. With an approval pending, a typed message declines it with your feedback.
 
-`shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`) in the terminal pane; save and quit to bring it back.
+`shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`) in the message box's place; save and quit to bring it back.
 
 `ctrl+v` attaches the clipboard's image, or pastes its text when there is no image. Pasting or dropping the path of an image file (quoted, as a `file://` URL, or with `\ ` before spaces) attaches the file rather than typing the path. See [Attachments](#attachments).
 
@@ -101,7 +103,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Conversation:** each finished turn's work folds into one line (`Worked for 3m 12s`), your messages sit in a raised block with a bar down the left, and a running turn shows its live step and `Working for 12s`. Replies render as markdown while they stream, tables included, and settle into their final form when done; at the bottom the newest line stays in view, and scrolled up the text you're reading stays put. Threads open scrolled to the bottom. Long threads load as a window of recent turns; press `o` for older ones.
 - **Turns:** `[`/`]` select a turn and mark its prompt. `R` or `Revert to this turn` asks `Edit from here?`, then rewinds the chat and returns the prompt to the message box, keeping file changes. `Revert files too` in the palette also restores files, including your own edits. Stop a running turn first. Rewinding messages with attachments still needs the app.
 - **Command output:** expand work with `e` / `Expand all work`, or click a command. Output streams while its expanded row is in view; collapsing it, scrolling away or opening another thread stops it.
-- **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation.
+- **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation. While a file is open in an editor, or with terminals placed at the side, the column has a tab for each, with a strip of tabs at its top: click one, or step through them with `{` and `}`.
 - **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes in place of the conversation: side by side when the conversation is at least 140 columns wide, unified otherwise. `Toggle split diff` in the palette switches between the two for the rest of the session. `D` (or `View changes from this turn`) reviews a turn's checkpoint; `View all changes in this thread` reviews the whole thread. `j`/`k` scroll, `[`/`]` choose a file, and `esc` closes. In uncommitted diffs, `x` or `enter` shows the whole file, including unchanged lines; press it again to collapse. Diffs of past checkpoints show only the changed lines.
 - **Git:** the branch section offers the quick action (`Commit & push`, `Push`, `Create PR`…) and a menu of the rest. Every action asks first, says when you are on the default branch, and takes an optional commit message (leave it blank and T3 writes one). Progress shows on the bottom line.
 - **Pull requests:** `P` shows a linked pull request in place of the conversation (with several, you pick one): its state, author and branches, description, checks, reviews, recent comments and the review guide when one was written. `j`/`k` scroll, `o` opens it in the browser, `r` refreshes it, and `esc` closes it. From there, `c` comments and `R` reviews (approve / request changes / comment) in `$EDITOR`, `a` offers the host's actions (merge, close, ready…) behind a confirmation, `w` watches or stops watching, and `u` unlinks it. `Link pull request to thread` in the palette links one by URL or number, and `New thread from pull request…` checks one out into a draft in the project folder or its own worktree.
@@ -116,11 +118,11 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 
 ## Mouse
 
-- **Select and copy:** drag across any text, in the conversation or the terminal pane, to select it; it's copied when you let go (through the terminal with OSC 52, and the desktop clipboard locally) and `Copied` shows at the bottom. A program in the pane that takes the mouse itself, like an editor with mouse support, gets the drag instead. A single click still does what it did. A key press clears the highlight. Your terminal's own selection still works with shift held.
+- **Select and copy:** drag across any text, in the conversation or a terminal or editor, to select it; it's copied when you let go (through the terminal with OSC 52, and the desktop clipboard locally) and `Copied` shows at the bottom. A program in a terminal or editor that takes the mouse itself, like an editor with mouse support, gets the drag instead. A single click still does what it did. A key press clears the highlight. Your terminal's own selection still works with shift held.
 - **Buttons:** approvals, questions (click an option), secret requests, confirmations, queued messages (click one to send it now, edit or remove it), attached files (✕ removes one) and the PR view have buttons, each with its key beside it. Every hint along the bottom that names one key is clickable, and so is `commands` at the top.
-- **Conversation:** a click on a prompt selects that turn, as `[`/`]` do; a click on a folded turn or work group opens just that one; a click on a command shows its output; "Load earlier turns" loads them. In a reply, links are underlined in the accent colour and a click opens them in the browser (`xdg-open`, or `open` on macOS); a click on a path to a file in the workspace, like `src/ui/App.tsx:12`, opens it in the editor pane. In a diff, a click on a file selects it and a second click shows the whole file. In the PR view, the URL opens in the browser.
+- **Conversation:** a click on a prompt selects that turn, as `[`/`]` do; a click on a folded turn or work group opens just that one; a click on a command shows its output; "Load earlier turns" loads them. In a reply, links are underlined in the accent colour and a click opens them in the browser (`xdg-open`, or `open` on macOS); a click on a path to a file in the workspace, like `src/ui/App.tsx:12`, opens it in the right-hand column's Editor tab. In a diff, a click on a file selects it and a second click shows the whole file. In the PR view, the URL opens in the browser.
 - **Right-click menus:** on a thread (its actions), a prompt (copy, view its changes, revert), a reply (copy), a command (copy the command or its output) and the PR view (its actions).
-- **Panes:** clicking the conversation takes the keys out of the message box or details; clicking the message box types. The wheel scrolls the conversation, the thread list (without moving the selection) and the palette. Drag the thread list's right edge, or the details column's left edge, to resize it; right-click the edge to reset it.
+- **Panes:** clicking the conversation takes the keys out of the message box or details; clicking the message box types. The wheel scrolls the conversation, the thread list (without moving the selection) and the palette. Drag the thread list's right edge, the right-hand column's left edge or the terminal drawer's top edge to resize it; right-click the edge to reset it.
 
 ## Thread actions
 
@@ -157,11 +159,15 @@ Limits: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other 
 
 ## Terminals
 
-`ctrl+j` opens the thread's terminal on the T3 server, the same one the app's terminal drawer shows, in the pane on the right. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. The pane takes the details column's place and width (drag its edge to resize it); on a terminal too narrow for both, it takes the conversation's place.
+`ctrl+j` opens the thread's terminal on the T3 server in a drawer between the conversation and the message box, as the app's terminal drawer does; `ctrl+j` again hides it. If the thread has none, it starts one in the thread's worktree or project folder. The drawer takes 40% of the conversation's height at first; drag its top edge to resize it (the height is kept for the next run) and right-click the edge to reset it. On a window too short to leave the conversation 10 rows, the drawer takes the conversation's place.
 
-While the pane has focus, every key goes to its program, `esc` included, apart from `ctrl+\`, which gives the keys back to the conversation. `ctrl+\` again, or a click on the pane, returns them; the pane's left edge shows the accent while it has them. The pane follows its size, and so does the terminal on the server: its size is shared, so it resizes for anyone else watching. When the shell exits, the pane closes; `Close the terminal pane` in the palette detaches without stopping it.
+Each of the thread's terminals has a tab at the top of the drawer: click one, or press `alt+1`–`alt+9` while the drawer shows, to switch; `+` starts another. A terminal that closes or exits takes its tab away, and the last one the drawer. Each thread keeps its own drawer, so another thread shows its own terminals, and `ctrl+j` brings back the one you last had.
 
-The same pane runs `$VISUAL` or `$EDITOR` (falling back to `vi`) on this machine: `ctrl+g` writes the message there, and `o` on a file under Changes in the details panel (or its `▸ Edit`) opens that file, when the workspace is on this machine. An open editor isn't replaced by anything else; quit it first.
+While the drawer has focus, every key goes to its program, `esc` included, apart from `ctrl+\`, which gives the keys back to the conversation, `ctrl+j`, which hides the drawer, and `alt+1`–`alt+9`. `ctrl+\` again, or a click on the drawer, returns them; its left edge shows the accent while it has them. The terminal follows the drawer's size, and so does the terminal on the server: its size is shared, so it resizes for anyone else watching. `Hide the terminal` in the palette detaches without stopping it.
+
+`Move terminal to the side` in the palette puts terminals in a Terminal tab of the right-hand column instead, with the same tabs at its top; `Move terminal below` puts them back. The choice is kept for the next run.
+
+`$VISUAL` or `$EDITOR` (falling back to `vi`) runs on this machine in the same way: `ctrl+g` writes the message in it, in the message box's place, and `o` on a file under Changes in the details panel (or its `▸ Edit`), or a click on a workspace path in a reply, opens that file in the right-hand column's Editor tab, when the workspace is on this machine. When the editor exits, its tab closes and the column goes back to Details, or hides again if the editor is what showed it. An open editor isn't replaced by another file; quit it first. `ctrl+\` moves the keys between whichever of these has them and the conversation.
 
 `T` opens the terminal picker even with only one terminal. Choose `New terminal`, `Attach full screen` (the whole screen goes to the terminal until `ctrl+j` or `ctrl+]`), `Close terminal…` or `Clear terminal…`; typing `close` or `clear` finds each terminal's action directly. Closing ends the shell and deletes its history; clearing clears its scrollback. These are in the command palette too.
 
