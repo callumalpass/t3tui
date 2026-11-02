@@ -1,0 +1,99 @@
+# Pushing a tag like v0.1.0 builds a binary per platform, runs each on its own OS, and
+# publishes them as a GitHub Release for install.sh and `t3tui upgrade`. Run it by hand
+# to build and check the binaries without releasing them.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(jq -r .version package.json)
+          [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME doesn't match package.json version $version"; exit 1; }
+      # Every platform's OpenTUI package, so one machine can compile them all.
+      - run: bun install --frozen-lockfile --os='*' --cpu='*'
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun test
+      - run: bun run compile linux-x64 linux-arm64 darwin-x64 darwin-arm64
+      - name: Compress and checksum
+        working-directory: release
+        run: |
+          gzip -9 t3tui-*
+          sha256sum t3tui-*.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, target: linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: linux-arm64 }
+          - { runner: macos-15-intel, target: darwin-x64 }
+          - { runner: macos-15, target: darwin-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+      - run: gunzip -c t3tui-${{ matrix.target }}.gz > t3tui && chmod +x t3tui && ./t3tui version
+      # The dashboard loads OpenTUI's native library. With no server it should keep retrying, not exit.
+      - name: Open the dashboard
+        env:
+          T3TUI_SERVER: http://127.0.0.1:9
+          TERM: xterm-256color
+        run: |
+          # script gives it a terminal; the sleep holds script's input open so it doesn't hang up.
+          if [ "$RUNNER_OS" = macOS ]; then (sleep 60 | script -q out.txt ./t3tui >/dev/null) & else (sleep 60 | script -qec ./t3tui out.txt >/dev/null) & fi
+          sleep 5
+          kill -0 $! || { cat out.txt; echo "t3tui exited early"; exit 1; }
+          grep -q "Waiting for threads" out.txt || { cat out.txt; echo "the dashboard didn't draw"; exit 1; }
+          kill $!
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: smoke
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit=$(git rev-parse HEAD:vendor/t3code)
+          t3code=$(git ls-remote --tags https://github.com/pingdotgg/t3code.git | awk -v c="$commit" '$1 == c { sub("refs/tags/", "", $2); print $2; exit }')
+          cat > notes.md <<EOF
+          Built against T3 Code \`${t3code:-$commit}\`.
+
+          Install: \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\`
+          Already installed: \`t3tui upgrade\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes
