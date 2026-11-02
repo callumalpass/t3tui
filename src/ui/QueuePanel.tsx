@@ -2,6 +2,7 @@ import type { MouseEvent } from "@opentui/core";
 
 import type { QueuedMessage } from "../model/queue.ts";
 import { Button, Buttons, isLeftClick, useHover } from "./Button.tsx";
+import { BAR } from "./edges.ts";
 import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
@@ -26,9 +27,9 @@ export function QueuePanel(props: { readonly queued: readonly QueuedMessage[]; r
   const { queued, focus } = props;
   const start = focus === null ? 0 : Math.max(0, Math.min(focus - 1, queued.length - VISIBLE_ROWS));
   const shown = queued.slice(start, start + VISIBLE_ROWS);
-  const inner = Math.max(10, props.width - 8);
+  const inner = Math.max(10, props.width - 7);
   return (
-    <box border borderStyle="rounded" borderColor={focus === null ? colors.border : colors.borderFocused} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={1} paddingRight={1}>
+    <box border={["left"]} customBorderChars={BAR} borderColor={focus === null ? colors.border : colors.accent} backgroundColor={colors.panel} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={2} paddingRight={1}>
       <box flexDirection="row" columnGap={1}>
         <text fg={colors.muted}>{`${queued.length} queued${props.held ? " · held after the interrupt" : ""}`}</text>
         {props.held && actions.resume ? <Button label="Send them now" shortcut="enter" color={colors.accent} onPress={actions.resume} /> : null}

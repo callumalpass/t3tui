@@ -1,5 +1,6 @@
 import type { ComposerItem } from "../model/composerMenu.ts";
 import { ClickRow } from "./Button.tsx";
+import { BAR } from "./edges.ts";
 import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
@@ -12,9 +13,9 @@ const MAX_ROWS = 8;
 export function ComposerMenu(props: { readonly items: readonly ComposerItem[]; readonly selected: number; readonly empty: string; readonly width: number; readonly onPick: (index: number) => void }) {
   const { items, selected } = props;
   const start = Math.max(0, Math.min(selected - Math.floor(MAX_ROWS / 2), items.length - MAX_ROWS));
-  const inner = Math.max(10, props.width - 4);
+  const inner = Math.max(10, props.width - 3);
   return (
-    <box border borderStyle="rounded" borderColor={colors.border} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} backgroundColor={colors.panel}>
+    <box border={["left"]} customBorderChars={BAR} borderColor={colors.accent} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} backgroundColor={colors.panel}>
       {items.length === 0 ? (
         <text fg={colors.muted} paddingLeft={1}>
           {props.empty}

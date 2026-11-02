@@ -4,6 +4,7 @@ import { isPendingUserInputOptionSelected, type PendingUserInputDraftAnswer } fr
 import type { MouseEvent } from "@opentui/core";
 
 import { Button, Buttons, isLeftClick, useHover } from "./Button.tsx";
+import { BAR } from "./edges.ts";
 import { colors } from "./theme.ts";
 
 /**
@@ -24,7 +25,7 @@ export function QuestionPanel(props: {
   if (!question) return null;
   const total = request.questions.length;
   return (
-    <box border borderStyle="rounded" borderColor={colors.input} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={1} paddingRight={1}>
+    <box border={["left"]} customBorderChars={BAR} borderColor={colors.accent} backgroundColor={colors.panel} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={2} paddingRight={1}>
       <box flexDirection="row">
         <text fg={colors.input}>
           <strong>{question.header}</strong>
@@ -51,7 +52,7 @@ export function QuestionPanel(props: {
 function Option(props: { readonly label: string; readonly description?: string | undefined; readonly prefix: string; readonly selected: boolean; readonly onPick: () => void }) {
   const [hover, hoverProps] = useHover();
   return (
-    <box flexDirection="row" backgroundColor={hover ? colors.hoverBg : "transparent"} {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && props.onPick()}>
+    <box flexDirection="row" backgroundColor={props.selected ? colors.selectedBg : hover ? colors.hoverBg : "transparent"} {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && props.onPick()}>
       <text fg={props.selected ? colors.input : colors.faint} selectable={false}>{props.prefix}</text>
       <text fg={props.selected ? colors.text : colors.muted} selectable={false}>{props.label}</text>
       <text fg={colors.faint} selectable={false}>{props.description ? `  ${props.description}` : ""}</text>

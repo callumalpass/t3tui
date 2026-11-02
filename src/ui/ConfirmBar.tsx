@@ -1,4 +1,5 @@
 import { Button, Buttons } from "./Button.tsx";
+import { BAR } from "./edges.ts";
 import { colors } from "./theme.ts";
 
 /** An action that waits for you to say yes: git actions, stopping a server, running an automation. */
@@ -15,7 +16,7 @@ export interface Confirmation {
 export function ConfirmBar(props: { readonly confirmation: Confirmation; readonly message: string; readonly onMessage: (value: string) => void; readonly onSubmit: () => void; readonly onCancel: () => void }) {
   const { confirmation } = props;
   return (
-    <box border borderStyle="rounded" borderColor={colors.warn} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={1} paddingRight={1}>
+    <box border={["left"]} customBorderChars={BAR} borderColor={colors.warn} backgroundColor={colors.panel} flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1} paddingLeft={2} paddingRight={1}>
       <text fg={colors.warn}>
         <strong>{confirmation.title}</strong>
       </text>
