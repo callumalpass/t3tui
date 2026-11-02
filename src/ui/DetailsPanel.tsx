@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { MAX_DETAIL_FILES, type ChangedFile, type DetailsAction, type DetailsFold, type LineageLine, type ThreadDetails } from "../model/details.ts";
 import { Button, ClickRow } from "./Button.tsx";
 import { truncate } from "./text.ts";
-import { colors, statusColor } from "./theme.ts";
+import { colors, scrollbarOptions, statusColor } from "./theme.ts";
 
 /** Rows stay readable when the panel takes the conversation's place on a narrow terminal. */
 const IN_PLACE_MAX_WIDTH = 64;
@@ -46,7 +46,7 @@ export function DetailsPanel(props: {
       overflow="hidden"
       backgroundColor={colors.panel}
     >
-      <scrollbox flexGrow={1} minHeight={0} paddingLeft={1} paddingRight={1}>
+      <scrollbox flexGrow={1} minHeight={0} paddingLeft={1} paddingRight={1} scrollbarOptions={scrollbarOptions()}>
         {!details ? (
           <text fg={colors.faint}>{props.empty ?? "No thread selected."}</text>
         ) : (

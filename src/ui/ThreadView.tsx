@@ -18,7 +18,7 @@ import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
 import { firstLine, truncate } from "./text.ts";
-import { colors, toneColor, useMarkdownStyle } from "./theme.ts";
+import { colors, scrollbarOptions, toneColor, useMarkdownStyle } from "./theme.ts";
 
 /** What a right-click in the conversation was on. */
 export type ConversationTarget =
@@ -74,7 +74,7 @@ export function ThreadView(props: {
         </box>
       ) : null}
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
-      <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
+      <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom" scrollbarOptions={scrollbarOptions()}>
         {/* Prose stops at reading width on wide terminals; the composer below stays full width. */}
         <box flexDirection="column" maxWidth={CONTENT_WIDTH}>
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}

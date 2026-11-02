@@ -4,7 +4,7 @@ import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
 import type { RefObject } from "react";
 
 import { isLeftClick, useHover } from "./Button.tsx";
-import { colors, useMarkdownStyle } from "./theme.ts";
+import { colors, scrollbarOptions, useMarkdownStyle } from "./theme.ts";
 
 export interface DiffState {
   readonly cwd: string;
@@ -37,7 +37,7 @@ export function DiffView(props: { readonly diff: DiffState; readonly split: bool
       {diff.status === "error" ? <text fg={colors.bad} flexShrink={0}>{`Could not load the diff: ${diff.error ?? "unknown error"}`}</text> : null}
       {diff.status === "ready" && files.length === 0 ? <text fg={colors.muted} flexShrink={0}>No changes.</text> : null}
       {diff.truncated ? <text fg={colors.warn} flexShrink={0}>The diff was too large and is cut short.</text> : null}
-      <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
+      <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0} scrollbarOptions={scrollbarOptions()}>
         {files.map((file, index) => (
           <box key={file.path} id={`diff-file-${index}`} flexDirection="column" marginTop={1}>
             <FileHeader path={file.path} selected={index === props.selected} canExpand={diff.source !== undefined} onPress={() => props.onFile(index)} />

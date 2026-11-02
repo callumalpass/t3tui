@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { RGBA } from "@opentui/core";
+
+import { applyTheme, colors } from "../../src/ui/theme.ts";
 import { withReply } from "./fixtures.ts";
 import { fakeSession, renderApp } from "./harness.tsx";
 
@@ -8,6 +11,7 @@ const open = async (...args: Parameters<typeof renderApp>) => (app = await rende
 afterEach(() => {
   app?.destroy();
   app = null;
+  applyTheme("dark");
 });
 
 const table = "| Name | Value |\n| --- | --- |\n| alpha | 1 |\n| beta | a longer cell |\n";
@@ -54,4 +58,14 @@ describe("streaming replies", () => {
     await app.settle(30);
     expect(content(app.frame())).toBe(before);
   });
+});
+
+test("a long answer's scrollbar takes the palette's colours, in the light theme too", async () => {
+  applyTheme("light");
+  const app = await open({ session: fakeSession({ projection: withReply(paragraphs(0, 60), false) }) });
+  const backgrounds = new Set<string>();
+  for (const line of app.renderer.currentRenderBuffer.getSpanLines() as unknown as { spans: { bg: RGBA }[] }[]) for (const span of line.spans) backgrounds.add(span.bg.toString());
+  // OpenTUI's own track is a dark grey.
+  expect(backgrounds.has(RGBA.fromHex("#252527").toString())).toBe(false);
+  expect(backgrounds.has(RGBA.fromHex(colors.element).toString())).toBe(true);
 });

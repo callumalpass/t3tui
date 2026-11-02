@@ -162,6 +162,9 @@ export const statusColor = (tone: StatusTone): string => colors[STATUS_COLORS[to
 const TONE_COLORS: Record<Tone, keyof Palette> = { normal: "text", muted: "muted", good: "good", bad: "bad", warn: "warn" };
 export const toneColor = (tone: Tone): string => colors[TONE_COLORS[tone]];
 
+/** A scrollbox's bars in the palette: OpenTUI's own track is dark whatever the theme. */
+export const scrollbarOptions = () => ({ trackOptions: { foregroundColor: colors.muted, backgroundColor: colors.element } });
+
 let markdownStyles = new WeakMap<NativeResourceOwner, SyntaxStyle>();
 
 /** One per renderer: a SyntaxStyle belongs to the renderer's native scene that created it. */
