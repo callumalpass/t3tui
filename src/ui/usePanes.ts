@@ -139,7 +139,6 @@ export function usePanes(deps: {
   };
   /** The message in $EDITOR, in the composer's place. */
   const openMessage = (program: LocalProgram) => {
-    if (message) return enter("message");
     setMessage(program);
     enter("message");
   };

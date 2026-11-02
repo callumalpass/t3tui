@@ -160,7 +160,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   /** Where a drag of the drawer's edge started, and the drawer's height then. */
   const drawerDrag = useRef({ y: 0, height: 0 });
   const [diff, setDiff] = useState<DiffState | null>(null);
-  /** The conversation's height, for the column when it takes that place; and with the drawer under it, for the drawer. */
+  /** The conversation's height, for the column when it takes that place; and the conversation's and drawer's together. */
   const [contentHeight, setContentHeight] = useState(0);
   const [areaHeight, setAreaHeight] = useState(0);
   const [config, setConfig] = useState(props.config);
@@ -583,6 +583,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const openEditor = () => {
     const composer = composerRef.current;
     if (!composer) return;
+    if (panes.message) return panes.enter("message");
     const key = composerKey;
     const file = scratchFile(composerText(composer));
     panes.openMessage({
