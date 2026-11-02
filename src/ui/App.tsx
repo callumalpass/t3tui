@@ -2,17 +2,17 @@ import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRend
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
-import { type DiscoveredLocalServer, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type ThreadId } from "@t3tools/contracts";
+import { type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { ComposerContextRecord, ProjectEntry } from "@t3tools/contracts";
-import type { FeedState, ServerConfigState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
+import type { ComposerContextRecord, OrchestrationV2Subagent, ProjectEntry } from "@t3tools/contracts";
+import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { applyComposerItem, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
-import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
+import { RUNTIME_MODE_LABELS } from "../model/details.ts";
 import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type Picker, type PickerItem } from "../model/palette.ts";
 import { pullRequestRepository } from "../model/pullRequests.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
@@ -24,6 +24,7 @@ import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
 import { DiffView, type DiffState } from "./DiffView.tsx";
 import { DraftView } from "./DraftView.tsx";
+import { useDetails } from "./useDetails.ts";
 import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
 import { useQuestion } from "./useQuestion.ts";
@@ -72,9 +73,8 @@ const VISIT_DELAY_MS = 1_500;
 const MAX_COMPOSER_LINES = 8;
 /** Sections folded to a count unless you filter or press z, like the web sidebar's. */
 const FOLDED_SECTIONS: readonly Section[] = ["snoozed", "settled"];
-/** The details column opens by itself on terminals at least this wide. */
-const DETAILS_AUTO_WIDTH = 160;
 const DETAILS_WIDTH = 38;
+const NO_SUBAGENTS: readonly OrchestrationV2Subagent[] = [];
 /** Below this, the details panel takes the conversation's place instead of a column beside it. */
 const MIN_CONVERSATION_WIDTH = 70;
 
@@ -109,9 +109,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   /** The thread list's width once its border is dragged; null follows the window. */
   const [listWidthPref, setListWidthPref] = useState<number | null>(null);
   const [resizing, setResizing] = useState(false);
-  /** null follows the terminal width; d sets it for the rest of the session. */
-  const [detailsPref, setDetailsPref] = useState<boolean | null>(null);
-  const [detailsSelected, setDetailsSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
   const [config, setConfig] = useState(props.config);
   const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
@@ -217,7 +214,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setDiff(null);
     setSettingsIndex(null);
     newThread.cancel();
-    setDetailsSelected(null);
     setMode((current) => (current === "details" || current === "settings" || current === "pull-request" ? "nav" : current));
   }, []);
 
@@ -282,10 +278,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     if (next) openThread(next.thread.id);
   };
 
-  // Details: git status for the thread's folder, plus the server-wide servers and automations lists.
-  const showDetails = detailsPref ?? width >= DETAILS_AUTO_WIDTH;
   const project = threadShell ? shell.snapshot?.projects.find((candidate) => candidate.id === threadShell.projectId) : undefined;
-  const vcsCwd = threadShell ? detailsCwd(threadShell, project) : null;
   const live = shell.status.type === "live";
   useEffect(() => (live ? session.watchServerConfig(setServerConfig) : undefined), [session, live]);
   // An idle subagent isn't in the shell; its family (root, forks, all subagents) is, on servers that serve it.
@@ -309,23 +302,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       cancelled = true;
     };
   }, [session, unlisted, threadId, supportsFamilies, live]);
-  const [vcs, setVcs] = useState<{ cwd: string; state: VcsState } | null>(null);
-  useEffect(() => {
-    if (!showDetails || !vcsCwd || !live) return;
-    return session.watchVcs(vcsCwd, (state) => setVcs({ cwd: vcsCwd, state }));
-  }, [session, showDetails, vcsCwd, live]);
-  const [servers, setServers] = useState<FeedState<DiscoveredLocalServer> | null>(null);
-  const [automations, setAutomations] = useState<FeedState<ScheduledTask> | null>(null);
-  useEffect(() => {
-    if (!live) return;
-    const stopServers = session.watchServers(setServers);
-    const stopAutomations = session.watchAutomations(setAutomations);
-    return () => {
-      stopServers();
-      stopAutomations();
-    };
-  }, [session, live]);
-  const vcsState = vcs?.cwd === vcsCwd ? vcs.state : null;
   // Fetched family members count as shell threads, so lineage can name idle subagents.
   const detailsSnapshot = useMemo(() => {
     const snapshot = shell.snapshot;
@@ -333,25 +309,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     const listed = new Set(snapshot.threads.map((member) => member.id));
     return { ...snapshot, threads: [...snapshot.threads, ...[...familyShells.values()].filter((member) => !listed.has(member.id))] };
   }, [shell.snapshot, familyShells]);
-  const details = useMemo(
-    () =>
-      threadShell
-        ? threadDetails({
-            thread: threadShell,
-            project,
-            vcs: vcsState,
-            snapshot: detailsSnapshot,
-            subagents: projection?.subagents ?? [],
-            servers: servers?.items ?? [],
-            automations: automations?.items ?? [],
-            now,
-            timestampFormat: config.timestampFormat,
-          })
-        : null,
-    [threadShell, project, vcsState, detailsSnapshot, projection?.subagents, servers, automations, now, config.timestampFormat],
-  );
-  const actions = useMemo(() => (details ? detailsActions(details) : []), [details]);
-
   const say = (text: string, bad = false) => {
     setFlash({ text, bad });
     setTimeout(() => setFlash((value) => (value?.text === text ? null : value)), 4000);
@@ -457,88 +414,26 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   })();
   const automationEditing = useAutomations({ session, renderer, projects: shell.snapshot?.projects ?? [], defaults: automationDefaults, confirm, run, say });
 
-  const openDiff = (path: string | null) => {
-    if (!vcsCwd) return;
-    const cwd = vcsCwd;
-    setDiff({ cwd, path, status: "loading" });
-    session.workingTreeDiff(cwd, path ?? undefined, config.diffIgnoreWhitespace).then(
-      (source) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "ready", patch: source?.diff ?? "", ...(source ? { source: { cwd, sourceKind: source.kind, baseRef: source.baseRef, headRef: source.headRef } } : {}), truncated: source?.truncated ?? false } : value)),
-      (error) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "error", error: messageOf(error) } : value)),
-    );
-  };
-
-  const runGit = (git: GitAction) => {
-    if (!vcsCwd || !threadShell) return;
-    const cwd = vcsCwd;
-    const branch = details?.branch?.name;
-    const onDefault = vcsState?.local?.isDefaultRef === true;
-    confirm({
-      title: `${git.label}?`,
-      detail: `${branch ? `On ${branch}` : "In"} · ${details?.workspace.path ?? cwd}${onDefault && git.action !== "create_pr" ? " · this is the default branch" : ""}`,
-      ...(git.commits ? { message: { placeholder: "Leave blank to have one written for you" } } : {}),
-      confirmLabel: git.label.toLowerCase(),
-      run: (message) => {
-        say(`${git.label}…`);
-        session
-          .runGitAction(
-            { cwd, action: git.action, threadId: threadShell.id, projectId: threadShell.projectId, ...(git.commits && message.trim() ? { commitMessage: message.trim() } : {}) },
-            (event) => {
-              if (event.kind === "phase_started") setFlash({ text: `${event.label}…` });
-              if (event.kind === "hook_started") setFlash({ text: `Running ${event.hookName} hook…` });
-            },
-          )
-          .then(
-            (result) => say(result.toast.description ? `${result.toast.title}: ${result.toast.description}` : result.toast.title),
-            (error) => say(`${git.label} failed: ${messageOf(error)}`, true),
-          );
-      },
-    });
-  };
-
-  const stopServer = (server: DiscoveredLocalServer) =>
-    confirm({
-      title: `Stop ${server.url}?`,
-      ...(server.processName ? { detail: `${server.processName}${server.pid ? ` (pid ${server.pid})` : ""}` } : {}),
-      confirmLabel: "stop",
-      run: () => run("Server stopped", () => session.stopServer(server)),
-    });
-  const runAutomation = (task: ScheduledTask) =>
-    confirm({ title: `Run "${task.title}" now?`, detail: firstLine(task.prompt), confirmLabel: "run", run: () => run("Automation started", () => session.runAutomationNow(task.id)) });
-  const toggleAutomation = (task: ScheduledTask) => run(task.enabled ? "Automation turned off" : "Automation turned on", () => session.setAutomationEnabled(task.id, !task.enabled));
-
-  const activate = (action: DetailsAction) => {
-    setDetailsSelected(action.id);
-    switch (action.kind) {
-      case "diff":
-        return openDiff(action.path);
-      case "git":
-        return runGit(action.git);
-      case "thread":
-        return openThread(action.threadId);
-      case "server":
-        return stopServer(action.server);
-      case "automation":
-        return runAutomation(action.task);
-    }
-  };
-  const activateById = (id: string) => {
-    const action = actions.find((candidate) => candidate.id === id);
-    if (!action) return;
-    if (action.kind !== "thread") setMode("details");
-    activate(action);
-  };
-  const moveDetails = (delta: number) => {
-    if (actions.length === 0) return;
-    const index = actions.findIndex((action) => action.id === detailsSelected);
-    const next = actions[index < 0 ? (delta > 0 ? 0 : actions.length - 1) : Math.min(actions.length - 1, Math.max(0, index + delta))];
-    if (next) setDetailsSelected(next.id);
-  };
-  const focusDetails = () => {
-    if (!threadShell) return;
-    if (!showDetails) setDetailsPref(true);
-    if (!actions.some((action) => action.id === detailsSelected)) setDetailsSelected(actions[0]?.id ?? null);
-    setMode("details");
-  };
+  const panel = useDetails({
+    session,
+    live,
+    width,
+    thread: threadShell,
+    project,
+    snapshot: detailsSnapshot,
+    subagents: projection?.subagents ?? NO_SUBAGENTS,
+    now,
+    config,
+    diff,
+    setDiff,
+    automations: automationEditing,
+    confirm,
+    run,
+    say,
+    progress: (text) => setFlash({ text }),
+    openThread,
+    focus: (focused) => setMode(focused ? "details" : "nav"),
+  });
 
   // Pickers: the palette's overlay over a fixed list.
   const openPicker = (next: Picker) => {
@@ -688,8 +583,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   const scrollPage = (direction: 1 | -1) => scrollRef.current?.scrollBy(direction * Math.max(1, height - 10));
 
-  const turns = useTurns({ session, threadId, projection, timeline: current, config: providerConfig, cwd: vcsCwd, ignoreWhitespace: config.diffIgnoreWhitespace, enabled: draft === null, diff, setDiff, scrollRef, confirm, say,
-    showConversation: () => { setMode("nav"); setDetailsPref((value) => width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value); },
+  const turns = useTurns({ session, threadId, projection, timeline: current, config: providerConfig, cwd: panel.cwd, ignoreWhitespace: config.diffIgnoreWhitespace, enabled: draft === null, diff, setDiff, scrollRef, confirm, say,
+    showConversation: () => { setMode("nav"); panel.setPref((value) => width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value); },
     restorePrompt: (id, text) => {
       const previous = id === activeComposerKey.current ? composerRef.current?.plainText ?? "" : drafts.current.get(id) ?? "";
       const next = text ? previous ? `${previous}\n\n${text}` : text : previous;
@@ -817,12 +712,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const toInput = () => {
     if (hasComposer) setMode("input");
   };
-  const leaveDetails = () => {
-    setDetailsSelected(null);
-    setMode("nav");
-  };
-  const selectedAction = () => actions.find((candidate) => candidate.id === detailsSelected);
-
   // Keys that work wherever there's no line input to type into.
   const quitKey: Binding = { keys: ["ctrl+c"], run: quit };
   const paletteKey: Binding = { keys: ["ctrl+k"], run: openPalette };
@@ -850,7 +739,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const projectKey = newThread.keys?.project;
   const modelKey = models.key;
   const worktreeKey = newThread.keys?.workspace;
-  const detailsKey: Binding = { keys: ["l", "→"], run: focusDetails, hint: "details", ...(threadShell ? { command: { id: "focus-details", title: "Focus thread details" } } : {}) };
+  const detailsKey = panel.keys.focus;
   const cancelDraftKey = newThread.keys?.cancel;
   const navKeys = keys(
     diff && [scrollDiffDown, { keys: ["k", "↑"], run: () => scrollBy(-1) }, closeDiff],
@@ -885,7 +774,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     parent && { keys: ["u"], run: () => openThread(parent.threadId), hint: "parent", command: { id: "parent", title: `Go to parent: ${parent.title}` } },
     hinted(paletteKey, "commands"),
     { keys: ["q"], run: quit, hint: "quit", command: { id: "quit", title: "Quit tui3", keywords: ["exit"] } },
-    { keys: ["d"], run: () => setDetailsPref(!showDetails), command: { id: "details", title: showDetails ? "Hide thread details" : "Show thread details", keywords: ["panel", "info"] } },
+    panel.keys.toggle,
     { keys: ["e"], run: () => setExpandAll((value) => !value), command: { id: "expand", title: expandAll ? "Collapse work" : "Expand all work", keywords: ["fold", "tool calls"] } },
     thread?.history.hasMore && { keys: ["o"], run: loadEarlier, command: { id: "earlier", title: "Load earlier turns", keywords: ["history", "older"] } },
     !attached && { keys: ["z"], run: () => setShowFolded((value) => !value), command: { id: "settled", title: showFolded ? "Hide settled threads" : "Show settled threads", keywords: ["snoozed", "archive"] } },
@@ -908,19 +797,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     queue.keys.input,
     queue.keys.palette,
     (projection?.subagents ?? []).filter((agent) => threadId && canStopSubagent(agent)).map((agent): Binding => ({ keys: [], run: () => run("Stop requested", () => session.stopSubagent(agent)), command: { id: `stop-subagent:${agent.id}`, title: `Stop subagent: ${agent.title ?? "subagent"}`, keywords: ["interrupt", "cancel", "kill"] } })),
-    details?.changes && details.changes.files.length > 0 && { keys: [], run: () => openDiff(null), command: { id: "diff", title: "View uncommitted changes", keywords: ["diff", "changes"] } },
-    actions.flatMap((action): Binding[] => {
-      if (action.kind === "git") return [{ keys: [], run: () => runGit(action.git), command: { id: action.id, title: `Git: ${action.git.label}`, keywords: ["commit", "push", "pull request", "pr"] } }];
-      if (action.kind === "server") return [{ keys: [], run: () => stopServer(action.server), command: { id: action.id, title: `Stop server ${action.server.url}`, keywords: ["port", "kill"] } }];
-      if (action.kind !== "automation") return [];
-      const task = action.task;
-      return [
-        { keys: [], run: () => runAutomation(task), command: { id: action.id, title: `Run automation: ${task.title}`, keywords: ["scheduled", "task"] } },
-        { keys: [], run: () => toggleAutomation(task), command: { id: `${action.id}:toggle`, title: `${task.enabled ? "Turn off" : "Turn on"} automation: ${task.title}`, keywords: ["scheduled", "task", "enable", "disable"] } },
-        { keys: [], run: () => automationEditing.editAutomation(task), command: { id: `${action.id}:edit`, title: `Edit automation: ${task.title}`, keywords: ["scheduled", "task", "editor"] } },
-        { keys: [], run: () => automationEditing.deleteAutomation(task), command: { id: `${action.id}:delete`, title: `Delete automation: ${task.title}`, keywords: ["scheduled", "task", "remove"] } },
-      ];
-    }),
+    panel.keys.commands,
     { keys: [], run: automationEditing.newAutomation, command: { id: "new-automation", title: "New automation", keywords: ["scheduled", "task", "create", "editor"] } },
     usageInfo.credits.map((credit, index): Binding => ({ keys: [], run: () => useResetCredit(credit), command: { id: `reset-credit:${index}`, title: `Use reset credit: ${credit.label}`, keywords: ["usage", "limit", "reset", "credit"] } })),
     // The PR view's keys are its own; the palette shows them without taking them here.
@@ -964,28 +841,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     { keys: ["↓", "ctrl+n"], run: () => step(1) },
     { keys: ["↑", "ctrl+p"], run: () => step(-1) },
   ];
-  const detailsKeys = keys(
-    { keys: ["j", "↓"], label: "j/k", run: () => moveDetails(1), hint: "move" },
-    { keys: ["k", "↑"], run: () => moveDetails(-1) },
-    {
-      keys: ["enter", "space"],
-      run: () => {
-        const action = selectedAction();
-        if (action) activate(action);
-      },
-      hint: "open",
-    },
-    {
-      keys: ["t"],
-      run: () => {
-        const action = selectedAction();
-        if (action?.kind === "automation") toggleAutomation(action.task);
-      },
-      hint: "toggle automation",
-    },
-    { keys: ["esc"], run: () => (diff ? setDiff(null) : leaveDetails()), hint: "back" },
-    { keys: ["h", "←"], run: leaveDetails },
-  );
+  const detailsKeys = panel.keys.focused;
   const settingsKeys = keys(
     { keys: ["j", "↓"], label: "j/k", run: () => setSettingsIndex(Math.min(settingsRows.length - 1, (settingsIndex ?? 0) + 1)), hint: "move" },
     { keys: ["k", "↑"], run: () => setSettingsIndex(Math.max(0, (settingsIndex ?? 0) - 1)) },
@@ -1138,8 +994,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   /** A click in the conversation, a diff or the PR view takes the keys there, out of the composer or details. */
   const focusConversation = (event: MouseEvent) => {
     if (event.button !== 0 || (mode !== "input" && mode !== "details")) return;
-    setDetailsSelected(null);
-    setMode("nav");
+    panel.leave();
   };
 
   const status =
@@ -1151,8 +1006,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           ? "reconnecting…"
           : (shell.serverUrl ?? "");
   const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
-  const detailsColumn = showDetails && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
-  const detailsInPlace = showDetails && !detailsColumn;
+  const detailsColumn = panel.show && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
+  const detailsInPlace = panel.show && !detailsColumn;
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 2;
   const placeholder =
     mode !== "input"
@@ -1185,14 +1040,14 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       : "";
   const detailsPanel = (inPlace: boolean) => (
     <DetailsPanel
-      details={details}
+      details={panel.details}
       // Idle subagents are left out of the shell, which is where details come from; newer servers serve them on request.
       {...(threadId && !threadShell ? { empty: supportsFamilies ? "Loading details…" : "No details for idle subagent threads on this server. u goes to the parent." } : {})}
       width={inPlace ? width - listWidth : DETAILS_WIDTH}
-      loading={vcsState?.status !== "live"}
+      loading={panel.loading}
       inPlace={inPlace}
-      selected={mode === "details" || (mode === "confirm" && returnMode.current === "details") ? detailsSelected : null}
-      onActivate={activateById}
+      selected={mode === "details" || (mode === "confirm" && returnMode.current === "details") ? panel.selected : null}
+      onActivate={panel.activateById}
     />
   );
 
