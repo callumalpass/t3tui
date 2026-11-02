@@ -27,7 +27,8 @@ Any mode:
 | Key | Action |
 | --- | --- |
 | `ctrl+k` | command palette: every action below, plus thread search |
-| `ctrl+j` | attach to the thread's terminal (see [Terminals](#terminals)) |
+| `ctrl+j` | open the thread's terminal in the pane (see [Terminals](#terminals)) |
+| `ctrl+\` | with the pane open: move the keys between it and the conversation |
 | `ctrl+n` / `ctrl+p` (or `alt+↓`/`alt+↑`) | next / previous thread |
 | `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation (`ctrl+u`/`ctrl+d` only in navigation; while typing they edit the text) |
 | `ctrl+c` | quit |
@@ -41,7 +42,7 @@ Navigation:
 | `a` | attach a file to the next message (see [Attachments](#attachments)) |
 | `.` | thread actions (see [Thread actions](#thread-actions)); a right-click on a thread opens them too |
 | `m` | model, options (reasoning, fast mode…) and access mode |
-| `T` | terminals: attach, new, close or clear |
+| `T` | terminals: open in the pane, attach full screen, new, close or clear |
 | `b` | branches and worktrees: switch, create, pull or remove |
 | `E` | open the workspace (or diff file) in the server's editor |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
@@ -60,7 +61,7 @@ Navigation:
 | `d` | show or hide thread details (kept for the next run) |
 | `B` | hide or show the thread list (kept for the next run) |
 | `P` | show the thread's linked pull request |
-| `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `t` turns an automation on or off, `esc` comes back |
+| `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `o` edits the selected changed file in the pane, `t` turns an automation on or off, `esc` comes back |
 | `u` | go to the parent thread (from a fork or subagent) |
 | `:` | command palette |
 | `z` | show the Settled and Snoozed sections; `Show more settled threads` in the palette loads older rows |
@@ -73,7 +74,7 @@ Navigation:
 
 `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run; the `followUpBehavior` setting swaps the two. With an approval pending, a typed message declines it with your feedback.
 
-`shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`); save and quit to bring it back.
+`shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`) in the terminal pane; save and quit to bring it back.
 
 With the box empty after an interrupted run (or one a usage limit stopped), `enter` continues where it left off and releases messages held in the queue.
 
@@ -150,9 +151,13 @@ Limits: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other 
 
 ## Terminals
 
-`ctrl+j` attaches to the thread's terminal on the T3 server, the same one the app's terminal drawer shows. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. t3tui hands the whole screen to the terminal; `ctrl+j` or `ctrl+]` comes back, and the terminal keeps running. Its size is shared, so attaching resizes it for anyone else watching.
+`ctrl+j` opens the thread's terminal on the T3 server, the same one the app's terminal drawer shows, in the pane on the right. If the thread has none, it starts one in the thread's worktree or project folder; with several, you pick one or start another. The pane takes the details column's place and width (drag its edge to resize it); on a terminal too narrow for both, it takes the conversation's place.
 
-`T` opens the terminal picker even with only one terminal. Choose `New terminal`, `Close terminal…` or `Clear terminal…`; typing `close` or `clear` finds each terminal's action directly. Closing ends the shell and deletes its history; clearing clears its scrollback. These are in the command palette too.
+While the pane has focus, every key goes to its program, `esc` included, apart from `ctrl+\`, which gives the keys back to the conversation. `ctrl+\` again, or a click on the pane, returns them; the pane's left edge shows the accent while it has them. The pane follows its size, and so does the terminal on the server: its size is shared, so it resizes for anyone else watching. When the shell exits, the pane closes; `Close the terminal pane` in the palette detaches without stopping it.
+
+The same pane runs `$VISUAL` or `$EDITOR` (falling back to `vi`) on this machine: `ctrl+g` writes the message there, and `o` on a file under Changes in the details panel (or its `▸ Edit`) opens that file, when the workspace is on this machine. An open editor isn't replaced by anything else; quit it first.
+
+`T` opens the terminal picker even with only one terminal. Choose `New terminal`, `Attach full screen` (the whole screen goes to the terminal until `ctrl+j` or `ctrl+]`), `Close terminal…` or `Clear terminal…`; typing `close` or `clear` finds each terminal's action directly. Closing ends the shell and deletes its history; clearing clears its scrollback. These are in the command palette too.
 
 ## Workspace
 

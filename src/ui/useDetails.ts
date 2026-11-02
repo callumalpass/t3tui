@@ -42,6 +42,8 @@ export function useDetails(deps: {
   /** A step of a running git action, shown until the next. */
   readonly progress: (text: string) => void;
   readonly openThread: (id: ThreadId) => void;
+  /** A changed file in $EDITOR, in the terminal pane. */
+  readonly editFile: (path: string, cwd: string | null) => void;
   /** The panel takes the keys, or gives them back. */
   readonly focus: (focused: boolean) => void;
 }) {
@@ -193,6 +195,11 @@ export function useDetails(deps: {
     deps.focus(false);
   };
   const selectedAction = () => actions.find((candidate) => candidate.id === selected);
+  const selectedFile = (() => {
+    const action = selectedAction();
+    return action?.kind === "diff" && action.path && !action.path.endsWith("/") ? action.path : null;
+  })();
+  const edit = (path: string) => deps.editFile(path, cwd);
 
   const focusKey: Binding = { keys: ["l", "→"], run: focus, hint: "details", ...(thread ? { command: { id: "focus-details", title: "Focus thread details" } } : {}) };
   const toggleKey: Binding = { keys: ["d"], run: () => setPref(!show), command: { id: "details", title: show ? "Hide thread details" : "Show thread details", keywords: ["panel", "info"] } };
@@ -232,11 +239,12 @@ export function useDetails(deps: {
       },
       hint: "toggle automation",
     },
+    selectedFile && { keys: ["o"], run: () => edit(selectedFile), hint: "edit file" },
     { keys: ["esc"], run: () => (deps.diff ? setDiff(null) : leave()), hint: "back" },
     { keys: ["h", "←"], run: leave },
   );
 
-  return { show, setPref, cwd, details, loading: vcsState?.status !== "live", selected, unfolded, activateById, leave, keys: { focus: focusKey, toggle: toggleKey, commands, focused } };
+  return { show, setPref, cwd, details, loading: vcsState?.status !== "live", selected, unfolded, activateById, edit, leave, keys: { focus: focusKey, toggle: toggleKey, commands, focused } };
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));

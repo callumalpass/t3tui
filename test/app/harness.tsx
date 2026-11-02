@@ -41,6 +41,9 @@ export function fakeSession(
     /** Git status for every folder; loading by default. */
     readonly vcs?: unknown;
     readonly results?: Record<string, unknown>;
+    /** The thread's terminals on the server, and what attaching to one streams. */
+    readonly terminals?: readonly unknown[];
+    readonly terminalEvents?: readonly unknown[];
     readonly failures?: Record<string, string>;
   } = {},
 ) {
@@ -58,7 +61,12 @@ export function fakeSession(
     watchServerConfig: live({ status: "loading", config: null }),
     watchServers: live({ status: "live", items: [] }),
     watchAutomations: live({ status: "live", items: [] }),
-    watchTerminals: live({ status: "live", items: [] }),
+    watchTerminals: live({ status: "live", items: state.terminals ?? [] }),
+    attachTerminal: (input: unknown, onEvent: (event: unknown) => void) => {
+      calls.push({ method: "attachTerminal", args: [input] });
+      for (const event of state.terminalEvents ?? []) onEvent(event);
+      return () => calls.push({ method: "detachTerminal", args: [] });
+    },
     watchVcs: (_cwd: string, listener: (value: unknown) => void) => live(state.vcs ?? { status: "loading", local: null, remote: null })(listener),
   };
   const session = new Proxy(known, {

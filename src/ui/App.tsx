@@ -3,7 +3,9 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
@@ -31,7 +33,8 @@ import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
 import { useQuestion } from "./useQuestion.ts";
 import { useThreadMenu } from "./useThreadMenu.ts";
-import { editInEditor } from "./editor.ts";
+import { editorCommand, scratchFile } from "./editor.ts";
+import { TerminalPane, type PaneProgram } from "./TerminalPane.tsx";
 import { Palette } from "./Palette.tsx";
 import { ApprovalPanel } from "./ApprovalPanel.tsx";
 import { LiveStatus } from "./LiveStatus.tsx";
@@ -68,9 +71,10 @@ import { useUsageSummary } from "./useUsage.ts";
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
  * "details": j/k move through the details panel. "settings": j/k move through settings.
+ * "pane": every key but ctrl+\ goes to the program in the terminal pane.
  * The rest are overlays with their own input.
  */
-type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "find" | "pull-request";
+type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "find" | "pull-request" | "pane";
 
 /** Holding j/k skims past threads; only subscribe to one you stop on. */
 const SUBSCRIBE_DELAY_MS = 120;
@@ -134,6 +138,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   /** The edge being dragged. */
   const [resizing, setResizing] = useState<"list" | "details" | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
+  /** The program in the right-hand pane: one of T3's terminals, or $EDITOR. */
+  const [pane, setPane] = useState<PaneProgram | null>(null);
+  /** The conversation area's height, for the pane when it takes that place. */
+  const [contentHeight, setContentHeight] = useState(0);
   const [config, setConfig] = useState(props.config);
   const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
   const [serverConfig, setServerConfig] = useState<ServerConfigState | null>(null);
@@ -459,6 +467,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     say,
     progress: (text) => setFlash({ text }),
     openThread,
+    editFile: (path, cwd) => editFile(path, cwd),
     focus: (focused) => setMode(focused ? "details" : "nav"),
   });
 
@@ -513,17 +522,58 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     },
   });
 
-  const workspace = useWorkspace({ session, renderer, live, thread: threadShell, project, serverConfig: serverConfig?.config ?? null, draft: draft !== null, diff, openPicker, confirm, run, say });
+  /** Puts a program in the pane and gives it the keys. An editor there may hold unsaved work, so it isn't replaced. */
+  const showPane = (program: PaneProgram) => {
+    if (pane?.kind === "local" && pane.id !== program.id) return say("The editor in the pane is still open; ctrl+\\ there and quit it first.", true);
+    setPane(program);
+    setMode("pane");
+  };
+  const closePane = (message?: string) => {
+    setPane(null);
+    setMode((current) => (current === "pane" ? "nav" : current));
+    if (message) say(message);
+  };
+  const workspace = useWorkspace({
+    session,
+    renderer,
+    live,
+    thread: threadShell,
+    project,
+    serverConfig: serverConfig?.config ?? null,
+    draft: draft !== null,
+    diff,
+    openPicker,
+    openPane: (target) => showPane({ kind: "server", id: `server:${target.threadId}:${target.terminalId}`, title: `Terminal · ${target.label}`, target }),
+    confirm,
+    run,
+    say,
+  });
 
-  /** The composer's text in $EDITOR. */
-  const openEditor = async () => {
+  /** The composer's text in $EDITOR, in the pane; what's saved comes back when it exits. */
+  const openEditor = () => {
     const composer = composerRef.current;
     if (!composer) return;
-    const edited = await editInEditor(renderer, composer.plainText);
-    if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
-    composer.setText(edited);
-    composer.gotoBufferEnd();
-    setMode("input");
+    const key = composerKey;
+    const file = scratchFile(composer.plainText);
+    showPane({
+      kind: "local",
+      id: `message:${file.path}`,
+      title: "Message · save and quit to bring it back",
+      command: editorCommand(file.path),
+      onExit: (code) => {
+        const edited = code === 0 ? file.read() : null;
+        file.remove();
+        if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
+        putMessage(key, edited);
+        setMode((current) => (current === "pane" ? "input" : current));
+      },
+    });
+  };
+  /** A workspace file in $EDITOR, in the pane, when the workspace is on this machine. */
+  const editFile = (path: string, cwd: string | null) => {
+    const file = cwd ? resolvePathLinkTarget(path, cwd) : path;
+    if (!existsSync(file)) return say(`${path} isn't on this machine.`, true);
+    showPane({ kind: "local", id: `edit:${file}`, title: `Editing ${path}`, command: editorCommand(file), cwd: cwd ?? undefined, onExit: () => {} });
   };
 
   const settingsRows = settingRows(config);
@@ -543,6 +593,16 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const closeSettings = () => {
     setSettingsIndex(null);
     setMode("nav");
+  };
+
+  /** Replaces a composer's text, the open one's or a stored draft's. */
+  const putMessage = (key: string, text: string) => {
+    const composer = composerRef.current;
+    if (key !== activeComposerKey.current || !composer) return void drafts.current.set(key, text);
+    composer.setText(text);
+    composer.gotoBufferEnd();
+    setComposerLines(composerLineCount(composer));
+    setComposerEmpty(text.trim() === "");
   };
 
   /**
@@ -724,12 +784,14 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const quitKey: Binding = { keys: ["ctrl+c"], run: quit };
   const paletteKey: Binding = { keys: ["ctrl+k"], run: openPalette };
   const terminalKey: Binding = { keys: ["ctrl+j"], run: workspace.openTerminal };
+  const paneKey: Binding | null = pane && { keys: ["ctrl+\\"], run: () => setMode(mode === "pane" ? "nav" : "pane"), hint: mode === "pane" ? "leave pane" : "pane", command: { id: "pane-focus", title: mode === "pane" ? "Leave the terminal pane" : "Focus the terminal pane", keywords: ["terminal", "editor"] } };
   const editorKey: Binding | null = hasComposer ? { keys: ["ctrl+g"], run: openEditor, command: { id: "editor", title: "Write the message in $EDITOR", keywords: ["vim", "editor", "compose"] } } : null;
   const nextThreadKey: Binding = { keys: ["ctrl+n", "alt+↓"], label: "ctrl+n/p", run: () => move(1) };
   const previousThreadKey: Binding = { keys: ["ctrl+p", "alt+↑"], run: () => move(-1) };
   // Anywhere with a text field, ctrl+u and ctrl+d edit (delete to line start, delete forward); page up/down still scroll.
   const lineInput = mode === "filter" || mode === "input" || mode === "find" || mode === "palette" || mode === "picker" || mode === "confirm";
   const globalKeys = keys(
+    paneKey,
     quitKey,
     paletteKey,
     terminalKey,
@@ -795,15 +857,19 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     cancelDraftKey,
   );
   // A diff and a draft name their own few keys; everything else names the lot.
-  const navHints = diff
-    ? [scrollDiffDown, closeDiff, detailsKey]
-    : draft
-      ? keys(hinted(typeKey, "write the first message"), projectKey, modelKey && hinted(modelKey, "model & mode"), worktreeKey, cancelDraftKey)
-      : navKeys;
+  const navHints = keys(
+    paneKey,
+    diff
+      ? [scrollDiffDown, closeDiff, detailsKey]
+      : draft
+        ? keys(hinted(typeKey, "write the first message"), projectKey, modelKey && hinted(modelKey, "model & mode"), worktreeKey, cancelDraftKey)
+        : navKeys,
+  );
 
   // Commands only the palette runs.
   const paletteOnly = keys(
     editorKey,
+    pane?.kind === "server" && { keys: [], run: () => closePane(), command: { id: "pane-close", title: "Close the terminal pane", keywords: ["detach", "hide"] } },
     queue.keys.input,
     queue.keys.palette,
     (projection?.subagents ?? []).filter((agent) => threadId && canStopSubagent(agent)).map((agent): Binding => ({ keys: [], run: () => run("Stop requested", () => session.stopSubagent(agent)), command: { id: `stop-subagent:${agent.id}`, title: `Stop subagent: ${agent.title ?? "subagent"}`, keywords: ["interrupt", "cancel", "kill"] } })),
@@ -814,7 +880,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     pullRequests.commands.map((command): Binding => ({ ...fromCommand(command), keys: [], ...(command.shortcut ? { label: command.shortcut } : {}) })),
     { keys: [], run: openSettings, command: { id: "settings", title: "Settings", keywords: ["preferences", "config", "options", "notifications", "alerts"] } },
   );
-  const commands = commandsFor([...navKeys, ...paletteOnly]);
+  const commands = commandsFor(keys(paneKey, navKeys, paletteOnly));
 
   // The composer. Enter and newlines are the textarea's own; their hints only explain.
   const sendKey = config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
@@ -888,6 +954,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         return { layers: [confirmKeys], hints: confirmKeys };
       }
     }
+    if (mode === "pane" && paneKey) return { layers: [[paneKey]], hints: [paneKey] };
     // The secret field takes every key while it's focused.
     if (secret.focused) return { layers: [secret.bindings, [quitKey]], hints: secret.bindings };
     switch (mode) {
@@ -921,7 +988,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         return key.preventDefault();
       }
     }
-    if (secret.focused && mode !== "find" && mode !== "picker" && mode !== "palette" && mode !== "confirm") {
+    if (secret.focused && mode !== "find" && mode !== "picker" && mode !== "palette" && mode !== "confirm" && mode !== "pane") {
       secret.type(key);
       key.preventDefault();
     }
@@ -985,7 +1052,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     });
   /** A click in the conversation, a diff or the PR view takes the keys there, out of the composer or details. */
   const focusConversation = (event: MouseEvent) => {
-    if (event.button !== 0 || (mode !== "input" && mode !== "details")) return;
+    if (event.button !== 0 || (mode !== "input" && mode !== "details" && mode !== "pane")) return;
     panel.leave();
   };
 
@@ -999,8 +1066,11 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   // Room for the details column and its edge beside the conversation; a dragged width gives way to the conversation first.
   const detailsRoom = width - listWidth - 1 - MIN_CONVERSATION_WIDTH;
   const detailsWidth = Math.min(detailsWidthPref ?? DETAILS_WIDTH, Math.max(DETAILS_WIDTH, detailsRoom));
-  const detailsColumn = panel.show && detailsWidth <= detailsRoom;
-  const detailsInPlace = panel.show && !detailsColumn;
+  // The pane takes the details column's place, or the conversation's when there's no room beside it.
+  const paneColumn = pane !== null && detailsWidth <= detailsRoom;
+  const detailsColumn = !pane && panel.show && detailsWidth <= detailsRoom;
+  const detailsInPlace = !pane && panel.show && !detailsColumn;
+  const rightColumn = paneColumn || detailsColumn;
   // The block's height: a row of padding on top, the text, then the model line inside it.
   // Padding row, text, a blank row, then the model line.
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 3;
@@ -1044,6 +1114,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       inPlace={inPlace}
       selected={mode === "details" || (mode === "confirm" && returnMode.current === "details") ? panel.selected : null}
       onActivate={panel.activateById}
+      onEdit={panel.edit}
     />
   );
 
@@ -1118,8 +1189,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               saveLayoutNow({ listWidth: null });
             }} />}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
-          <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation}>
-          {settingsIndex !== null ? (
+          <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation} onSizeChange={function (this: { height: number }) { setContentHeight(this.height); }}>
+          {pane && !paneColumn ? null : settingsIndex !== null ? (
             <SettingsView
               rows={settingsRows}
               server={serverSettingLines(serverConfig?.config ?? null)}
@@ -1171,7 +1242,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
-          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? detailsWidth + 1 : 0) - 3} actions={queue.actions} /> : null}
+          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (rightColumn ? detailsWidth + 1 : 0) - 3} actions={queue.actions} /> : null}
           {mode !== "confirm" && questions.request && questions.draft ? <QuestionPanel
               request={questions.request}
               index={questions.draft.index}
@@ -1192,7 +1263,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               onCancel={closeOverlay}
             />
           ) : null}
-          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (detailsColumn ? detailsWidth + 1 : 0) - 2} onPick={composerMenu.pick} /> : null}
+          {menu ? <ComposerMenu items={menu.items} selected={composerMenu.selected} empty={menu.empty} width={width - listWidth - (rightColumn ? detailsWidth + 1 : 0) - 2} onPick={composerMenu.pick} /> : null}
           {attach.pending.length > 0 ? (
             <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
               <text fg={colors.muted}>Attached:</text>
@@ -1275,14 +1346,24 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             </box>
           ) : null}
         </box>
-        {detailsColumn ? (
-          <>
-            <ResizeHandle active={resizing === "details"} onStart={() => setResizing("details")} onReset={() => {
-              setDetailsWidthPref(null);
-              saveLayoutNow({ detailsWidth: null });
-            }} />
-            {detailsPanel(false)}
-          </>
+        {rightColumn ? (
+          <ResizeHandle active={resizing === "details"} onStart={() => setResizing("details")} onReset={() => {
+            setDetailsWidthPref(null);
+            saveLayoutNow({ detailsWidth: null });
+          }} />
+        ) : null}
+        {detailsColumn ? detailsPanel(false) : null}
+        {/* One place in the tree in both layouts, so a narrower window doesn't restart its program. */}
+        {pane ? (
+          <TerminalPane
+            key={pane.id}
+            program={pane}
+            session={session}
+            focused={mode === "pane"}
+            onFocus={() => setMode("pane")}
+            onClose={closePane}
+            place={paneColumn ? { width: detailsWidth } : { left: showList ? listWidth + 1 : 0, height: contentHeight }}
+          />
         ) : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
