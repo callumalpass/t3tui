@@ -34,6 +34,12 @@ const DARK = {
   plan: "#fab283",
   diffAddedBg: "#14261a",
   diffRemovedBg: "#2a1517",
+  /** The line-number gutter: a shade off the background, deeper beside added and removed lines. */
+  diffGutterBg: "#111111",
+  diffAddedGutterBg: "#1b3322",
+  diffRemovedGutterBg: "#381c1f",
+  diffAddedSign: "#7fd88f",
+  diffRemovedSign: "#e06c75",
 };
 
 export type Palette = { readonly [K in keyof typeof DARK]: string };
@@ -63,6 +69,11 @@ const LIGHT: Palette = {
   plan: "#c06a2b",
   diffAddedBg: "#e3f3e6",
   diffRemovedBg: "#fbe4e4",
+  diffGutterBg: "#f7f7f7",
+  diffAddedGutterBg: "#cdebd3",
+  diffRemovedGutterBg: "#f5cfcf",
+  diffAddedSign: "#3d9a57",
+  diffRemovedSign: "#d1383d",
 };
 
 /** The palette in use. Read at render time, so applyTheme before the first frame sets it everywhere. */

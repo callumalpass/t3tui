@@ -90,6 +90,8 @@ const DETAILS_WIDTH = 38;
 const MIN_DETAILS_WIDTH = 28;
 /** Below this, the details panel takes the conversation's place instead of a column beside it. */
 const MIN_CONVERSATION_WIDTH = 70;
+/** The conversation this wide or wider shows diffs side by side. */
+const SPLIT_DIFF_WIDTH = 140;
 
 const COMPOSER_KEYS = {
   enter: [
@@ -118,6 +120,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const [filter, setFilter] = useState("");
   const [showFolded, setShowFolded] = useState(false);
   const [expandAll, setExpandAll] = useState(false);
+  /** Side-by-side diffs, once toggled for the session; null follows the conversation's width. */
+  const [splitDiffPref, setSplitDiffPref] = useState<boolean | null>(null);
   /** Folds opened one at a time by a click, for the open thread. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
   /** The thread list's and details column's widths once their edges are dragged; null follows the window. */
@@ -874,6 +878,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const paletteOnly = keys(
     editorKey,
     pane?.kind === "server" && { keys: [], run: () => closePane(), command: { id: "pane-close", title: "Close the terminal pane", keywords: ["detach", "hide"] } },
+    { keys: [], run: () => setSplitDiffPref(!splitDiff), command: { id: "split-diff", title: "Toggle split diff", keywords: ["side by side", "unified", "diff view"] } },
     queue.keys.input,
     queue.keys.palette,
     (projection?.subagents ?? []).filter((agent) => threadId && canStopSubagent(agent)).map((agent): Binding => ({ keys: [], run: () => run("Stop requested", () => session.stopSubagent(agent)), command: { id: `stop-subagent:${agent.id}`, title: `Stop subagent: ${agent.title ?? "subagent"}`, keywords: ["interrupt", "cancel", "kill"] } })),
@@ -1076,6 +1081,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const detailsColumn = !pane && panel.show && detailsWidth <= detailsRoom;
   const detailsInPlace = !pane && panel.show && !detailsColumn;
   const rightColumn = paneColumn || detailsColumn;
+  const conversationWidth = width - (showList ? listWidth + 1 : 0) - (rightColumn ? detailsWidth + 1 : 0);
+  const splitDiff = splitDiffPref ?? conversationWidth >= SPLIT_DIFF_WIDTH;
   // The block's height: a row of padding on top, the text, then the model line inside it.
   // Padding row, text, a blank row, then the model line.
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 3;
@@ -1211,7 +1218,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           ) : mode === "pull-request" && pullRequests.view ? (
             <PullRequestView view={pullRequests.view} scrollRef={scrollRef} onOpenUrl={() => pullRequests.commands.find((candidate) => candidate.id === "pr-open")?.run()} onMenu={openPullRequestMenu} onClose={pullRequests.close} />
           ) : diff ? (
-            <DiffView diff={diff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} onFile={turns.diffContext.click} />
+            <DiffView diff={diff} split={splitDiff} scrollRef={scrollRef} selected={turns.diffContext.selected} expanded={turns.diffContext.expanded} onFile={turns.diffContext.click} />
           ) : draft ? (
             <DraftView lines={newThread.lines(models.open)} />
           ) : threadId && detailsInPlace && mode !== "find" ? (
