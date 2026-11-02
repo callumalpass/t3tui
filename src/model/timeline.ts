@@ -1,11 +1,13 @@
 import { turnTargets, type TurnTarget } from "./turns.ts";
 import type { OrchestrationV2ThreadProjection, RunAttemptId, RunId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { derivePendingThreadRequests, type PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 
 // The web app's own timeline derivation: tui3 shows the same rows, folds and labels.
 import {
@@ -26,6 +28,12 @@ export type { MessagesTimelineRow } from "../../vendor/t3code/apps/web/src/compo
 export type { WorkLogEntry } from "../../vendor/t3code/apps/web/src/session-logic.ts";
 export { liveWorkEntryLabel, workEntryDisplayLabel } from "../../vendor/t3code/apps/web/src/components/chat/MessagesTimeline.logic.ts";
 
+/** What a turn footer needs of its run: the model, and how long it ran. */
+export interface RunMeta {
+  readonly model: string;
+  readonly durationMs: number | null;
+}
+
 export interface Timeline {
   readonly rows: readonly MessagesTimelineRow[];
   readonly pending: PendingThreadRequests;
@@ -33,9 +41,13 @@ export interface Timeline {
   readonly isWorking: boolean;
   /** When the current run started working, for "Working for 12s". */
   readonly workStartedAt: string | null;
+  /** Footers by run, keyed as messages key their runs. */
+  readonly runMeta: ReadonlyMap<string, RunMeta>;
   /** Carried into the next build so unchanged rows keep their identity. */
   readonly cache: TimelineCache;
 }
+
+type TurnDiffSummaries = ReturnType<typeof deriveThreadCheckpointSummaries>;
 
 interface TimelineCache {
   readonly entries: TimelineEntriesProjection;
@@ -43,7 +55,13 @@ interface TimelineCache {
   readonly stable: StableMessagesTimelineRowsState;
   readonly expandAll: boolean;
   readonly expanded: ReadonlySet<string>;
+  /** The last summaries and what they were derived from, so unchanged replies keep their row identity. */
+  readonly turnDiffSummaries: TurnDiffSummaries;
+  readonly checkpoints: OrchestrationV2ThreadProjection["checkpoints"];
+  readonly checkpointMessages: OrchestrationV2ThreadProjection["messages"];
 }
+
+const sameItems = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((item, index) => item === b[index]);
 
 /** Answers yes for every id: "expand everything" without knowing the group ids up front. */
 class EverySet<T> extends Set<T> {
@@ -78,6 +96,11 @@ export function buildTimeline(
   const isWorking = derivePhase(runtime) === "running" || runlessStartedAt !== null;
   const workStartedAt = deriveActiveWorkStartedAt(latestRun, runtime, null) ?? runlessStartedAt;
   const pending = derivePendingThreadRequests(projection);
+  const previousCache = previous?.cache;
+  const turnDiffSummaries =
+    previousCache && sameItems(previousCache.checkpoints, projection.checkpoints) && sameItems(previousCache.checkpointMessages, projection.messages)
+      ? previousCache.turnDiffSummaries
+      : deriveThreadCheckpointSummaries(projection);
   const expanded = options.expandAll ? EVERYTHING : opened;
   const rows = deriveMessagesTimelineRowsWithState(
     {
@@ -92,7 +115,7 @@ export function buildTimeline(
       isWorking,
       runlessWorkActive: runlessStartedAt !== null,
       activeTurnStartedAt: workStartedAt,
-      turnDiffSummaries: [],
+      turnDiffSummaries,
       supportsConversationRollback: false,
     },
     cache?.rows ?? null,
@@ -104,6 +127,13 @@ export function buildTimeline(
     turns: turnTargets(projection, entries.entries, isWorking ? runtime?.activeRunId ?? null : null, options.historyComplete),
     isWorking,
     workStartedAt,
-    cache: { entries, rows, stable, expandAll: options.expandAll, expanded: opened },
+    runMeta: new Map(
+      projection.runs.map((run) => {
+        const started = run.workStartedAt ?? run.startedAt ?? run.requestedAt;
+        const durationMs = run.completedAt ? DateTime.toEpochMillis(run.completedAt) - DateTime.toEpochMillis(started) : null;
+        return [run.id as string, { model: run.modelSelection.model, durationMs: durationMs !== null && durationMs >= 0 ? durationMs : null }] as const;
+      }),
+    ),
+    cache: { entries, rows, stable, expandAll: options.expandAll, expanded: opened, turnDiffSummaries, checkpoints: projection.checkpoints, checkpointMessages: projection.messages },
   };
 }

@@ -8,7 +8,8 @@ import { BAR } from "./edges.ts";
 import { truncate } from "./text.ts";
 import { colors, statusColor } from "./theme.ts";
 
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/** The braille spinner's frames, for anything that is working. */
+export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** The 2-column gutter's mark for a row: a spinner while it works, then what it needs from you. */
 function statusGlyph(row: ThreadRow, spin: number): { readonly glyph: string; readonly color: string } {

@@ -17,7 +17,8 @@ import { paletteEntries, paletteGroups, pickerGroups, type Picker, type PickerIt
 import { pullRequestRepository } from "../model/pullRequests.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { resetCreditOutcome, usageLimits, usageSummaryLines } from "../model/usage.ts";
-import { buildTimeline, type Timeline } from "../model/timeline.ts";
+import { buildTimeline, liveWorkEntryLabel, type Timeline } from "../model/timeline.ts";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { statusLabel, type Section } from "../model/threads.ts";
 import { ComposerMenu } from "./ComposerMenu.tsx";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
@@ -32,6 +33,8 @@ import { useQuestion } from "./useQuestion.ts";
 import { useThreadMenu } from "./useThreadMenu.ts";
 import { editInEditor } from "./editor.ts";
 import { Palette } from "./Palette.tsx";
+import { ApprovalPanel } from "./ApprovalPanel.tsx";
+import { LiveStatus } from "./LiveStatus.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
 import { QueuePanel } from "./QueuePanel.tsx";
 import { SecretPanel } from "./SecretPanel.tsx";
@@ -253,6 +256,12 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const pendingApproval = current?.pending.approvals[0];
   const pendingInput = current?.pending.userInputs[0];
   const working = current?.isWorking ?? false;
+  // The status line above the composer: the timeline's working/thinking rows live here now.
+  const liveRow = current?.rows.findLast((row) => row.kind === "work-live");
+  const liveTool = liveRow?.kind === "work-live" ? truncate(firstLine(liveWorkEntryLabel(liveRow.entry, threadShell?.worktreePath ?? undefined, liveRow.active)), 60) : null;
+  const liveVerb = current?.rows.some((row) => row.kind === "working" && row.compacting) ? "Compacting" : !liveRow && current?.rows.some((row) => row.kind === "thinking") ? "Thinking" : "Working";
+  const liveSince = current?.workStartedAt ? Date.parse(current.workStartedAt) : NaN;
+  const liveLabel = Number.isFinite(liveSince) ? `${liveVerb} for ${formatWorkingDurationLabel(now - liveSince)}` : `${liveVerb}…`;
 
   // A thread opens at its latest message: once its first snapshot renders, jump to the bottom.
   const loaded = current !== null;
@@ -910,7 +919,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   // The mouse in the conversation: stable callbacks, since its rows are memoized.
   const conversationMouse: ConversationMouse = {
-    respond: useEvent((decision: ProviderApprovalDecision) => respond(decision)),
     selectTurn: useEvent((messageId: string) => turns.select(messageId)),
     toggleFold: useEvent((id: string) =>
       setExpandedIds((previous) => {
@@ -921,6 +929,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     ),
     loadEarlier: useEvent(() => loadEarlier()),
     menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
+    openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
   };
   const copy = (label: string, text: string) => {
     copyText(renderer, text);
@@ -944,6 +953,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           ]
         : [
             { id: "copy-message", title: "Copy message", run: () => copy("the message", target.text) },
+            ...(target.checkpointTurnCount !== undefined ? [{ id: "turn-diff", title: "View changes from this turn", run: () => turns.openTurnDiff(target.checkpointTurnCount!) }] : []),
             ...(target.role === "user" ? turns.menuFor(target.messageId) : []),
           ];
     if (target.kind === "message" && target.role === "user") turns.select(target.messageId);
@@ -1122,6 +1132,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               loading={watchedId !== threadId || thread?.status === "loading"}
               error={thread?.error}
               workspaceRoot={threadShell?.worktreePath ?? undefined}
+              timestampFormat={config.timestampFormat}
               now={now}
               scrollRef={scrollRef}
               parent={parent}
@@ -1168,8 +1179,14 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               <Button label="+ file" shortcut="a" onPress={attach.attachFile} />
             </box>
           ) : null}
+          {working && threadId && !draft && !pendingApproval ? <LiveStatus label={liveLabel} tool={liveTool} /> : null}
           {threadId || draft ? (
             <box flexDirection="column" flexShrink={0} marginTop={1} marginLeft={1} marginRight={1}>
+              {pendingApproval && !draft ? (
+                <box marginBottom={1} flexShrink={0}>
+                  <ApprovalPanel approval={pendingApproval} onRespond={respond} />
+                </box>
+              ) : null}
               <box
                 border={["left"]}
                 customBorderChars={BAR}

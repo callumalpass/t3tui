@@ -54,8 +54,13 @@ export function useTurns(input: {
     const checkpoint = fullThread
       ? turns.map((turn) => turn.checkpoint).filter((checkpoint): checkpoint is TurnCheckpoint => checkpoint?.status === "ready").sort((a, b) => b.checkpointTurnCount - a.checkpointTurnCount)[0]
       : diffTurn(turns, messageId);
-    if (!input.threadId || !input.cwd || !checkpoint) return input.say("No changes from this turn.");
-    const toTurnCount = checkpoint.checkpointTurnCount;
+    if (!checkpoint) return input.say("No changes from this turn.");
+    showDiff(checkpoint.checkpointTurnCount, fullThread);
+  };
+  /** The changed-files line's diff: it already knows its checkpoint's turn count. */
+  const openTurnDiff = (checkpointTurnCount: number) => showDiff(checkpointTurnCount, false);
+  const showDiff = (toTurnCount: number, fullThread: boolean) => {
+    if (!input.threadId || !input.cwd) return input.say("No changes from this turn.");
     const state: DiffState = { cwd: input.cwd, path: null, title: fullThread ? "Changes" : `Turn ${toTurnCount}`, status: "loading" };
     input.setDiff(state);
     input.showConversation();
@@ -134,7 +139,7 @@ export function useTurns(input: {
       ] : []),
     ];
   };
-  return { selectedMessageId, bindings, diffContext, select, menuFor };
+  return { selectedMessageId, bindings, diffContext, select, menuFor, openTurnDiff };
 }
 
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }

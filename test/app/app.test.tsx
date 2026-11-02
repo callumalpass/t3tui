@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { omittedCommand, withApproval, withOmittedOutput, withQuestion } from "./fixtures.ts";
+import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion, withWorking } from "./fixtures.ts";
 import { loadLayout } from "../../src/layout.ts";
 import { fakeSession, renderApp, v2ThreadId } from "./harness.tsx";
 
@@ -138,7 +138,63 @@ describe("palette and pickers", () => {
   });
 });
 
+describe("a finished turn", () => {
+  test("its changed files fold out under the reply, and a file opens the turn's diff", async () => {
+    const patch = "diff --git a/src/index.ts b/src/index.ts\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const app = await open({ session: fakeSession({ projection: withCompletedTurn(), results: { turnDiff: { diff: patch } } }) });
+    expect(app.frame()).toContain("✎ 3 files  +42 −7 ›");
+    expect(app.frame()).not.toContain("src/util.ts");
+    const line = app.find("3 files");
+    await app.click(line.x, line.y);
+    expect(app.frame()).toContain("src/index.ts");
+    expect(app.frame()).toContain("src/util.ts");
+    expect(app.frame()).toContain("+30 −5");
+    const file = app.find("src/util.ts");
+    await app.click(file.x, file.y);
+    await app.settle(50);
+    expect(app.calls("turnDiff").map((call) => call.args[0])).toEqual([{ threadId: v2ThreadId, toTurnCount: 1, ignoreWhitespace: true, fromTurnCount: 0 }]);
+    expect(app.frame()).toContain("Turn 1");
+  });
+
+  test("its footer names the model, the duration and the time", async () => {
+    const app = await open({ session: fakeSession({ projection: withCompletedTurn() }) });
+    // The date half is locale- and timezone-shaped; the model and duration are not.
+    expect(app.frame()).toMatch(/gpt-5\.4 · 3m 12s · /);
+  });
+});
+
+describe("live status", () => {
+  test("while working, one status line sits above the composer and none in the timeline", async () => {
+    const app = await open({ session: fakeSession({ projection: withWorking() }) });
+    const frame = app.frame();
+    expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working for /);
+    expect(frame.split("Working for")).toHaveLength(2);
+    expect(frame).not.toContain("◐");
+    const lines = frame.split("\n");
+    const status = lines.findIndex((line) => line.includes("Working for"));
+    const composer = lines.findIndex((line) => line.includes("Press i to type"));
+    expect(status).toBeGreaterThan(-1);
+    expect(status).toBeLessThan(composer);
+    // The live tool itself stays a timeline row.
+    expect(frame).toContain("Running bun");
+  });
+});
+
 describe("approvals", () => {
+  test("the request shows above the composer, with its buttons, and not in the timeline", async () => {
+    const app = await open({ session: fakeSession({ projection: withApproval() }) });
+    const frame = app.frame();
+    expect(frame).toContain("Command approval");
+    expect(frame).toContain("Deletes dist/ and rebuilds it.");
+    // Only the composer block names the command; its timeline row is hidden.
+    expect(frame.split("rm -rf dist && bun run build")).toHaveLength(2);
+    // The composer stays below it, so a message can still go with a decline.
+    expect(app.find("Command approval").y).toBeLessThan(app.find("gpt-5.4").y);
+    const approve = app.find("Approve");
+    await app.click(approve.x, approve.y);
+    expect(app.calls("respond").map((call) => call.args[2])).toEqual(["accept"]);
+  });
+
   test("y, Y and n answer the request", async () => {
     const app = await open({ session: fakeSession({ projection: withApproval() }) });
     expect(app.hints()).toStartWith("y approve · Y always · n decline · j/k threads");
@@ -292,8 +348,9 @@ describe("mouse", () => {
 
   test("right-clicking a thread opens its actions", async () => {
     const app = await open();
-    const row = app.find("135d");
-    await app.click(row.x, row.y, 2);
+    // The list row is the "Thread" below the header; its relative age grows daily, so don't look for it.
+    const y = app.frame().split("\n").findIndex((line, index) => index > 0 && line.includes("Thread"));
+    await app.click(5, y, 2);
     expect(app.hints()).toBe("↑/↓ move · enter choose · esc close");
     expect(app.frame()).toContain("Mark unread");
   });
