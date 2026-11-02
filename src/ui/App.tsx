@@ -1,13 +1,6 @@
 import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
-import {
-  buildPendingUserInputAnswers,
-  resolvePendingUserInputAnswer,
-  setPendingUserInputCustomAnswer,
-  togglePendingUserInputOptionSelection,
-  type PendingUserInputDraftAnswer,
-} from "@t3tools/client-runtime/state/pending-user-input";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { type DiscoveredLocalServer, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
@@ -33,6 +26,7 @@ import { DiffView, type DiffState } from "./DiffView.tsx";
 import { DraftView } from "./DraftView.tsx";
 import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
+import { useQuestion } from "./useQuestion.ts";
 import { useThreadMenu } from "./useThreadMenu.ts";
 import { editInEditor } from "./editor.ts";
 import { Palette } from "./Palette.tsx";
@@ -98,11 +92,6 @@ const COMPOSER_KEYS = {
 /** The composer's key while a new thread is being drafted. */
 const DRAFT_KEY = "draft";
 
-interface QuestionDraft {
-  readonly index: number;
-  readonly answers: Record<string, PendingUserInputDraftAnswer>;
-}
-
 export function App(props: { readonly session: T3Session; readonly config: Tui3Config; readonly attachThreadId?: ThreadId }) {
   const { session, attachThreadId } = props;
   const attached = attachThreadId !== undefined;
@@ -147,7 +136,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [pathResults, setPathResults] = useState<{ key: string; entries: readonly ProjectEntry[] } | null>(null);
   /** Mentions per composer (threads, pull requests), sent as the message's context. */
   const mentions = useRef(new Map<string, Map<string, ComposerContextRecord>>());
-  const [questionDrafts, setQuestionDrafts] = useState<ReadonlyMap<string, QuestionDraft>>(new Map());
   const [now, setNow] = useState(Date.now());
   const scrollRef = useRef<ScrollBoxRenderable | null>(null);
   const composerRef = useRef<TextareaRenderable | null>(null);
@@ -268,7 +256,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const openFind = () => { setDiff(null); setSettingsIndex(null); setMode("find"); };
   const pendingApproval = current?.pending.approvals[0];
   const pendingInput = current?.pending.userInputs[0];
-  const questionDraft = pendingInput ? (questionDrafts.get(pendingInput.requestId) ?? { index: 0, answers: {} }) : undefined;
   const working = current?.isWorking ?? false;
 
   // A thread opens at its latest message: once its first snapshot renders, jump to the bottom.
@@ -399,6 +386,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     run,
     say,
   });
+  const questions = useQuestion({ session, threadId, request: pendingInput, run, say });
   const queue = useQueue({
     session,
     threadId: draft ? undefined : threadId,
@@ -643,35 +631,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setComposerEmpty(true);
   };
 
-  /** Moves the question flow on: the next question, or the answers once all are in. */
-  const advanceQuestion = (draft: QuestionDraft) => {
-    if (!threadId || !pendingInput) return;
-    const question = pendingInput.questions[draft.index];
-    if (!question || resolvePendingUserInputAnswer(question, draft.answers[question.id]) === null) {
-      setQuestionDrafts((map) => new Map(map).set(pendingInput.requestId, draft));
-      return say("Pick an option or type an answer.", true);
-    }
-    if (draft.index + 1 < pendingInput.questions.length) {
-      setQuestionDrafts((map) => new Map(map).set(pendingInput.requestId, { ...draft, index: draft.index + 1 }));
-      return;
-    }
-    const answers = buildPendingUserInputAnswers(pendingInput.questions, draft.answers);
-    if (!answers) return say("Some questions are unanswered.", true);
-    setQuestionDrafts((map) => new Map(map).set(pendingInput.requestId, draft));
-    run("Answered", () => session.answer(threadId, pendingInput.requestId, answers));
-  };
-
-  const pickOption = (optionIndex: number) => {
-    if (!pendingInput || !questionDraft) return;
-    const question = pendingInput.questions[questionDraft.index];
-    const option = question?.options[optionIndex];
-    if (!question || !option) return;
-    const draft = { ...questionDraft, answers: { ...questionDraft.answers, [question.id]: togglePendingUserInputOptionSelection(question, questionDraft.answers[question.id], option.value ?? option.label) } };
-    setQuestionDrafts((map) => new Map(map).set(pendingInput.requestId, draft));
-    // Single choice moves on by itself, after a beat to show the pick.
-    if (!question.multiSelect) setTimeout(() => advanceQuestion(draft), 200);
-  };
-
   /** Enter in the composer; `alternate` is alt+enter, which flips steer and queue. */
   const submit = (alternate = false) => {
     const composer = composerRef.current;
@@ -693,13 +652,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return newThread.launch(text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, context, taken);
     }
     if (!threadId) return;
-    if (pendingInput && questionDraft) {
+    if (questions.request) {
       if (attachedFiles.length > 0) return say("Attachments can't go with a question answer here; remove them first from the palette.", true);
-      const question = pendingInput.questions[questionDraft.index];
-      if (!question) return;
-      const answer = text ? setPendingUserInputCustomAnswer(question, questionDraft.answers[question.id], text) : questionDraft.answers[question.id];
+      if (!questions.question) return;
       clearComposer();
-      return advanceQuestion({ ...questionDraft, answers: { ...questionDraft.answers, ...(answer ? { [question.id]: answer } : {}) } });
+      return questions.answer(text);
     }
     if ((queue.editing || attachedFiles.length === 0) && queue.submit(text)) return;
     if (!text && attachedFiles.length === 0) return;
@@ -860,7 +817,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const toInput = () => {
     if (hasComposer) setMode("input");
   };
-  const dismissQuestion = threadId && pendingInput?.dismissible ? () => run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId)) : null;
   const leaveDetails = () => {
     setDetailsSelected(null);
     setMode("nav");
@@ -887,9 +843,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     !attached && previousThreadKey,
   );
 
-  const digitKeys = pendingInput ? [1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit): Binding => ({ keys: [String(digit)], run: () => pickOption(digit - 1) })) : [];
-  const pickHint: Binding = { keys: [], label: "1-9", hint: "pick" };
-
   // Navigation: single keys move, open and act on the thread.
   const scrollDiffDown: Binding = { keys: ["j", "↓"], label: "j/k", run: () => scrollBy(1), hint: "scroll" };
   const closeDiff: Binding = { keys: ["esc", "q"], run: () => setDiff(null), hint: "close diff" };
@@ -908,9 +861,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       { keys: ["n"], run: () => respond("decline"), hint: "decline", command: { id: "decline", title: "Decline request" } },
     ],
     !diff && secret.bindings,
-    pendingInput && pickHint,
-    digitKeys,
-    dismissQuestion && { keys: ["x"], run: dismissQuestion, hint: "dismiss", command: { id: "dismiss", title: "Dismiss question" } },
+    questions.keys?.pick,
+    questions.keys?.digits,
+    questions.keys?.dismiss,
     queue.keys.nav,
     library.commands(threadId).map((command) => fromCommand(command)),
     workspace.commands.map((command) => fromCommand(command)),
@@ -980,8 +933,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const sendKey = config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
   const inputKeys = keys(
     pendingApproval && { keys: [], label: "approval waiting:", hint: "esc, then y/n" },
-    pendingInput && pickHint,
-    pendingInput && composerEmpty && digitKeys,
+    questions.keys?.pick,
+    composerEmpty && questions.keys?.digits,
     { keys: [], label: sendKey, hint: working ? config.followUpBehavior : "send" },
     working && { keys: [], label: "alt+enter", hint: config.followUpBehavior === "steer" ? "queue" : "steer" },
     { keys: ["alt+enter"], run: () => submit(true) },
@@ -1352,13 +1305,13 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
           {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 3} actions={queue.actions} /> : null}
-          {mode !== "confirm" && pendingInput && questionDraft ? <QuestionPanel
-              request={pendingInput}
-              index={questionDraft.index}
-              draft={questionDraft.answers[pendingInput.questions[questionDraft.index]?.id ?? ""]}
-              onPick={pickOption}
-              onNext={() => advanceQuestion(questionDraft)}
-              onDismiss={threadId && pendingInput.dismissible ? () => run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId)) : undefined}
+          {mode !== "confirm" && questions.request && questions.draft ? <QuestionPanel
+              request={questions.request}
+              index={questions.draft.index}
+              draft={questions.draft.answers[questions.question?.id ?? ""]}
+              onPick={questions.pick}
+              onNext={questions.next}
+              onDismiss={questions.dismiss}
             /> : null}
           {mode === "confirm" && confirmation ? (
             <ConfirmBar
