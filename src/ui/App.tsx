@@ -48,9 +48,10 @@ import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
 import { rendererClipboard, type Clipboard } from "./clipboard.ts";
+import { composerText, useComposerChips } from "./useComposerChips.ts";
 import { openInBrowser, screenTextAt } from "./links.ts";
 import { desktopNotify, ring } from "./terminalOut.ts";
-import { colors, statusColor } from "./theme.ts";
+import { colors, statusColor, useMarkdownStyle } from "./theme.ts";
 import { BAR, NO_BORDER } from "./edges.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { useTurns } from "./useTurns.ts";
@@ -114,6 +115,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const attached = attachThreadId !== undefined;
   const renderer = useRenderer();
   const [clipboard] = useState(() => props.clipboard ?? rendererClipboard(renderer));
+  const markdownStyle = useMarkdownStyle();
   const { width, height } = useTerminalDimensions();
   const [shell, setShell] = useState<ShellState>(session.getShell());
   // Any thread, listed or not: subagents open here too.
@@ -434,6 +436,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     confirm,
     say,
   });
+  const chips = useComposerChips({ composerRef, composerKey, pending: attach.pending, remove: attach.remove });
   const usage = useUsageSummary(session, settingsIndex !== null && live);
   const usageInfo = useMemo(() => usageLimits(serverConfig?.config ?? null, now), [serverConfig, now]);
   const spendResetCredit = (credit: (typeof usageInfo.credits)[number]) =>
@@ -563,7 +566,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     const composer = composerRef.current;
     if (!composer) return;
     const key = composerKey;
-    const file = scratchFile(composer.plainText);
+    const file = scratchFile(composerText(composer));
     showPane({
       kind: "local",
       id: `message:${file.path}`,
@@ -620,7 +623,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const putMessage = (key: string, text: string) => {
     const composer = composerRef.current;
     if (key !== activeComposerKey.current || !composer) return void drafts.current.set(key, text);
-    composer.setText(text);
+    chips.replaceText(composer, text);
     composer.gotoBufferEnd();
     setComposerLines(composerLineCount(composer));
     setComposerEmpty(text.trim() === "");
@@ -633,8 +636,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const restoreMessage = (key: string, text: string, context: OrchestrationMessageContext | undefined, attachments: readonly ChatAttachment[]) => {
     const composer = composerRef.current;
     if (key === activeComposerKey.current && composer) {
-      if (composer.plainText.trim()) return;
-      composer.setText(text);
+      if (composerText(composer).trim()) return;
+      chips.replaceText(composer, text);
       composer.gotoBufferEnd();
       setComposerLines(composerLineCount(composer));
       setComposerEmpty(text === "");
@@ -658,7 +661,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   };
 
   const clearComposer = () => {
-    composerRef.current?.setText("");
+    if (composerRef.current) chips.replaceText(composerRef.current, "");
     if (threadId) drafts.current.delete(threadId);
     composerMenu.forget();
     setComposerLines(1);
@@ -668,11 +671,11 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   /** Enter in the composer; `alternate` is alt+enter, which flips steer and queue. */
   const submit = (alternate = false) => {
     const composer = composerRef.current;
-    const raw = composer?.plainText ?? "";
+    const raw = composer ? composerText(composer) : "";
     // A trailing backslash continues onto a new line, for terminals that can't send shift+enter.
     if (!alternate && config.sendShortcut === "enter" && composer && raw.endsWith("\\")) {
-      composer.setText(raw.slice(0, -1));
       composer.gotoBufferEnd();
+      composer.deleteCharBackward();
       composer.newLine();
       return;
     }
@@ -727,10 +730,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const turns = useTurns({ session, threadId, projection, timeline: current, config: providerConfig, cwd: panel.cwd, ignoreWhitespace: config.diffIgnoreWhitespace, enabled: draft === null, diff, setDiff, scrollRef, confirm, say,
     showConversation: () => { setMode("nav"); setDetailsPrefState((value) => (width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value)); },
     restorePrompt: (id, text) => {
-      const previous = id === activeComposerKey.current ? composerRef.current?.plainText ?? "" : drafts.current.get(id) ?? "";
+      const previous = id === activeComposerKey.current && composerRef.current ? composerText(composerRef.current) : drafts.current.get(id) ?? "";
       const next = text ? previous ? `${previous}\n\n${text}` : text : previous;
       drafts.current.set(id, next);
-      if (id === activeComposerKey.current) { composerRef.current?.setText(next); setMode("input"); }
+      if (id === activeComposerKey.current && composerRef.current) { chips.replaceText(composerRef.current, next); setMode("input"); }
     },
   });
 
@@ -1334,6 +1337,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                   focusedBackgroundColor={colors.element}
                   wrapMode="word"
                   keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
+                  syntaxStyle={markdownStyle}
                   onSubmit={() => submit()}
                   onPaste={(event: PasteEvent) => {
                     const text = decodePasteBytes(event.bytes);
@@ -1347,8 +1351,9 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                   onCursorChange={composerMenu.sync}
                   onContentChange={() => {
                     composerMenu.sync();
+                    chips.sync();
                     const composer = composerRef.current;
-                    const text = composer?.plainText ?? "";
+                    const text = composer ? composerText(composer) : "";
                     if (text) drafts.current.set(composerKey, text);
                     else drafts.current.delete(composerKey);
                     // Wrapped lines count too, so a long paragraph grows the box.

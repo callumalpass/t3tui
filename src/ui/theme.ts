@@ -183,6 +183,8 @@ export function useMarkdownStyle(): SyntaxStyle {
     "markup.quote": { fg: colors.muted, italic: true },
     "markup.raw": { fg: colors.plan },
     "markup.raw.block": { fg: colors.text },
+    // Attachments and mentions in the message box.
+    "extmark.chip": { fg: colors.accent, bg: colors.element },
   }, owner);
   markdownStyles.set(owner, style);
   return style;

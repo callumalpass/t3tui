@@ -78,6 +78,8 @@ Navigation:
 
 `ctrl+v` attaches the clipboard's image, or pastes its text when there is no image. Pasting or dropping the path of an image file (quoted, as a `file://` URL, or with `\ ` before spaces) attaches the file rather than typing the path. See [Attachments](#attachments).
 
+Attachments and `@` files show in the box as chips, `[image 1]` or `@src/ui/App.tsx`, in the accent colour: the cursor steps over one in a single move and `backspace` deletes it whole. Deleting an attachment's chip removes the attachment. The text sent is what it was without chips: an attachment's chip is left out, and an `@` file goes as its markdown link.
+
 With the box empty after an interrupted run (or one a usage limit stopped), `enter` continues where it left off and releases messages held in the queue.
 
 Typing a trigger opens a list of suggestions above the box:
