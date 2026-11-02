@@ -2,6 +2,7 @@ import type { MouseEvent } from "@opentui/core";
 import type { BoxProps as OpenTuiBoxProps } from "@opentui/react";
 import { useState, type ReactNode } from "react";
 
+import { BAR } from "./edges.ts";
 import { colors } from "./theme.ts";
 
 /** Hover state for a clickable box. Moving between a box and its own text sends out then over, so it settles on the right value. */
@@ -18,15 +19,15 @@ export const isRightClick = (event: MouseEvent) => event.button === 2;
  * A clickable label with its key beside it: `Approve y`. It takes the click for itself, so the
  * card or pane under it doesn't react too, and its text can't be drag-selected.
  */
-export function Button(props: { readonly label: string; readonly shortcut?: string | undefined; readonly color?: string | undefined; readonly onPress: () => void }) {
+export function Button(props: { readonly label: string; readonly shortcut?: string | undefined; readonly color?: string | undefined; /** No background or padding: a bare clickable label, as in the header. */ readonly plain?: boolean; readonly onPress: () => void }) {
   const [hover, hoverProps] = useHover();
   return (
     <box
       flexDirection="row"
       flexShrink={0}
-      paddingLeft={1}
-      paddingRight={1}
-      backgroundColor={hover ? colors.selectedBg : colors.buttonBg}
+      paddingLeft={props.plain ? 0 : 1}
+      paddingRight={props.plain ? 0 : 1}
+      backgroundColor={props.plain ? "transparent" : hover ? colors.selectedBg : colors.buttonBg}
       {...hoverProps}
       onMouseDown={(event: MouseEvent) => {
         event.stopPropagation();
@@ -74,8 +75,11 @@ export function wheelStep(event: MouseEvent): -1 | 0 | 1 {
 }
 
 /**
- * The border between two panes, pressed to start resizing the one on its left. OpenTUI sends a
- * drag to whatever is under the pointer, so the app's root follows the drag (see App).
+ * The 1-column drag target between the list and the conversation. At rest it is invisible
+ * (the panel/background shade change is the edge, and the bar is drawn in the background
+ * colour, which also keeps it findable on screen for tests); under the pointer or while
+ * dragging it shows as an accent bar. OpenTUI sends a drag to whatever is under the
+ * pointer, so the app's root follows the drag (see App).
  */
 export function ResizeHandle(props: { readonly active: boolean; readonly onStart: () => void; readonly onReset: () => void }) {
   const [hover, hoverProps] = useHover();
@@ -83,8 +87,10 @@ export function ResizeHandle(props: { readonly active: boolean; readonly onStart
     <box
       width={1}
       flexShrink={0}
-      border={["right"]}
-      borderColor={hover || props.active ? colors.borderFocused : colors.border}
+      border={["left"]}
+      customBorderChars={BAR}
+      borderColor={hover || props.active ? colors.accent : colors.bg}
+      backgroundColor={colors.bg}
       {...hoverProps}
       onMouseDown={(event: MouseEvent) => {
         event.stopPropagation();
