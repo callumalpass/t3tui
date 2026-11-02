@@ -5,6 +5,7 @@ import { usePaste } from "@opentui/react";
 import { useEffect, useState } from "react";
 
 import type { T3Session } from "../client/session.ts";
+import type { Binding } from "../model/keymap.ts";
 import { pendingSecretRequest } from "../model/queue.ts";
 
 const decoder = new TextDecoder();
@@ -13,7 +14,12 @@ const decoder = new TextDecoder();
  * The open thread's pending secret request and its masked field. The field takes keys itself
  * (the composer never sees the value, so it can't be sent as a message by mistake).
  */
-export function useSecretRequest(input: { readonly session: T3Session; readonly projection: OrchestrationV2ThreadProjection | null | undefined }) {
+export function useSecretRequest(input: {
+  readonly session: T3Session;
+  readonly projection: OrchestrationV2ThreadProjection | null | undefined;
+  /** x dismisses a question first, so it only declines the secret when no question is open. */
+  readonly questionPending: boolean;
+}) {
   const request = input.projection ? pendingSecretRequest(input.projection) : null;
   const [value, setValue] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,30 +48,13 @@ export function useSecretRequest(input: { readonly session: T3Session; readonly 
       .finally(() => setBusy(false));
   };
 
-  /** Keys for the field while it's focused, and enter / x on the card in navigation. */
-  const key = (event: KeyEvent, nav: boolean, questionPending: boolean): boolean => {
-    if (!request) return false;
-    if (value === null) {
-      if (!nav) return false;
-      if (event.name === "return") return setValue(""), true;
-      if (event.name === "x" && !questionPending) return answer({ type: "decline" }), true;
-      return false;
-    }
-    if (event.ctrl && event.name === "c") return false;
-    if (event.name === "escape") setValue(null);
-    else if (event.name === "return") answer({ type: "save", secret: value });
-    else if (event.name === "backspace") setValue(value.slice(0, -1));
+  /** Typing in the focused field: characters, backspace and ctrl+u. Every key stays here. */
+  const type = (event: KeyEvent) => {
+    if (value === null) return;
+    if (event.name === "backspace") setValue(value.slice(0, -1));
     else if (event.ctrl && event.name === "u") setValue("");
     else if (!event.ctrl && !event.meta && event.sequence.length === 1 && event.sequence >= " ") setValue(value + event.sequence);
-    return true;
   };
-
-  const commands = request
-    ? [
-        { id: "secret-answer", title: `Answer secret request: ${request.label}`, run: () => setValue(""), shortcut: "enter", keywords: ["password", "token", "key", "credential"] },
-        { id: "secret-decline", title: `Decline secret request: ${request.label}`, run: () => answer({ type: "decline" }), keywords: ["password", "token", "key", "credential"] },
-      ]
-    : [];
 
   const actions = {
     focus: () => setValue(""),
@@ -73,5 +62,21 @@ export function useSecretRequest(input: { readonly session: T3Session; readonly 
     save: () => value !== null && answer({ type: "save", secret: value }),
     decline: () => answer({ type: "decline" }),
   };
-  return { request, value, error, busy, focused: value !== null, key, commands, actions };
+
+  const keywords = ["password", "token", "key", "credential"];
+  /** On the card in navigation: enter opens the field, x declines. While the field is focused: its own keys. */
+  const bindings: Binding[] = !request
+    ? []
+    : value === null
+      ? [
+          { keys: ["enter"], run: actions.focus, hint: "answer the secret request", command: { id: "secret-answer", title: `Answer secret request: ${request.label}`, keywords } },
+          { keys: input.questionPending ? [] : ["x"], run: actions.decline, ...(input.questionPending ? {} : { hint: "decline" }), command: { id: "secret-decline", title: `Decline secret request: ${request.label}`, keywords } },
+        ]
+      : [
+          { keys: [], label: "", hint: "type or paste the secret" },
+          { keys: ["enter"], run: actions.save, hint: "save securely" },
+          { keys: ["esc"], run: actions.cancel, hint: "cancel" },
+        ];
+
+  return { request, value, error, busy, focused: value !== null, bindings, type, actions };
 }

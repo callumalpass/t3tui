@@ -1,4 +1,4 @@
-import type { KeyEvent, ScrollBoxRenderable } from "@opentui/core";
+import type { ScrollBoxRenderable } from "@opentui/core";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { T3Session } from "../client/session.ts";
 import { splitPatch, wholeFilePatch } from "../model/diffs.ts";
@@ -32,19 +32,10 @@ export function useDiffContext(session: T3Session, diff: DiffState | null, scrol
     setSelected(next);
     scrollRef.current?.scrollChildIntoView(`diff-file-${next}`);
   };
-  const onKey = (key: KeyEvent): boolean => {
-    if (!diff) return false;
-    if (key.name === "[" || key.name === "]") {
-      move(key.name === "[" ? -1 : 1);
-      return true;
-    }
-    if (key.name === "x" || key.name === "return") { expand(); return true; }
-    return false;
-  };
   /** A click on a file's header: select it, and a second click opens its whole file. */
   const click = (index: number) => {
     if (index === selected) return expand(index);
     setSelected(index);
   };
-  return { selected, expanded, onKey, move, expand, click };
+  return { selected, expanded, move, expand, click };
 }

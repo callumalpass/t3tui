@@ -1,9 +1,10 @@
 import type { ModelSelection, OrchestrationV2ThreadProjection, RunId, ThreadId } from "@t3tools/contracts";
 import { queuedRunEditBlockedReason, resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
-import type { KeyEvent, TextareaRenderable } from "@opentui/core";
+import type { TextareaRenderable } from "@opentui/core";
 import { useEffect, useState } from "react";
 
 import type { T3Session } from "../client/session.ts";
+import type { Binding } from "../model/keymap.ts";
 import { queueState, type QueuedMessage } from "../model/queue.ts";
 
 interface QueuedEdit {
@@ -108,47 +109,36 @@ export function useQueue(input: {
     return false;
   };
 
-  const key = (event: KeyEvent, mode: "nav" | "input" | "other"): boolean => {
-    if (mode === "nav" && focus !== null) {
-      const message = queued[focus]!;
-      switch (event.name) {
-        case "j":
-        case "down":
-          return setFocus(Math.min(queued.length - 1, focus + 1)), true;
-        case "k":
-        case "up":
-          return setFocus(Math.max(0, focus - 1)), true;
-        case "return":
-        case "s":
-          return sendNow(message), true;
-        case "e":
-          return beginEdit(message), true;
-        case "x":
-        case "d":
-        case "backspace":
-          return remove(message), true;
-        case "escape":
-        case "q":
-          return setFocus(null), true;
-      }
-      return false;
-    }
-    if (mode === "nav" && event.name === "q" && event.shift && queued.length > 0) return setFocus(0), true;
-    // The web's alt+↑: edit the last queued message.
-    if (mode === "input" && event.meta && event.name === "up" && !editing && queued.length > 0) return beginEdit(queued[queued.length - 1]!), true;
-    if (mode === "input" && event.name === "escape" && editing) return cancelEdit(), true;
-    return false;
-  };
-
   const first = queued[0];
   const last = queued[queued.length - 1];
-  const commands = [
-    ...(first && queue && (queue.canSendNow || queue.canPromoteToSteer) ? [{ id: "queue-send", title: "Queue: send first queued message", run: () => sendNow(first), keywords: ["steer", "now"] }] : []),
-    ...(last ? [{ id: "queue-edit", title: "Queue: edit last queued message", run: () => beginEdit(last), shortcut: "alt+↑", keywords: ["change"] }] : []),
-    ...(queued.length > 0 ? [{ id: "queue-focus", title: "Queue: go through queued messages", run: () => setFocus(0), shortcut: "Q", keywords: ["remove", "cancel", "delete"] }] : []),
-    ...queued.map((message, index) => ({ id: `queue-remove:${message.runId}`, title: `Queue: remove ${index + 1}. ${message.text.replace(/\s+/g, " ").slice(0, 60)}`, run: () => remove(message), keywords: ["cancel", "delete"] })),
-    ...(canResume ? [{ id: "queue-resume", title: queue?.resumableRunId ? "Continue where it left off" : "Send held queued messages", run: resume, keywords: ["resume", "interrupted"] }] : []),
-  ];
+  const focused = focus === null ? undefined : queued[focus];
+  const onFocused = (action: (message: QueuedMessage) => void) => () => focused && action(focused);
+  const keys = {
+    /** In navigation: Q goes through the queue. */
+    nav: queued.length > 0 ? [{ keys: ["Q"], run: () => setFocus(0), hint: "queue", command: { id: "queue-focus", title: "Queue: go through queued messages", keywords: ["remove", "cancel", "delete"] } }] : [],
+    /** While going through the queue: the focused message's keys. */
+    focused: focus === null ? [] : [
+      { keys: ["j", "↓"], label: "j/k", run: () => setFocus(Math.min(queued.length - 1, focus + 1)), hint: "move" },
+      { keys: ["k", "↑"], run: () => setFocus(Math.max(0, focus - 1)) },
+      { keys: ["enter", "s"], run: onFocused(sendNow), hint: "send now" },
+      { keys: ["e"], run: onFocused(beginEdit), hint: "edit" },
+      { keys: ["x", "d", "backspace"], run: onFocused(remove), hint: "remove" },
+      { keys: ["esc", "q"], run: () => setFocus(null), hint: "back" },
+    ],
+    /** In the composer: the web's alt+↑ edits the last queued message. */
+    input: last && !editing ? [{ keys: ["alt+↑"], run: () => beginEdit(last), hint: "edit queued", command: { id: "queue-edit", title: "Queue: edit last queued message", keywords: ["change"] } }] : [],
+    /** In the composer while it holds a queued message. */
+    editing: editing ? [
+      { keys: ["enter"], label: "enter", hint: "save the queued message" },
+      { keys: ["esc"], run: cancelEdit, hint: "cancel the edit" },
+    ] : [],
+    /** Palette-only commands. */
+    palette: [
+      ...(first && queue && (queue.canSendNow || queue.canPromoteToSteer) ? [{ keys: [], run: () => sendNow(first), command: { id: "queue-send", title: "Queue: send first queued message", keywords: ["steer", "now"] } }] : []),
+      ...queued.map((message, index) => ({ keys: [], run: () => remove(message), command: { id: `queue-remove:${message.runId}`, title: `Queue: remove ${index + 1}. ${message.text.replace(/\s+/g, " ").slice(0, 60)}`, keywords: ["cancel", "delete"] } })),
+      ...(canResume ? [{ keys: [], run: resume, command: { id: "queue-resume", title: queue?.resumableRunId ? "Continue where it left off" : "Send held queued messages", keywords: ["resume", "interrupted"] } }] : []),
+    ],
+  } satisfies Record<string, Binding[]>;
 
   const placeholder = editing ? "Edit the queued message (enter saves, esc cancels)" : canResume ? (queue?.resumableRunId ? "Ask anything, or press enter to continue where it left off" : "Ask anything, or press enter to send the held messages") : null;
 
@@ -164,5 +154,5 @@ export function useQueue(input: {
     resume: canResume ? resume : null,
   };
 
-  return { queue, queued, focus, focused: focus !== null, editingRunId: editing?.runId ?? null, editing: editing !== null, key, submit, commands, placeholder, actions };
+  return { queue, queued, focus, focused: focus !== null, editingRunId: editing?.runId ?? null, editing: editing !== null, keys, submit, placeholder, actions };
 }

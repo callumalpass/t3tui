@@ -1,33 +1,32 @@
 import type { MouseEvent } from "@opentui/core";
 
-import { hintKey, type HintKey } from "../model/hints.ts";
+import type { Hint } from "../model/keymap.ts";
 import { isLeftClick, useHover } from "./Button.tsx";
 import { colors } from "./theme.ts";
 
-/** The key hints along the bottom; each one that names a single key presses it when clicked. */
-export function HintBar(props: { readonly text: string; readonly mode: string; readonly onPress: (key: HintKey) => void }) {
-  const parts = props.text.split(" · ");
+/** The key hints along the bottom; a click on one does what its key does. */
+export function HintBar(props: { readonly hints: readonly Hint[] }) {
   return (
     <box flexDirection="row" overflow="hidden">
-      {parts.map((part, index) => (
-        <Hint key={`${index}:${part}`} text={part} separator={index > 0} hintKey={hintKey(part, props.mode)} onPress={props.onPress} />
+      {props.hints.map((hint, index) => (
+        <HintItem key={`${index}:${hint.key}:${hint.label}`} hint={hint} separator={index > 0} />
       ))}
     </box>
   );
 }
 
-function Hint(props: { readonly text: string; readonly separator: boolean; readonly hintKey: HintKey | null; readonly onPress: (key: HintKey) => void }) {
+function HintItem(props: { readonly hint: Hint; readonly separator: boolean }) {
   const [hover, hoverProps] = useHover();
-  const key = props.hintKey;
+  const { key, label, run } = props.hint;
   return (
     <box flexDirection="row" flexShrink={0}>
       {props.separator ? <text fg={colors.faint} selectable={false}>{" · "}</text> : null}
       <text
-        fg={key && hover ? colors.text : colors.faint}
+        fg={run && hover ? colors.text : colors.faint}
         selectable={false}
-        {...(key ? { ...hoverProps, onMouseDown: (event: MouseEvent) => isLeftClick(event) && props.onPress(key) } : {})}
+        {...(run ? { ...hoverProps, onMouseDown: (event: MouseEvent) => isLeftClick(event) && run() } : {})}
       >
-        {props.text}
+        {key ? `${key} ${label}` : label}
       </text>
     </box>
   );

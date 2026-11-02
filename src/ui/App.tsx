@@ -50,7 +50,7 @@ import { useTurns } from "./useTurns.ts";
 import { ThreadView, type ConversationMouse, type ConversationTarget } from "./ThreadView.tsx";
 import { Button, ResizeHandle } from "./Button.tsx";
 import { HintBar } from "./HintBar.tsx";
-import type { HintKey } from "../model/hints.ts";
+import { bindingFor, commandsFor, fromCommand, hinted, hintsFor, keys, type Binding } from "../model/keymap.ts";
 import { useEvent } from "./useEvent.ts";
 import { useQueue } from "./useQueue.ts";
 import { useSecretRequest } from "./useSecretRequest.ts";
@@ -385,7 +385,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     say,
     toInput: () => setMode("input"),
   });
-  const secret = useSecretRequest({ session, projection: draft ? null : projection });
+  const secret = useSecretRequest({ session, projection: draft ? null : projection, questionPending: pendingInput !== undefined });
   onAlert.current = (alert) => {
     const mode = config.notificationMode;
     if (mode === "sound" || mode === "notifications-and-sound") ring();
@@ -1033,65 +1033,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   });
 
   // The command palette: everything the keys do, plus what the details panel offers.
-  const commands: (PaletteCommand & { readonly run: () => void })[] = [...turns.commands];
-  const command = (id: string, label: string, action: () => void, extra: Omit<PaletteCommand, "id" | "title"> = {}) => commands.push({ id, title: label, run: action, ...extra });
-  if (pendingApproval) {
-    command("approve", "Approve request", () => respond("accept"), { shortcut: "y" });
-    command("approve-session", "Always allow this session", () => respond("acceptForSession"), { shortcut: "Y" });
-    command("decline", "Decline request", () => respond("decline"), { shortcut: "n" });
-  }
-  if (threadId && pendingInput?.dismissible) command("dismiss", "Dismiss question", () => run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId)), { shortcut: "x" });
-  if (threadId) command("type", "Write a message", () => setMode("input"), { shortcut: "i", keywords: ["compose", "send", "steer"] });
-  commands.push(...secret.commands, ...queue.commands);
-  for (const agent of projection?.subagents ?? []) {
-    if (threadId && canStopSubagent(agent)) command(`stop-subagent:${agent.id}`, `Stop subagent: ${agent.title ?? "subagent"}`, () => run("Stop requested", () => session.stopSubagent(agent)), { keywords: ["interrupt", "cancel", "kill"] });
-  }
-  if (threadId && working) command("stop", "Stop thread", () => run("Stop requested", () => session.stopThread(threadId)), { shortcut: "S", keywords: ["interrupt", "cancel"] });
-  if (details?.changes && details.changes.files.length > 0) command("diff", "View uncommitted changes", () => openDiff(null), { keywords: ["diff", "changes"] });
-  for (const action of actions) {
-    if (action.kind === "git") command(action.id, `Git: ${action.git.label}`, () => runGit(action.git), { keywords: ["commit", "push", "pull request", "pr"] });
-    if (action.kind === "server") command(action.id, `Stop server ${action.server.url}`, () => stopServer(action.server), { keywords: ["port", "kill"] });
-    if (action.kind === "automation") {
-      command(action.id, `Run automation: ${action.task.title}`, () => runAutomation(action.task), { keywords: ["scheduled", "task"] });
-      command(`${action.id}:toggle`, `${action.task.enabled ? "Turn off" : "Turn on"} automation: ${action.task.title}`, () => toggleAutomation(action.task), { keywords: ["scheduled", "task", "enable", "disable"] });
-      command(`${action.id}:edit`, `Edit automation: ${action.task.title}`, () => automationEditing.editAutomation(action.task), { keywords: ["scheduled", "task", "editor"] });
-      command(`${action.id}:delete`, `Delete automation: ${action.task.title}`, () => automationEditing.deleteAutomation(action.task), { keywords: ["scheduled", "task", "remove"] });
-    }
-  }
-  if (parent) command("parent", `Go to parent: ${parent.title}`, () => openThread(parent.threadId), { shortcut: "u" });
-  command("details", showDetails ? "Hide thread details" : "Show thread details", () => setDetailsPref(!showDetails), { shortcut: "d", keywords: ["panel", "info"] });
-  if (threadShell) command("focus-details", "Focus thread details", focusDetails, { shortcut: "l" });
-  command("expand", expandAll ? "Collapse work" : "Expand all work", () => setExpandAll(!expandAll), { shortcut: "e", keywords: ["fold", "tool calls"] });
-  if (thread?.history.hasMore) command("earlier", "Load earlier turns", loadEarlier, { shortcut: "o", keywords: ["history", "older"] });
-  if (!attached) {
-    command("filter", "Filter threads", () => setMode("filter"), { shortcut: "/", keywords: ["search"] });
-    command("settled", showFolded ? "Hide settled threads" : "Show settled threads", () => setShowFolded(!showFolded), { shortcut: "z", keywords: ["snoozed", "archive"] });
-  }
-  if (threadShell) command("thread-menu", "Thread actions…", openSelectedThreadMenu, { shortcut: ".", keywords: ["settle", "pin", "snooze", "rename", "archive", "delete", "copy", "unread", "menu"] });
-  command("new-thread", "New thread", startDraft, { shortcut: "c", keywords: ["create", "start", "chat"] });
-  if (draft) {
-    command("draft-project", "New thread: choose project", openProjectPicker, { shortcut: "p" });
-    command("draft-workspace", draft.envMode === "local" && !draft.existingWorktree ? "New thread: use a new worktree" : "New thread: run in the project folder", toggleWorkspace, { shortcut: "w", keywords: ["worktree", "local", "branch"] });
-    command("draft-cancel", "Cancel new thread", () => setDraft(null), { keywords: ["discard"] });
-  }
-  if (currentModel) command("model", "Change model, options or mode", openModelPicker, { shortcut: "m", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] });
-  commands.push(...workspace.commands);
-  if (threadId || draft) command("editor", "Write the message in $EDITOR", openEditor, { shortcut: "ctrl+g", keywords: ["vim", "editor", "compose"] });
-  if (threadId || draft) commands.push(...attach.commands);
-  command("new-automation", "New automation", automationEditing.newAutomation, { keywords: ["scheduled", "task", "create", "editor"] });
-  usageInfo.credits.forEach((credit, index) => command(`reset-credit:${index}`, `Use reset credit: ${credit.label}`, () => useResetCredit(credit), { keywords: ["usage", "limit", "reset", "credit"] }));
-  for (const prCommand of pullRequests.commands) commands.push(prCommand);
-  command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options", "notifications", "alerts"] });
-  command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
-
-  commands.push(...library.commands(threadId));
-  if (threadId && !draft) command("find", "Find in thread", openFind, { shortcut: "f", keywords: ["search", "messages", "plans"] });
-  const paletteSearch = usePaletteSearch(session, library.merged, paletteQuery, mode === "palette");
-  const paletteSnapshot = useMemo(() => mergeThreadShells(library.merged, paletteSearch.result?.threads ?? []), [library.merged, paletteSearch.result]);
-  const commandKey = commands.map((candidate) => `${candidate.id}:${candidate.title}`).join("|");
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- commands are rebuilt each render; commandKey tracks what changed.
-  const groups = useMemo(() => (mode === "palette" ? messageMatchGroups(paletteGroups({ query: paletteQuery, commands, snapshot: paletteSnapshot, now }), paletteSearch.result, paletteSnapshot, paletteQuery, now) : []), [mode, paletteQuery, commandKey, paletteSnapshot, paletteSearch.result]);
-  const entries = paletteEntries(groups);
   const openPalette = () => {
     if (mode !== "palette" && mode !== "confirm") returnMode.current = mode === "filter" ? "nav" : mode;
     setPaletteQuery("");
@@ -1104,22 +1045,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setMode(returnMode.current === "details" ? "nav" : returnMode.current);
     if (entry.kind === "thread") return openThread(entry.threadId);
     commands.find((candidate) => candidate.id === entry.command.id)?.run();
-  };
-
-  /** Keys that work in every mode. Returns true when handled. */
-  const globalKey = (key: KeyEvent): boolean => {
-    if (key.ctrl && key.name === "c") return quit(), true;
-    if (key.ctrl && key.name === "k") return openPalette(), true;
-    if ((key.ctrl && key.name === "j") || key.name === "linefeed") return workspace.openTerminal(), true;
-    if (key.ctrl && key.name === "g" && (threadId || draft)) return openEditor(), true;
-    // One-line inputs keep ctrl+u and ctrl+d for editing.
-    const lineInput = mode === "filter" || mode === "palette" || mode === "confirm";
-    if (key.name === "pagedown" || (!lineInput && key.ctrl && key.name === "d")) return scrollPage(1), true;
-    if (key.name === "pageup" || (!lineInput && key.ctrl && key.name === "u")) return scrollPage(-1), true;
-    if (!attached && ((key.ctrl && key.name === "n") || (key.meta && key.name === "down"))) return move(1), true;
-    if (!attached && ((key.ctrl && key.name === "p") || (key.meta && key.name === "up"))) return move(-1), true;
-    if (mode === "input" && key.meta && key.name === "return") return submit(true), true;
-    return false;
   };
 
   // The / $ @ # menu: the web composer's suggestions for the trigger under the cursor.
@@ -1167,7 +1092,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         return null;
     }
   })();
-  const menuOpen = menu !== null;
   const menuSelected = menu ? Math.min(menuIndex, Math.max(0, menu.items.length - 1)) : 0;
   useEffect(() => setMenuIndex(0), [triggerKey]);
   // A different composer (another thread, or the draft) mounts with its own text.
@@ -1199,213 +1123,297 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setComposerLines(composerLineCount(composer));
     if (item.action === "model") openModelPicker();
   };
-  /** Keys the menu takes while it's open; the rest go to the message box. */
-  const menuKey = (key: KeyEvent): boolean => {
-    if (!menu) return false;
-    if (key.name === "escape") return setMenuDismissed(triggerKey), true;
-    // Enter waits for a search in flight rather than sending the half-typed mention.
-    if (menu.loading && key.name === "return") return true;
-    if (menu.items.length === 0) return false;
-    if (key.name === "down" || (key.ctrl && key.name === "n")) return setMenuIndex(Math.min(menu.items.length - 1, menuSelected + 1)), true;
-    if (key.name === "up" || (key.ctrl && key.name === "p")) return setMenuIndex(Math.max(0, menuSelected - 1)), true;
-    if (key.name === "tab" || (key.name === "return" && !key.shift && !key.meta)) return chooseMenuItem(menu.items[menuSelected]), true;
-    return false;
+  // Keys. Each state has its bindings in hint order; the first one that takes a key runs it.
+  // The same bindings name the hints, make them clickable, and give the palette its shortcuts.
+  const hasComposer = threadId !== undefined || draft !== null;
+  const scrollBy = (lines: number) => scrollRef.current?.scrollBy(lines);
+  const toInput = () => {
+    if (hasComposer) setMode("input");
   };
+  const dismissQuestion = threadId && pendingInput?.dismissible ? () => run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId)) : null;
+  const leaveDetails = () => {
+    setDetailsSelected(null);
+    setMode("nav");
+  };
+  const selectedAction = () => actions.find((candidate) => candidate.id === detailsSelected);
+
+  // Keys that work wherever there's no line input to type into.
+  const quitKey: Binding = { keys: ["ctrl+c"], run: quit };
+  const paletteKey: Binding = { keys: ["ctrl+k"], run: openPalette };
+  const terminalKey: Binding = { keys: ["ctrl+j"], run: workspace.openTerminal };
+  const editorKey: Binding | null = hasComposer ? { keys: ["ctrl+g"], run: openEditor, command: { id: "editor", title: "Write the message in $EDITOR", keywords: ["vim", "editor", "compose"] } } : null;
+  const nextThreadKey: Binding = { keys: ["ctrl+n", "alt+↓"], label: "ctrl+n/p", run: () => move(1) };
+  const previousThreadKey: Binding = { keys: ["ctrl+p", "alt+↑"], run: () => move(-1) };
+  // One-line inputs keep ctrl+u and ctrl+d for editing.
+  const lineInput = mode === "filter";
+  const globalKeys = keys(
+    quitKey,
+    paletteKey,
+    terminalKey,
+    editorKey,
+    { keys: lineInput ? ["pagedown"] : ["pagedown", "ctrl+d"], run: () => scrollPage(1) },
+    { keys: lineInput ? ["pageup"] : ["pageup", "ctrl+u"], run: () => scrollPage(-1) },
+    !attached && nextThreadKey,
+    !attached && previousThreadKey,
+  );
+
+  const digitKeys = pendingInput ? [1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit): Binding => ({ keys: [String(digit)], run: () => pickOption(digit - 1) })) : [];
+  const pickHint: Binding = { keys: [], label: "1-9", hint: "pick" };
+
+  // Navigation: single keys move, open and act on the thread.
+  const scrollDiffDown: Binding = { keys: ["j", "↓"], label: "j/k", run: () => scrollBy(1), hint: "scroll" };
+  const closeDiff: Binding = { keys: ["esc", "q"], run: () => setDiff(null), hint: "close diff" };
+  const typeKey: Binding = { keys: ["i", "enter", "tab"], run: toInput, hint: "type", ...(threadId ? { command: { id: "type", title: "Write a message", keywords: ["compose", "send", "steer"] } } : {}) };
+  const projectKey: Binding | null = draft ? { keys: ["p"], run: openProjectPicker, hint: "project", command: { id: "draft-project", title: "New thread: choose project" } } : null;
+  const modelKey: Binding | null = currentModel ? { keys: ["m"], run: openModelPicker, hint: "model", command: { id: "model", title: "Change model, options or mode", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] } } : null;
+  const worktreeKey: Binding | null = draft
+    ? { keys: ["w"], run: toggleWorkspace, hint: "worktree", command: { id: "draft-workspace", title: draft.envMode === "local" && !draft.existingWorktree ? "New thread: use a new worktree" : "New thread: run in the project folder", keywords: ["worktree", "local", "branch"] } }
+    : null;
+  const detailsKey: Binding = { keys: ["l", "→"], run: focusDetails, hint: "details", ...(threadShell ? { command: { id: "focus-details", title: "Focus thread details" } } : {}) };
+  const cancelDraftKey: Binding | null = draft ? { keys: ["esc"], run: () => setDraft(null), hint: "cancel", command: { id: "draft-cancel", title: "Cancel new thread", keywords: ["discard"] } } : null;
+  const navKeys = keys(
+    diff && [scrollDiffDown, { keys: ["k", "↑"], run: () => scrollBy(-1) }, closeDiff],
+    turns.bindings,
+    pendingApproval && [
+      { keys: ["y"], run: () => respond("accept"), hint: "approve", command: { id: "approve", title: "Approve request" } },
+      { keys: ["Y"], run: () => respond("acceptForSession"), hint: "always", command: { id: "approve-session", title: "Always allow this session" } },
+      { keys: ["n"], run: () => respond("decline"), hint: "decline", command: { id: "decline", title: "Decline request" } },
+    ],
+    !diff && secret.bindings,
+    pendingInput && pickHint,
+    digitKeys,
+    dismissQuestion && { keys: ["x"], run: dismissQuestion, hint: "dismiss", command: { id: "dismiss", title: "Dismiss question" } },
+    queue.keys.nav,
+    library.commands(threadId).map((command) => fromCommand(command)),
+    workspace.commands.map((command) => fromCommand(command)),
+    threadId && !draft && { keys: ["f"], run: openFind, command: { id: "find", title: "Find in thread", keywords: ["search", "messages", "plans"] } },
+    // Only P is a navigation key; the rest are the PR view's own (below).
+    pullRequests.commands.filter((command) => command.id === "pull-requests").map((command) => fromCommand(command)),
+    { keys: ["j", "↓"], label: "j/k", run: () => (attached ? scrollBy(1) : move(1)), hint: attached ? "scroll" : "threads" },
+    { keys: ["k", "↑"], run: () => (attached ? scrollBy(-1) : move(-1)) },
+    !attached && { keys: ["/"], run: () => setMode("filter"), hint: "filter", command: { id: "filter", title: "Filter threads", keywords: ["search"] } },
+    typeKey,
+    projectKey,
+    { keys: ["c"], run: startDraft, hint: "new", command: { id: "new-thread", title: "New thread", keywords: ["create", "start", "chat"] } },
+    hasComposer && attach.commands.map((command) => fromCommand(command, command.id === "attach-file" ? "attach" : undefined)),
+    threadShell && { keys: ["."], run: openSelectedThreadMenu, hint: "actions", command: { id: "thread-menu", title: "Thread actions…", keywords: ["settle", "pin", "snooze", "rename", "archive", "delete", "copy", "unread", "menu"] } },
+    modelKey,
+    worktreeKey,
+    hinted(terminalKey, "terminal"),
+    detailsKey,
+    parent && { keys: ["u"], run: () => openThread(parent.threadId), hint: "parent", command: { id: "parent", title: `Go to parent: ${parent.title}` } },
+    hinted(paletteKey, "commands"),
+    { keys: ["q"], run: quit, hint: "quit", command: { id: "quit", title: "Quit tui3", keywords: ["exit"] } },
+    { keys: ["d"], run: () => setDetailsPref(!showDetails), command: { id: "details", title: showDetails ? "Hide thread details" : "Show thread details", keywords: ["panel", "info"] } },
+    { keys: ["e"], run: () => setExpandAll((value) => !value), command: { id: "expand", title: expandAll ? "Collapse work" : "Expand all work", keywords: ["fold", "tool calls"] } },
+    thread?.history.hasMore && { keys: ["o"], run: loadEarlier, command: { id: "earlier", title: "Load earlier turns", keywords: ["history", "older"] } },
+    !attached && { keys: ["z"], run: () => setShowFolded((value) => !value), command: { id: "settled", title: showFolded ? "Hide settled threads" : "Show settled threads", keywords: ["snoozed", "archive"] } },
+    threadId && working && { keys: ["S"], run: () => run("Stop requested", () => session.stopThread(threadId)), command: { id: "stop", title: "Stop thread", keywords: ["interrupt", "cancel"] } },
+    { keys: ["g"], run: () => scrollRef.current?.scrollTo(0) },
+    { keys: ["G"], run: () => scrollRef.current?.scrollTo(scrollRef.current.scrollHeight) },
+    { keys: [":"], run: openPalette },
+    cancelDraftKey,
+  );
+  // A diff and a draft name their own few keys; everything else names the lot.
+  const navHints = diff
+    ? [scrollDiffDown, closeDiff, detailsKey]
+    : draft
+      ? keys(hinted(typeKey, "write the first message"), projectKey, modelKey && hinted(modelKey, "model & mode"), worktreeKey, cancelDraftKey)
+      : navKeys;
+
+  // Commands only the palette runs.
+  const paletteOnly = keys(
+    editorKey,
+    queue.keys.input,
+    queue.keys.palette,
+    (projection?.subagents ?? []).filter((agent) => threadId && canStopSubagent(agent)).map((agent): Binding => ({ keys: [], run: () => run("Stop requested", () => session.stopSubagent(agent)), command: { id: `stop-subagent:${agent.id}`, title: `Stop subagent: ${agent.title ?? "subagent"}`, keywords: ["interrupt", "cancel", "kill"] } })),
+    details?.changes && details.changes.files.length > 0 && { keys: [], run: () => openDiff(null), command: { id: "diff", title: "View uncommitted changes", keywords: ["diff", "changes"] } },
+    actions.flatMap((action): Binding[] => {
+      if (action.kind === "git") return [{ keys: [], run: () => runGit(action.git), command: { id: action.id, title: `Git: ${action.git.label}`, keywords: ["commit", "push", "pull request", "pr"] } }];
+      if (action.kind === "server") return [{ keys: [], run: () => stopServer(action.server), command: { id: action.id, title: `Stop server ${action.server.url}`, keywords: ["port", "kill"] } }];
+      if (action.kind !== "automation") return [];
+      const task = action.task;
+      return [
+        { keys: [], run: () => runAutomation(task), command: { id: action.id, title: `Run automation: ${task.title}`, keywords: ["scheduled", "task"] } },
+        { keys: [], run: () => toggleAutomation(task), command: { id: `${action.id}:toggle`, title: `${task.enabled ? "Turn off" : "Turn on"} automation: ${task.title}`, keywords: ["scheduled", "task", "enable", "disable"] } },
+        { keys: [], run: () => automationEditing.editAutomation(task), command: { id: `${action.id}:edit`, title: `Edit automation: ${task.title}`, keywords: ["scheduled", "task", "editor"] } },
+        { keys: [], run: () => automationEditing.deleteAutomation(task), command: { id: `${action.id}:delete`, title: `Delete automation: ${task.title}`, keywords: ["scheduled", "task", "remove"] } },
+      ];
+    }),
+    { keys: [], run: automationEditing.newAutomation, command: { id: "new-automation", title: "New automation", keywords: ["scheduled", "task", "create", "editor"] } },
+    usageInfo.credits.map((credit, index): Binding => ({ keys: [], run: () => useResetCredit(credit), command: { id: `reset-credit:${index}`, title: `Use reset credit: ${credit.label}`, keywords: ["usage", "limit", "reset", "credit"] } })),
+    // The PR view's keys are its own; the palette shows them without taking them here.
+    pullRequests.commands.map((command): Binding => ({ ...fromCommand(command), keys: [], ...(command.shortcut ? { label: command.shortcut } : {}) })),
+    { keys: [], run: openSettings, command: { id: "settings", title: "Settings", keywords: ["preferences", "config", "options", "notifications", "alerts"] } },
+  );
+  const commands = commandsFor([...navKeys, ...paletteOnly]);
+
+  // The composer. Enter and newlines are the textarea's own; their hints only explain.
+  const sendKey = config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
+  const inputKeys = keys(
+    pendingApproval && { keys: [], label: "approval waiting:", hint: "esc, then y/n" },
+    pendingInput && pickHint,
+    pendingInput && composerEmpty && digitKeys,
+    { keys: [], label: sendKey, hint: working ? config.followUpBehavior : "send" },
+    working && { keys: [], label: "alt+enter", hint: config.followUpBehavior === "steer" ? "queue" : "steer" },
+    { keys: ["alt+enter"], run: () => submit(true) },
+    queue.keys.input,
+    { keys: [], label: config.sendShortcut === "enter" ? "shift+enter or \\" : "enter", hint: "newline" },
+    editorKey && hinted(editorKey, "editor"),
+    { keys: ["esc"], run: () => setMode("nav"), hint: "navigate" },
+    !attached && hinted(nextThreadKey, "thread"),
+  );
+  const menuKeys = menu
+    ? keys(
+        { keys: [], label: "↑/↓", hint: "move" },
+        menu.items.length > 0 && [
+          { keys: ["↓", "ctrl+n"], run: () => setMenuIndex(Math.min(menu.items.length - 1, menuSelected + 1)) },
+          { keys: ["↑", "ctrl+p"], run: () => setMenuIndex(Math.max(0, menuSelected - 1)) },
+        ],
+        // Enter waits for a search in flight rather than sending the half-typed mention.
+        menu.loading && { keys: ["enter"], run: () => {} },
+        menu.items.length > 0 ? { keys: ["tab", "enter"], label: "tab or enter", hint: "choose", run: () => chooseMenuItem(menu.items[menuSelected]) } : { keys: [], label: "tab or enter", hint: "choose" },
+        { keys: ["esc"], run: () => setMenuDismissed(triggerKey), hint: "close" },
+      )
+    : [];
+
+  // Lists and overlays.
+  const listMove = (step: (delta: number) => void): Binding[] => [
+    { keys: [], label: "↑/↓", hint: "move" },
+    { keys: ["↓", "ctrl+n"], run: () => step(1) },
+    { keys: ["↑", "ctrl+p"], run: () => step(-1) },
+  ];
+  const detailsKeys = keys(
+    { keys: ["j", "↓"], label: "j/k", run: () => moveDetails(1), hint: "move" },
+    { keys: ["k", "↑"], run: () => moveDetails(-1) },
+    {
+      keys: ["enter", "space"],
+      run: () => {
+        const action = selectedAction();
+        if (action) activate(action);
+      },
+      hint: "open",
+    },
+    {
+      keys: ["t"],
+      run: () => {
+        const action = selectedAction();
+        if (action?.kind === "automation") toggleAutomation(action.task);
+      },
+      hint: "toggle automation",
+    },
+    { keys: ["esc"], run: () => (diff ? setDiff(null) : leaveDetails()), hint: "back" },
+    { keys: ["h", "←"], run: leaveDetails },
+  );
+  const settingsKeys = keys(
+    { keys: ["j", "↓"], label: "j/k", run: () => setSettingsIndex(Math.min(settingsRows.length - 1, (settingsIndex ?? 0) + 1)), hint: "move" },
+    { keys: ["k", "↑"], run: () => setSettingsIndex(Math.max(0, (settingsIndex ?? 0) - 1)) },
+    { keys: ["enter", "space"], run: () => cycleSetting(settingsIndex ?? 0), hint: "change" },
+    { keys: ["esc", "q", "h", "←"], run: closeSettings, hint: "close" },
+  );
+  const prCommand = (prefix: string) => pullRequests.commands.find((command) => command.id.startsWith(prefix));
+  const prKey = (key: string, prefix: string, hint: string): Binding | null => {
+    const command = prCommand(prefix);
+    return command ? { keys: [key], run: command.run, hint } : null;
+  };
+  const pullRequestKeys = keys(
+    { keys: ["j", "↓"], label: "j/k", run: () => scrollBy(1), hint: "scroll" },
+    { keys: ["k", "↑"], run: () => scrollBy(-1) },
+    { keys: ["g"], run: () => scrollRef.current?.scrollTo(0) },
+    { keys: ["G"], run: () => scrollRef.current?.scrollTo(scrollRef.current.scrollHeight) },
+    prKey("o", "pr-open", "open"),
+    prKey("r", "pr-refresh", "refresh"),
+    prKey("c", "pr-comment", "comment"),
+    prKey("R", "pr-review", "review"),
+    prKey("a", "pr-actions", "actions"),
+    prKey("w", "watch-pull-request", "watch"),
+    prKey("u", "unlink-pull-request", "unlink"),
+    { keys: ["esc", "q"], run: pullRequests.close, hint: "close" },
+  );
+  const findKeys = keys(
+    { keys: ["enter"], run: () => find.step(1), hint: "next match" },
+    { keys: ["shift+enter"], run: () => find.step(-1), hint: "previous" },
+    { keys: ["ctrl+n"], label: "ctrl+n/p", run: () => find.step(1), hint: "match" },
+    { keys: ["ctrl+p"], run: () => find.step(-1) },
+    { keys: ["esc"], run: () => setMode("nav"), hint: "close find" },
+    quitKey,
+    paletteKey,
+  );
+  const closePicker = () => {
+    setPicker(null);
+    setMode(returnMode.current);
+  };
+  const confirmNow = () => {
+    const pending = confirmation;
+    closeOverlay();
+    pending?.run("");
+  };
+
+  /** The bindings for the current state, most specific first, and the ones the hint bar names. */
+  const keymap = ((): { readonly layers: readonly (readonly Binding[])[]; readonly hints: readonly Binding[] } => {
+    switch (mode) {
+      case "find":
+        return { layers: [findKeys], hints: findKeys };
+      case "picker": {
+        const pickerKeys = [...listMove((delta) => setPickerIndex((index) => Math.max(0, Math.min(pickerEntries.length - 1, index + delta)))), { keys: [], label: "enter", hint: "choose" }, { keys: ["esc"], run: closePicker, hint: "close" }, quitKey];
+        return { layers: [pickerKeys], hints: pickerKeys };
+      }
+      case "palette": {
+        const paletteKeys = [...listMove((delta) => setPaletteIndex((index) => Math.max(0, Math.min(entries.length - 1, index + delta)))), { keys: [], label: "enter", hint: "run" }, { keys: ["esc", "ctrl+k"], run: () => setMode(returnMode.current), hint: "close" }, quitKey];
+        return { layers: [paletteKeys], hints: paletteKeys };
+      }
+      case "confirm": {
+        // Without a message box, enter confirms here; with one, the box's submit does.
+        const confirmKeys = [confirmation?.message ? { keys: [], label: "enter", hint: "confirm" } : { keys: ["enter"], run: confirmNow, hint: "confirm" }, { keys: ["esc"], run: closeOverlay, hint: "cancel" }, quitKey];
+        return { layers: [confirmKeys], hints: confirmKeys };
+      }
+    }
+    // The secret field takes every key while it's focused.
+    if (secret.focused) return { layers: [secret.bindings, [quitKey]], hints: secret.bindings };
+    switch (mode) {
+      case "input":
+        if (menu) return { layers: [menuKeys, inputKeys, globalKeys], hints: menuKeys };
+        if (queue.editing) return { layers: [queue.keys.editing, inputKeys, globalKeys], hints: queue.keys.editing };
+        return { layers: [inputKeys, globalKeys], hints: inputKeys };
+      case "filter": {
+        const filterKeys = [{ keys: [], label: "enter", hint: "done" }, { keys: ["esc"], run: () => setMode("nav"), hint: "close" }];
+        return { layers: [filterKeys, globalKeys], hints: filterKeys };
+      }
+      case "settings":
+        return { layers: [settingsKeys, globalKeys], hints: settingsKeys };
+      case "pull-request":
+        return { layers: [pullRequestKeys, globalKeys], hints: pullRequestKeys };
+      case "details":
+        return { layers: [detailsKeys, globalKeys, navKeys], hints: detailsKeys };
+      default:
+        if (queue.focused) return { layers: [queue.keys.focused, globalKeys, navKeys], hints: queue.keys.focused };
+        return { layers: [globalKeys, navKeys], hints: navHints };
+    }
+  })();
 
   const handleKey = (key: KeyEvent) => {
     // A key ends a mouse selection; it was copied when the drag ended.
     if (renderer.hasSelection) renderer.clearSelection();
-    if (mode === "find") {
-      if (key.ctrl && key.name === "c") return quit();
-      if (key.ctrl && key.name === "k") return openPalette(), key.preventDefault();
-      if (find.handleKey(key)) {
-        if (key.name === "escape") setMode("nav");
+    for (const layer of keymap.layers) {
+      const binding = bindingFor(layer, key);
+      if (binding?.run) {
+        binding.run();
         return key.preventDefault();
       }
-      return;
     }
-    if (mode === "input" && menuKey(key)) return key.preventDefault();
-    if (mode === "picker") {
-      if (key.ctrl && key.name === "c") return quit();
-      if (key.name === "escape") {
-        setPicker(null);
-        setMode(returnMode.current);
-      } else if (key.name === "down" || (key.ctrl && key.name === "n")) setPickerIndex((index) => Math.min(pickerEntries.length - 1, index + 1));
-      else if (key.name === "up" || (key.ctrl && key.name === "p")) setPickerIndex((index) => Math.max(0, index - 1));
-      else return;
-      return key.preventDefault();
-    }
-    if (mode === "palette") {
-      if (key.ctrl && key.name === "c") return quit();
-      if (key.name === "escape" || (key.ctrl && key.name === "k")) setMode(returnMode.current);
-      else if (key.name === "down" || (key.ctrl && key.name === "n")) setPaletteIndex((index) => Math.min(entries.length - 1, index + 1));
-      else if (key.name === "up" || (key.ctrl && key.name === "p")) setPaletteIndex((index) => Math.max(0, index - 1));
-      else return;
-      return key.preventDefault();
-    }
-    if (mode === "confirm") {
-      if (key.ctrl && key.name === "c") return quit();
-      if (key.name === "escape") {
-        closeOverlay();
-        return key.preventDefault();
-      }
-      // Without a message box, enter confirms here; with one, the box's submit does.
-      if (key.name === "return" && !confirmation?.message) {
-        const pending = confirmation;
-        closeOverlay();
-        pending?.run("");
-        return key.preventDefault();
-      }
-      return;
-    }
-    if (secret.key(key, mode === "nav" && !diff, Boolean(pendingInput))) return key.preventDefault();
-    if (queue.key(key, mode === "nav" ? "nav" : mode === "input" ? "input" : "other")) return key.preventDefault();
-    if (globalKey(key)) return key.preventDefault();
-    const digit = /^[1-9]$/.test(key.name) && !key.ctrl && !key.meta ? Number(key.name) - 1 : -1;
-    if (digit >= 0 && pendingInput && (mode === "nav" || (mode === "input" && composerEmpty))) {
-      pickOption(digit);
-      return key.preventDefault();
-    }
-    if (mode === "input" || mode === "filter") {
-      if (key.name === "escape") {
-        setMode("nav");
-        key.preventDefault();
-      }
-      return;
-    }
-    const scroll = scrollRef.current;
-    if (mode === "pull-request") {
-      if (pullRequests.handleKey(key, scroll)) return key.preventDefault();
-      return;
-    }
-    if (mode === "settings") {
-      const index = settingsIndex ?? 0;
-      switch (key.name) {
-        case "j":
-        case "down":
-          return setSettingsIndex(Math.min(settingsRows.length - 1, index + 1));
-        case "k":
-        case "up":
-          return setSettingsIndex(Math.max(0, index - 1));
-        case "return":
-        case "space":
-          cycleSetting(index);
-          return key.preventDefault();
-        case "escape":
-        case "q":
-        case "h":
-        case "left":
-          return closeSettings();
-      }
-      return;
-    }
-    if (mode === "details") {
-      switch (key.name) {
-        case "j":
-        case "down":
-          return moveDetails(1);
-        case "k":
-        case "up":
-          return moveDetails(-1);
-        case "return":
-        case "space": {
-          const action = actions.find((candidate) => candidate.id === detailsSelected);
-          if (action) activate(action);
-          return key.preventDefault();
-        }
-        case "t": {
-          const action = actions.find((candidate) => candidate.id === detailsSelected);
-          if (action?.kind === "automation") toggleAutomation(action.task);
-          return;
-        }
-        case "escape":
-          if (diff) return setDiff(null);
-          setDetailsSelected(null);
-          return setMode("nav");
-        case "h":
-        case "left":
-          setDetailsSelected(null);
-          return setMode("nav");
-      }
-    }
-    if (workspace.key(key)) return;
-    if (mode === "nav" && library.key(key, threadId)) return key.preventDefault();
-    if (mode === "nav" && key.name === "f" && threadId && !draft) return openFind(), key.preventDefault();
-    if (mode === "nav" && turns.onKey(key)) return key.preventDefault();
-    switch (key.name) {
-      case "q":
-        if (diff) return setDiff(null);
-        return quit();
-      case "escape":
-        if (diff) setDiff(null);
-        else if (draft) setDraft(null);
-        return;
-      case "c":
-        return startDraft();
-      case "a":
-        if (threadId || draft) attach.attachFile();
-        return;
-      case "m":
-        return openModelPicker();
-      case ".":
-        return openSelectedThreadMenu();
-      case "p":
-        if (key.shift) return pullRequests.open();
-        if (draft) openProjectPicker();
-        return;
-      case "w":
-        if (draft) toggleWorkspace();
-        return;
-      case "j":
-      case "down":
-        return attached || diff ? scroll?.scrollBy(1) : move(1);
-      case "k":
-      case "up":
-        return attached || diff ? scroll?.scrollBy(-1) : move(-1);
-      case "g":
-        return key.shift ? scroll?.scrollTo(scroll.scrollHeight) : scroll?.scrollTo(0);
-      case "d":
-        return setDetailsPref(!showDetails);
-      case "l":
-      case "right":
-        return focusDetails();
-      case "u":
-        if (parent) openThread(parent.threadId);
-        return;
-      case "e":
-        return setExpandAll((value) => !value);
-      case "o":
-        return loadEarlier();
-      case "z":
-        return setShowFolded((value) => !value);
-      case "y":
-        return respond(key.shift ? "acceptForSession" : "accept");
-      case "n":
-        return respond("decline");
-      case "x":
-        if (threadId && pendingInput?.dismissible) run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId));
-        return;
-      case "s":
-        if (threadId && key.shift) run("Stop requested", () => session.stopThread(threadId));
-        return;
-      case ":":
-        openPalette();
-        return key.preventDefault();
-      case "/":
-        if (!attached) setMode("filter");
-        return key.preventDefault();
-      case "i":
-      case "return":
-      case "tab":
-        if (threadId || draft) setMode("input");
-        return key.preventDefault();
+    if (secret.focused && mode !== "find" && mode !== "picker" && mode !== "palette" && mode !== "confirm") {
+      secret.type(key);
+      key.preventDefault();
     }
   };
   useKeyboard(handleKey);
 
-  /** A click on a key hint presses that key, through the same handler as the keyboard. */
-  const pressKey = (hint: HintKey) =>
-    handleKey({ ...hint, meta: false, option: false, number: false, raw: hint.sequence, eventType: "press", source: "raw", preventDefault() {}, stopPropagation() {} } as unknown as KeyEvent);
+  const paletteSearch = usePaletteSearch(session, library.merged, paletteQuery, mode === "palette");
+  const paletteSnapshot = useMemo(() => mergeThreadShells(library.merged, paletteSearch.result?.threads ?? []), [library.merged, paletteSearch.result]);
+  const commandKey = commands.map((candidate) => `${candidate.id}:${candidate.title}:${candidate.shortcut ?? ""}`).join("|");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- commands are rebuilt each render; commandKey tracks what changed.
+  const groups = useMemo(() => (mode === "palette" ? messageMatchGroups(paletteGroups({ query: paletteQuery, commands, snapshot: paletteSnapshot, now }), paletteSearch.result, paletteSnapshot, paletteQuery, now) : []), [mode, paletteQuery, commandKey, paletteSnapshot, paletteSearch.result]);
+  const entries = paletteEntries(groups);
 
   // The mouse in the conversation: stable callbacks, since its rows are memoized.
   const conversationMouse: ConversationMouse = {
@@ -1702,13 +1710,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         {detailsColumn ? detailsPanel(false) : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
-        {flash ? (
-          <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text>
-        ) : menuOpen ? (
-          <text fg={colors.faint}>↑/↓ move · tab or enter choose · esc close</text>
-        ) : (
-          <HintBar mode={mode} onPress={pressKey} text={hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined, secret: secret.focused ? "focused" : secret.request ? "pending" : null, queue: queue.focused ? "focused" : queue.editing ? "editing" : queue.queued.length > 0 ? "queued" : null })} />
-        )}
+        {flash ? <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text> : <HintBar hints={hintsFor(keymap.hints)} />}
       </box>
       {mode === "palette" ? (
         <Palette
@@ -1746,56 +1748,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       ) : null}
     </box>
   );
-}
-
-function hints(
-  mode: Mode,
-  state: {
-    readonly draft: boolean;
-    readonly config: Tui3Config;
-    readonly approval: boolean;
-    readonly question: boolean;
-    readonly working: boolean;
-    readonly attached: boolean;
-    readonly diff: boolean;
-    readonly parent: boolean;
-    readonly secret: "pending" | "focused" | null;
-    readonly queue: "queued" | "focused" | "editing" | null;
-  },
-): string {
-  if (state.secret === "focused") return "type or paste the secret · enter save securely · esc cancel";
-  if (mode === "input" && state.queue === "editing") return "enter save the queued message · esc cancel the edit";
-  if (mode === "nav" && state.queue === "focused") return "j/k move · enter send now · e edit · x remove · esc back";
-  if (mode === "find") return "enter next match · shift+enter previous · ctrl+n/p match · esc close find";
-  if (mode === "filter") return "enter done · esc close";
-  if (mode === "palette") return "↑/↓ move · enter run · esc close";
-  if (mode === "picker") return "↑/↓ move · enter choose · esc close";
-  if (mode === "confirm") return "enter confirm · esc cancel";
-  if (mode === "details") return "j/k move · enter open · t toggle automation · esc back";
-  if (mode === "settings") return "j/k move · enter change · esc close";
-  if (mode === "pull-request") return "j/k scroll · o open · r refresh · c comment · R review · a actions · w watch · u unlink · esc close";
-  if (mode === "input") {
-    const send = state.config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
-    const other = state.config.followUpBehavior === "steer" ? "queue" : "steer";
-    const newline = state.config.sendShortcut === "enter" ? "shift+enter or \\ newline" : "enter newline";
-    const parts = [state.working ? `${send} ${state.config.followUpBehavior} · alt+enter ${other}` : `${send} send`, newline, "ctrl+g editor", "esc navigate"];
-    if (state.question) parts.unshift("1-9 pick");
-    if (state.queue === "queued") parts.splice(1, 0, "alt+↑ edit queued");
-    if (state.approval) parts.unshift("approval waiting: esc, then y/n");
-    if (!state.attached) parts.push("ctrl+n/p thread");
-    return parts.join(" · ");
-  }
-  if (state.diff) return "j/k scroll · esc close diff · l details";
-  if (state.draft) return "i write the first message · p project · m model & mode · w worktree · esc cancel";
-  const parts = state.attached ? ["j/k scroll"] : ["j/k threads", "/ filter"];
-  parts.push("i type", "c new", "a attach", ". actions", "m model", "ctrl+j terminal", "l details");
-  if (state.parent) parts.push("u parent");
-  parts.push("ctrl+k commands", "q quit");
-  if (state.queue === "queued") parts.unshift("Q queue");
-  if (state.question) parts.unshift("1-9 pick · x dismiss");
-  if (state.secret === "pending") parts.unshift("enter answer the secret request · x decline");
-  if (state.approval) parts.unshift("y approve · Y always · n decline");
-  return parts.join(" · ");
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));

@@ -1,8 +1,8 @@
-import type { KeyEvent, ScrollBoxRenderable } from "@opentui/core";
+import type { ScrollBoxRenderable } from "@opentui/core";
 import type { OrchestrationV2ThreadProjection, ServerConfig, ThreadId } from "@t3tools/contracts";
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { T3Session } from "../client/session.ts";
-import type { PaletteCommand } from "../model/palette.ts";
+import type { Binding } from "../model/keymap.ts";
 import type { Timeline } from "../model/timeline.ts";
 import { recallableComposerPrompt } from "../../vendor/t3code/apps/web/src/components/chat/composerPromptHistory.ts";
 import { adjacentTurn, diffTurn, findRevertCheckpoint, type TurnCheckpoint } from "../model/turns.ts";
@@ -90,33 +90,36 @@ export function useTurns(input: {
       },
     });
   };
-  const commands: (PaletteCommand & { readonly run: () => void })[] = input.enabled && turns.length ? [
-    { id: "previous-turn", title: "Select previous turn", shortcut: "[", keywords: ["turn", "cursor"], run: () => move(-1) },
-    { id: "next-turn", title: "Select next turn", shortcut: "]", keywords: ["turn", "cursor"], run: () => move(1) },
-    { id: "turn-diff", title: "View changes from this turn", shortcut: "D", keywords: ["diff", "checkpoint"], run: () => openDiff(false) },
-    { id: "thread-diff", title: "View all changes in this thread", keywords: ["diff", "checkpoint"], run: () => openDiff(true) },
-    ...(selected ? [
-      { id: "turn-revert", title: "Revert to this turn", shortcut: "R", keywords: ["rollback", "rewind", "keep changes"], run: () => revert() },
-      { id: "turn-revert-files", title: "Revert files too", keywords: ["rollback", "rewind", "turn"], run: () => revert(true) },
-      { id: "turn-clear", title: "Clear turn selection", shortcut: "esc", run: () => setCursor(null) },
-    ] : []),
-  ] : [];
-  if (input.diff) {
-    commands.push(
-      { id: "diff-previous-file", title: "Previous changed file", shortcut: "[", keywords: ["diff"], run: () => diffContext.move(-1) },
-      { id: "diff-next-file", title: "Next changed file", shortcut: "]", keywords: ["diff"], run: () => diffContext.move(1) },
-    );
-    if (input.diff.source) commands.push({ id: "diff-context", title: "Show whole file / collapse context", shortcut: "x", keywords: ["diff", "expand", "unchanged"], run: diffContext.expand });
-  }
-  const onKey = (key: KeyEvent): boolean => {
-    if (key.ctrl || key.meta || !input.enabled) return false;
-    if (diffContext.onKey(key)) return true;
-    if (key.name === "[" || key.name === "]") { move(key.name === "[" ? -1 : 1); return true; }
-    if (key.name.toLowerCase() === "d" && key.shift) { openDiff(false); return true; }
-    if (key.name.toLowerCase() === "r" && key.shift) { revert(); return true; }
-    if (key.name === "escape" && !input.diff && selectedMessageId) { setCursor(null); return true; }
-    return false;
-  };
+  const turnKeys = input.enabled && turns.length > 0;
+  /**
+   * Turn keys in navigation. A diff's own keys come first: there, [ and ] step through its
+   * files rather than the turns.
+   */
+  const bindings: Binding[] = [
+    ...(input.enabled && input.diff
+      ? [
+          { keys: ["["], run: () => diffContext.move(-1), command: { id: "diff-previous-file", title: "Previous changed file", keywords: ["diff"] } },
+          { keys: ["]"], run: () => diffContext.move(1), command: { id: "diff-next-file", title: "Next changed file", keywords: ["diff"] } },
+          ...(input.diff.source ? [{ keys: ["x", "enter"], run: () => diffContext.expand(), command: { id: "diff-context", title: "Show whole file / collapse context", keywords: ["diff", "expand", "unchanged"] } }] : []),
+        ]
+      : []),
+    ...(turnKeys
+      ? [
+          { keys: ["["], run: () => move(-1), command: { id: "previous-turn", title: "Select previous turn", keywords: ["turn", "cursor"] } },
+          { keys: ["]"], run: () => move(1), command: { id: "next-turn", title: "Select next turn", keywords: ["turn", "cursor"] } },
+          { keys: ["D"], run: () => openDiff(false), command: { id: "turn-diff", title: "View changes from this turn", keywords: ["diff", "checkpoint"] } },
+          { keys: [], run: () => openDiff(true), command: { id: "thread-diff", title: "View all changes in this thread", keywords: ["diff", "checkpoint"] } },
+          // R says how to select a turn when none is.
+          { keys: ["R"], run: () => revert(), ...(selected ? { command: { id: "turn-revert", title: "Revert to this turn", keywords: ["rollback", "rewind", "keep changes"] } } : {}) },
+        ]
+      : []),
+    ...(turnKeys && selected
+      ? [
+          { keys: [], run: () => revert(true), command: { id: "turn-revert-files", title: "Revert files too", keywords: ["rollback", "rewind", "turn"] } },
+          ...(input.diff ? [] : [{ keys: ["esc"], run: () => setCursor(null), command: { id: "turn-clear", title: "Clear turn selection" } }]),
+        ]
+      : []),
+  ];
   /** The prompt's right-click menu. */
   const menuFor = (messageId: string) => {
     const turn = turns.find((candidate) => candidate.messageId === messageId);
@@ -131,7 +134,7 @@ export function useTurns(input: {
       ] : []),
     ];
   };
-  return { selectedMessageId, commands, onKey, diffContext, select, menuFor };
+  return { selectedMessageId, bindings, diffContext, select, menuFor };
 }
 
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }

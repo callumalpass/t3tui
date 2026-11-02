@@ -60,6 +60,26 @@ describe("modes and hints", () => {
   });
 });
 
+describe("keys falling through", () => {
+  test("in the details panel, navigation keys still work", async () => {
+    const app = await open();
+    await app.press("l");
+    await app.press("c");
+    expect(app.frame()).toContain("What should the new thread do?");
+  });
+
+  test("the composer's / menu takes the arrows and esc; esc again leaves the composer", async () => {
+    const app = await open();
+    await app.press("i");
+    await app.type("/");
+    expect(app.hints()).toBe("↑/↓ move · tab or enter choose · esc close");
+    await app.press("escape");
+    expect(app.hints()).toStartWith("enter send");
+    await app.press("escape");
+    expect(app.hints()).toStartWith("j/k threads");
+  });
+});
+
 describe("palette and pickers", () => {
   test("ctrl+k opens the palette, typing filters it, esc closes it", async () => {
     const app = await open();
@@ -77,6 +97,13 @@ describe("palette and pickers", () => {
     await app.press("k", { ctrl: true });
     await app.type("new thread");
     expect(app.frame()).toMatch(/New thread\s+c/);
+  });
+
+  test("palette entries for pending requests carry their keys", async () => {
+    const app = await open({ session: fakeSession({ projection: withApproval() }) });
+    await app.press("k", { ctrl: true });
+    await app.type("always allow");
+    expect(app.frame()).toMatch(/Always allow this session\s+Y/);
   });
 
   test("running a command from the palette", async () => {
