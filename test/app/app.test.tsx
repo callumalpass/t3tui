@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { withApproval, withQuestion } from "./fixtures.ts";
+import { loadLayout } from "../../src/layout.ts";
 import { fakeSession, renderApp, v2ThreadId } from "./harness.tsx";
 
 let app: Awaited<ReturnType<typeof renderApp>> | null = null;
@@ -282,5 +283,17 @@ describe("mouse", () => {
     expect(app.find("│").x).toBe(before + 10);
     await app.click(before + 10, 10, 2);
     expect(app.find("│").x).toBe(before);
+  });
+
+  test("the list keeps its dragged width for the next run", async () => {
+    const first = await open();
+    const before = first.find("│").x;
+    await first.mockMouse.drag(before, 10, before + 7, 10);
+    await first.settle(100);
+    first.destroy();
+    const layout = await loadLayout();
+    expect(layout.listWidth).toBe(before + 7);
+    const next = await open({ layout });
+    expect(next.find("│").x).toBe(before + 7);
   });
 });

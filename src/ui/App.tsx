@@ -11,6 +11,7 @@ import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../c
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
+import { saveLayout, type Layout } from "../layout.ts";
 import { RUNTIME_MODE_LABELS } from "../model/details.ts";
 import { paletteEntries, paletteGroups, pickerGroups, type Picker, type PickerItem } from "../model/palette.ts";
 import { pullRequestRepository } from "../model/pullRequests.ts";
@@ -93,7 +94,7 @@ const COMPOSER_KEYS = {
 /** The composer's key while a new thread is being drafted. */
 const DRAFT_KEY = "draft";
 
-export function App(props: { readonly session: T3Session; readonly config: Tui3Config; readonly attachThreadId?: ThreadId }) {
+export function App(props: { readonly session: T3Session; readonly config: Tui3Config; readonly layout?: Layout; readonly attachThreadId?: ThreadId }) {
   const { session, attachThreadId } = props;
   const attached = attachThreadId !== undefined;
   const renderer = useRenderer();
@@ -108,7 +109,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   /** Folds opened one at a time by a click, for the open thread. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
   /** The thread list's width once its border is dragged; null follows the window. */
-  const [listWidthPref, setListWidthPref] = useState<number | null>(null);
+  const [listWidthPref, setListWidthPref] = useState<number | null>(props.layout?.listWidth ?? null);
+  const listWidthNow = useRef(listWidthPref);
+  listWidthNow.current = listWidthPref;
+  /** Kept for the next run; a failed save only costs that. */
+  const saveListWidth = (listWidth: number | null) => void saveLayout({ listWidth }).catch(() => {});
   const [resizing, setResizing] = useState(false);
   const [diff, setDiff] = useState<DiffState | null>(null);
   const [config, setConfig] = useState(props.config);
@@ -1003,8 +1008,14 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       {...(resizing
         ? {
             onMouseDrag: (event: MouseEvent) => setListWidthPref(clampListWidth(event.x, width)),
-            onMouseUp: () => setResizing(false),
-            onMouseDragEnd: () => setResizing(false),
+            onMouseUp: () => {
+              setResizing(false);
+              saveListWidth(listWidthNow.current);
+            },
+            onMouseDragEnd: () => {
+              setResizing(false);
+              saveListWidth(listWidthNow.current);
+            },
           }
         : {})}
     >
@@ -1045,7 +1056,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             shelfStatus={library.error ?? (library.loading ? "Loading…" : library.archived ? "Archived threads · A to go back" : null)}
           />
         )}
-        {attached ? null : <ResizeHandle active={resizing} onStart={() => setResizing(true)} onReset={() => setListWidthPref(null)} />}
+        {attached ? null : <ResizeHandle active={resizing} onStart={() => setResizing(true)} onReset={() => {
+              setListWidthPref(null);
+              saveListWidth(null);
+            }} />}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
           <box flexDirection="column" flexGrow={1} minHeight={0} onMouseDown={focusConversation}>
           {settingsIndex !== null ? (
