@@ -1,7 +1,8 @@
 /**
  * Renders the whole app against invented demo data (the interaction-test
  * harness's fake session) and writes the settled frame as an HTML fragment
- * for the landing page: dark, dark in a standalone page, and light.
+ * for the landing page: dark, dark in a standalone page, and light; and the
+ * same with the terminal drawer open, in both themes.
  *
  * Run with `bun run scripts/demo-capture.tsx`.
  */
@@ -357,14 +358,20 @@ ${fragment}</body>
 
 // --- Render both themes ---------------------------------------------------------
 
-async function capture(mode: "dark" | "light"): Promise<{ frame: CapturedFrame; chars: string; baseBg: string }> {
+/** The open thread's two terminals, the first with a build's output. */
+const terminals = ["term-1", "term-2"].map((terminalId) => ({ threadId: OPEN_THREAD, terminalId, cwd: "/home/demo/t3tui", worktreePath: null, status: "running", pid: 42, exitCode: null, exitSignal: null, hasRunningSubprocess: false, label: "", updatedAt: new Date(NOW).toISOString() }));
+const terminalHistory = "~/t3tui main$ bun run scripts/build.ts\r\n\x1b[32m✓\x1b[0m bundled src/bin.ts → dist/bin.js (1.8 MB)\r\n\x1b[32m✓\x1b[0m wrote dist/vendor\r\n~/t3tui main$ ";
+
+async function capture(mode: "dark" | "light", drawer = false): Promise<{ frame: CapturedFrame; chars: string; baseBg: string }> {
   applyTheme(mode);
+  const terminalEvents = [{ type: "snapshot", threadId: OPEN_THREAD, terminalId: "term-1", createdAt: new Date(NOW).toISOString(), snapshot: { history: terminalHistory } }];
   const app = await renderApp({
-    session: fakeSession({ snapshot, projection }),
+    session: fakeSession({ snapshot, projection, ...(drawer ? { terminals, terminalEvents } : {}) }),
     width: 140,
-    height: 34,
+    height: drawer ? 44 : 34,
   });
   try {
+    if (drawer) await app.press("j", { ctrl: true });
     // A running run ticks a spinner and a duration, so settle() gives up after
     // its retries; one more short wait lands on whatever frame is current.
     await app.settle(120);
@@ -391,4 +398,12 @@ await writeFile(join(OUT_DIR, "demo-screen-light-page.html"), standalonePage(lig
 console.log(`wrote ${join(OUT_DIR, "demo-screen.html")}`);
 console.log(`wrote ${join(OUT_DIR, "demo-screen-page.html")}`);
 console.log(`wrote ${join(OUT_DIR, "demo-screen-light.html")}`);
+
+for (const mode of ["dark", "light"] as const) {
+  const drawer = await capture(mode, true);
+  if (mode === "dark") console.log(drawer.chars);
+  const file = join(OUT_DIR, mode === "dark" ? "demo-drawer-page.html" : "demo-drawer-light-page.html");
+  await writeFile(file, standalonePage(frameToHtml(drawer.frame, drawer.baseBg), mode === "dark" ? "#161616" : "#e8e8e8"));
+  console.log(`wrote ${file}`);
+}
 process.exit(0);
