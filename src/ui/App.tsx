@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/pending-user-input";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import { DEFAULT_TERMINAL_ID, type ContextMenuItem, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type TerminalSummary, type ThreadId } from "@t3tools/contracts";
+import { type ContextMenuItem, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -37,7 +37,7 @@ import { QuestionPanel } from "./QuestionPanel.tsx";
 import { QueuePanel } from "./QueuePanel.tsx";
 import { SecretPanel } from "./SecretPanel.tsx";
 import { SettingsView } from "./SettingsView.tsx";
-import { attachTerminal } from "./terminalAttach.ts";
+import { useWorkspace } from "./useWorkspace.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
@@ -111,7 +111,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [pickerIndex, setPickerIndex] = useState(0);
   /** Model changes waiting for each thread's next message, as the web composer holds them. */
   const [pendingModels, setPendingModels] = useState<ReadonlyMap<ThreadId, ModelSelection>>(new Map());
-  const [terminals, setTerminals] = useState<FeedState<TerminalSummary> | null>(null);
   /** Idle subagents the shell leaves out, fetched when you open one. */
   const [familyShells, setFamilyShells] = useState<ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>>(new Map());
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -258,7 +257,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const vcsCwd = threadShell ? detailsCwd(threadShell, project) : null;
   const live = shell.status.type === "live";
   useEffect(() => (live ? session.watchServerConfig(setServerConfig) : undefined), [session, live]);
-  useEffect(() => (live ? session.watchTerminals(setTerminals) : undefined), [session, live]);
   // An idle subagent isn't in the shell; its family (root, forks, all subagents) is, on servers that serve it.
   const supportsFamilies = serverConfig?.config?.shellThreadFamilies === true;
   const unlisted = threadId !== undefined && !threadShell;
@@ -776,40 +774,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     );
   };
 
-  // The thread's terminals, as the web's terminal drawer: attach to one, or open the first.
-  const threadTerminals = threadShell ? (terminals?.items ?? []).filter((terminal) => terminal.threadId === threadShell.id) : [];
-  const enterTerminal = (terminal: { terminalId: string; cwd: string; worktreePath: string | null; label?: string }) => {
-    if (!threadShell) return;
-    attachTerminal(renderer, session, { threadId: threadShell.id, terminalId: terminal.terminalId, cwd: terminal.cwd, worktreePath: terminal.worktreePath, label: terminal.label || terminal.terminalId }, (message) => {
-      if (message) say(message, true);
-    });
-  };
-  const openTerminal = () => {
-    if (!threadShell) return say("Open a thread first.", true);
-    const cwd = threadShell.worktreePath ?? project?.workspaceRoot;
-    if (!cwd) return say("This thread has no folder to open a terminal in.", true);
-    const fresh = (id: string) => ({ terminalId: id, cwd, worktreePath: threadShell.worktreePath });
-    if (threadTerminals.length === 0) return enterTerminal(fresh(DEFAULT_TERMINAL_ID));
-    if (threadTerminals.length === 1 && threadTerminals[0]) return enterTerminal(threadTerminals[0]);
-    const taken = new Set(threadTerminals.map((terminal) => terminal.terminalId));
-    let next = 1;
-    while (taken.has(`term-${next}`)) next += 1;
-    openPicker({
-      placeholder: "Terminal",
-      groups: [
-        {
-          label: "Terminals",
-          items: threadTerminals.map((terminal) => ({
-            id: `terminal:${terminal.terminalId}`,
-            title: terminal.label || terminal.terminalId,
-            hint: terminal.status === "running" ? (terminal.hasRunningSubprocess ? "busy" : "running") : terminal.status,
-            run: () => enterTerminal(terminal),
-          })),
-        },
-        { label: "New", items: [{ id: "terminal:new", title: "New terminal", run: () => enterTerminal(fresh(`term-${next}`)) }] },
-      ],
-    });
-  };
+  const workspace = useWorkspace({ session, renderer, live, thread: threadShell, project, serverConfig: serverConfig?.config ?? null, draft: draft !== null, diff, openPicker, confirm, run, say });
 
   /** The composer's text in $EDITOR. */
   const openEditor = () => {
@@ -979,7 +944,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     command("draft-cancel", "Cancel new thread", () => setDraft(null), { keywords: ["discard"] });
   }
   if (currentModel) command("model", "Change model, options or mode", openModelPicker, { shortcut: "m", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] });
-  if (threadShell && !draft) command("terminal", "Open terminal", openTerminal, { shortcut: "ctrl+j", keywords: ["shell", "console"] });
+  commands.push(...workspace.commands);
   if (threadId || draft) command("editor", "Write the message in $EDITOR", openEditor, { shortcut: "ctrl+g", keywords: ["vim", "editor", "compose"] });
   command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options", "notifications", "alerts"] });
   command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
@@ -1006,7 +971,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const globalKey = (key: KeyEvent): boolean => {
     if (key.ctrl && key.name === "c") return quit(), true;
     if (key.ctrl && key.name === "k") return openPalette(), true;
-    if ((key.ctrl && key.name === "j") || key.name === "linefeed") return openTerminal(), true;
+    if ((key.ctrl && key.name === "j") || key.name === "linefeed") return workspace.openTerminal(), true;
     if (key.ctrl && key.name === "g" && (threadId || draft)) return openEditor(), true;
     // One-line inputs keep ctrl+u and ctrl+d for editing.
     const lineInput = mode === "filter" || mode === "palette" || mode === "confirm";
@@ -1200,6 +1165,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           return setMode("nav");
       }
     }
+    if (workspace.key(key)) return;
     switch (key.name) {
       case "q":
         if (diff) return setDiff(null);
@@ -1405,6 +1371,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               <text fg={colors.muted}>{shell.snapshot ? "No thread selected." : "Waiting for threads…"}</text>
             </box>
           )}
+          {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} /> : null}
           {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} /> : null}
           {mode !== "confirm" && pendingInput && questionDraft ? <QuestionPanel request={pendingInput} index={questionDraft.index} draft={questionDraft.answers[pendingInput.questions[questionDraft.index]?.id ?? ""]} /> : null}

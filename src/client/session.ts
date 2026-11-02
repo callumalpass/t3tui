@@ -29,7 +29,12 @@ import {
   type RuntimeMode,
   type TerminalAttachStreamEvent,
   type TerminalSummary,
+  type TerminalOpenInput,
+  type EditorId,
+  type ServerLifecycleStreamEvent,
+  type WorktreeSetupSnapshot,
   type VcsRef,
+  type VcsListRefsResult,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadShell,
   type VcsStatusLocalResult,
@@ -594,6 +599,99 @@ export class T3Session {
   async defaultRef(cwd: string): Promise<{ readonly isRepo: boolean; readonly ref: VcsRef | null }> {
     const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsListRefs]({ cwd, refKind: "local" }));
     return { isRepo: result.isRepo, ref: result.refs.find((ref) => ref.isDefault) ?? result.refs.find((ref) => ref.current) ?? null };
+  }
+
+  /** Lists every page of local and remote refs for the branch picker. */
+  async listRefs(cwd: string): Promise<readonly VcsRef[]> {
+    const refs: VcsRef[] = [];
+    let cursor: number | null = 0;
+    do {
+      const page: VcsListRefsResult = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsListRefs]({ cwd, refKind: "all", limit: 200, cursor }));
+      refs.push(...page.refs);
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    return refs;
+  }
+
+  switchRef(cwd: string, refName: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsSwitchRef]({ cwd, refName }));
+  }
+
+  createRef(cwd: string, refName: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsCreateRef]({ cwd, refName, switchRef: true }));
+  }
+
+  pull(cwd: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsPull]({ cwd }));
+  }
+
+  createWorktree(cwd: string, refName: string, newRefName: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsCreateWorktree]({ cwd, refName, newRefName, path: null }));
+  }
+
+  removeWorktree(cwd: string, path: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.vcsRemoveWorktree]({ cwd, path }));
+  }
+
+  /** Keep shared worktrees, including ones held by idle children omitted from the shell. */
+  async removeThreadWorktree(threadId: ThreadId, cwd: string, path: string): Promise<void> {
+    const occupants = await Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]({ worktreePath: path }));
+    if (occupants.threadIds.some((id) => id !== threadId)) throw new Error("Other threads still use this worktree.");
+    await this.detachThreadSessions(threadId);
+    await this.removeWorktree(cwd, path);
+    await this.setThreadWorkspace(threadId, null, null, null);
+  }
+
+  /** Changing folders detaches provider sessions before updating the thread, as the web does. */
+  async setThreadWorkspace(threadId: ThreadId, branch: string | null, worktreePath: string | null, previousWorktreePath: string | null): Promise<void> {
+    if (previousWorktreePath !== worktreePath) await this.detachThreadSessions(threadId);
+    await this.dispatch({ type: "thread.metadata.update", commandId: newCommandId(), threadId, branch, worktreePath });
+  }
+
+  /** Release provider sessions before moving or removing their workspace. */
+  async detachThreadSessions(threadId: ThreadId): Promise<void> {
+    const projection = await Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId }));
+    for (const session of projection.providerSessions) {
+      await this.dispatch({ type: "provider-session.detach", commandId: newCommandId(), threadId, providerSessionId: session.id, reason: "client-requested" });
+    }
+  }
+
+  openInEditor(cwd: string, editor: EditorId) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.shellOpenInEditor]({ cwd, editor }));
+  }
+
+  cancelWorktreeSetup(threadId: ThreadId) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.worktreeSetupCancel]({ threadId }));
+  }
+
+  /** Worktree preparation, shared and resubscribed after reconnects. */
+  watchWorktreeSetup(threadId: ThreadId, listener: Listener<{ readonly status: string; readonly snapshot: WorktreeSetupSnapshot | null; readonly error?: string }>): () => void {
+    return this.watchFeed(`setup:${threadId}`, { status: "loading", snapshot: null as WorktreeSetupSnapshot | null }, listener, (update) =>
+      this.requireConnection().rpc[WS_METHODS.subscribeWorktreeSetup]({ threadId }).pipe(
+        Stream.runForEach((snapshot) => Effect.sync(() => update({ status: "live", snapshot }))),
+      ),
+    );
+  }
+
+  /** The pinned server emits welcome, ready and legacy-migration events. */
+  watchServerLifecycle(listener: Listener<{ readonly status: string; readonly event: ServerLifecycleStreamEvent | null; readonly error?: string }>): () => void {
+    return this.watchFeed("lifecycle", { status: "loading", event: null as ServerLifecycleStreamEvent | null }, listener, (update) =>
+      this.requireConnection().rpc[WS_METHODS.subscribeServerLifecycle]({}).pipe(
+        Stream.runForEach((event) => Effect.sync(() => update({ status: "live", event }))),
+      ),
+    );
+  }
+
+  openTerminal(input: TerminalOpenInput) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.terminalOpen](input));
+  }
+
+  closeTerminal(threadId: ThreadId, terminalId: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.terminalClose]({ threadId, terminalId, deleteHistory: true }));
+  }
+
+  clearTerminal(threadId: ThreadId, terminalId: string) {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.terminalClear]({ threadId, terminalId }));
   }
 
   /** Every open terminal on the server; filter by thread. */
