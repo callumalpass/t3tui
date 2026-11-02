@@ -13,7 +13,7 @@ export interface PullRequestViewState {
 }
 
 const LINE_COLORS: Record<PullRequestLine["kind"], keyof Palette> = {
-  title: "accent",
+  title: "text",
   meta: "muted",
   body: "text",
   check: "text",
@@ -28,7 +28,7 @@ const LINE_COLORS: Record<PullRequestLine["kind"], keyof Palette> = {
 export function PullRequestView(props: { readonly view: PullRequestViewState; readonly scrollRef: RefObject<ScrollBoxRenderable | null>; readonly onOpenUrl: () => void; readonly onMenu: () => void; readonly onClose: () => void }) {
   const { view } = props;
   return (
-    <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={1} paddingRight={1} onMouseDown={(event: MouseEvent) => isRightClick(event) && props.onMenu()}>
+    <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={2} paddingRight={1} backgroundColor={colors.bg} onMouseDown={(event: MouseEvent) => isRightClick(event) && props.onMenu()}>
       <box flexDirection="row" flexShrink={0} height={1}>
         <text fg={colors.text}>
           <strong>Pull request</strong>
@@ -67,7 +67,7 @@ export function PullRequestView(props: { readonly view: PullRequestViewState; re
 function Link(props: { readonly text: string; readonly onPress: () => void }) {
   const [hover, hoverProps] = useHover();
   return (
-    <text fg={hover ? colors.text : colors.user} selectable={false} {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && props.onPress()}>
+    <text fg={hover ? colors.text : colors.accent} selectable={false} {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && props.onPress()}>
       <u>{props.text}</u>
     </text>
   );

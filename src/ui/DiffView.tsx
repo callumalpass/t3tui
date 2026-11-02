@@ -23,7 +23,7 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
   const { diff } = props;
   const files = diff.patch ? splitPatch(diff.patch) : [];
   return (
-    <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+    <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={2} paddingRight={1} backgroundColor={colors.bg}>
       <box flexDirection="row" flexShrink={0} height={1}>
         <text fg={colors.muted}>{diff.title ?? "Uncommitted"} / </text>
         <text fg={colors.text}>
