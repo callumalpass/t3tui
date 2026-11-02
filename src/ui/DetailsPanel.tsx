@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { MAX_DETAIL_FILES, type DetailsAction, type ThreadDetails } from "../model/details.ts";
 import { ClickRow } from "./Button.tsx";
+import { truncate } from "./text.ts";
 import { colors, statusColor } from "./theme.ts";
 
 /** Rows stay readable when the panel takes the conversation's place on a narrow terminal. */
@@ -212,11 +213,6 @@ function Counts({ insertions, deletions }: { readonly insertions: number; readon
 
 function countsText(insertions: number, deletions: number): string {
   return [insertions > 0 ? `+${insertions}` : "", deletions > 0 ? `−${deletions}` : ""].filter(Boolean).join(" ");
-}
-
-function truncate(text: string, width: number): string {
-  const single = text.replace(/\s+/g, " ");
-  return single.length > width ? `${single.slice(0, Math.max(0, width - 1))}…` : single;
 }
 
 /** Keeps the end of a path, where the file name is, as the web's StartTruncatedPath does. */

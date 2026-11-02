@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun run src/bin.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "biome lint src test",
     "test": "bun test",
     "postinstall": "bun run scripts/link-vendor.ts"
   },
@@ -24,6 +25,7 @@
     "zustand": "5.0.11"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@noble/hashes": "1.8.0",
     "@types/bun": "latest",
     "@types/react": "^19.3.0",

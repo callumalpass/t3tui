@@ -365,7 +365,10 @@ export class T3Session {
   watchCommandOutput(threadId: ThreadId, itemId: TurnItemId, listener: Listener<CommandOutputView>, onError: Listener<string>): () => void {
     let view = EMPTY_COMMAND_OUTPUT;
     const fiber = this.runInScope(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]({ threadId, itemId }).pipe(
-      Stream.runForEach((frame) => Effect.sync(() => listener(view = applyCommandOutputFrame(view, frame)))),
+      Stream.runForEach((frame) => Effect.sync(() => {
+        view = applyCommandOutputFrame(view, frame);
+        listener(view);
+      })),
       Effect.catchCause((cause) => Effect.sync(() => onError(prettyCause(cause)))),
     ));
     return () => { Effect.runFork(Fiber.interrupt(fiber)); };

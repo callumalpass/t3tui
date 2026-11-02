@@ -5,7 +5,10 @@ import { splitPatch, wholeFilePatch } from "../src/model/diffs.ts";
 const changed = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -2 +2 @@\n-old\n+new\n";
 
 test("diff files retain old paths and change types for contents requests", () => {
-  const files = splitPatch(changed + "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n" + "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n" + "diff --git a/add.ts b/add.ts\nnew file mode 100644\n--- /dev/null\n+++ b/add.ts\n@@ -0,0 +1 @@\n+added\n");
+  const renamed = "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n";
+  const deleted = "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n";
+  const added = "diff --git a/add.ts b/add.ts\nnew file mode 100644\n--- /dev/null\n+++ b/add.ts\n@@ -0,0 +1 @@\n+added\n";
+  const files = splitPatch(`${changed}${renamed}${deleted}${added}`);
   expect(files.map(({ path, oldPath, changeType }) => ({ path, oldPath, changeType }))).toEqual([
     { path: "a.ts", oldPath: "a.ts", changeType: "change" }, { path: "new.ts", oldPath: "old.ts", changeType: "rename-pure" },
     { path: "gone.ts", oldPath: "gone.ts", changeType: "deleted" }, { path: "add.ts", oldPath: "add.ts", changeType: "new" },

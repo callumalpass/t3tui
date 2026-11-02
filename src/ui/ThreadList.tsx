@@ -4,6 +4,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { ClickRow, wheelStep } from "./Button.tsx";
+import { truncate } from "./text.ts";
 import { colors, statusColor } from "./theme.ts";
 
 /**
@@ -124,9 +125,4 @@ function SectionHeader({ label }: { readonly label: string }) {
       <strong>{label}</strong>
     </text>
   );
-}
-
-function truncate(text: string, width: number): string {
-  const single = text.replace(/\s+/g, " ");
-  return single.length > width ? `${single.slice(0, Math.max(0, width - 1))}…` : single;
 }

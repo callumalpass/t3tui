@@ -11,7 +11,7 @@ export interface PatchFile {
 /** Retains both paths so renamed and deleted files expand against the right revisions. */
 export function splitPatch(patch: string): PatchFile[] {
   return patch.split(/^(?=diff --git )/m).filter((chunk) => chunk.startsWith("diff --git ")).map((chunk) => {
-    let parsed;
+    let parsed: ReturnType<typeof parsePatch>[number] | undefined;
     try { parsed = parsePatch(chunk.split(/^@@ /m)[0]!)[0]; } catch { /* A truncated preview can end inside a file header. */ }
     const oldPath = cleanPath(parsed?.oldFileName ?? /^diff --git a\/(.+?) b\//.exec(chunk)?.[1] ?? "file");
     const newPath = cleanPath(parsed?.newFileName ?? oldPath);

@@ -40,12 +40,27 @@ export function useAttachments(deps: {
   const [byComposer, setByComposer] = useState<ReadonlyMap<string, readonly ChatAttachment[]>>(new Map());
   const pending = byComposer.get(composerKey) ?? [];
 
-  const add = (attachment: ChatAttachment) =>
-    setByComposer((previous) => new Map(previous).set(composerKey, [...(previous.get(composerKey) ?? []), attachment]));
+  // Lists are replaced whole, per composer, so switching threads never mixes them.
+  const setPending = (attachments: readonly ChatAttachment[]) => {
+    setByComposer((previous) => new Map(previous).set(composerKey, attachments));
+  };
+
+  const add = (attachment: ChatAttachment) => {
+    setByComposer((previous) => {
+      const current = previous.get(composerKey) ?? [];
+      return new Map(previous).set(composerKey, [...current, attachment]);
+    });
+  };
 
   const upload = (name: string, bytes: Uint8Array, mimeType?: string) => {
     if (maxFileBytes === undefined) return say("Still loading the server's attachment limits.", true);
-    const checked = checkAttachment({ name, sizeBytes: bytes.length, ...(mimeType ? { mimeType } : {}), pending: byComposer.get(composerKey) ?? [], maxFileBytes });
+    const checked = checkAttachment({
+      name,
+      sizeBytes: bytes.length,
+      ...(mimeType ? { mimeType } : {}),
+      pending: byComposer.get(composerKey) ?? [],
+      maxFileBytes,
+    });
     if (!checked.ok) return say(checked.error, true);
     say(`Uploading ${checked.upload.name}…`);
     session.uploadAttachment(checked.upload, bytes).then(
@@ -91,7 +106,11 @@ export function useAttachments(deps: {
   };
 
   const remove = (attachment: ChatAttachment) => {
-    setByComposer((previous) => new Map(previous).set(composerKey, (previous.get(composerKey) ?? []).filter((candidate) => candidate.id !== attachment.id)));
+    setByComposer((previous) => {
+      const current = previous.get(composerKey) ?? [];
+      const kept = current.filter((candidate) => candidate.id !== attachment.id);
+      return new Map(previous).set(composerKey, kept);
+    });
     session.deleteAttachment(attachment.id).then(
       () => say(`Removed ${attachment.name}`),
       (error) => say(`Removed ${attachment.name}; deleting the upload failed: ${messageOf(error)}`, true),
@@ -117,7 +136,7 @@ export function useAttachments(deps: {
     remove,
     take: () => {
       const taken = byComposer.get(composerKey) ?? [];
-      if (taken.length > 0) setByComposer((previous) => new Map(previous).set(composerKey, []));
+      if (taken.length > 0) setPending([]);
       return taken;
     },
   };

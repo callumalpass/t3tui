@@ -77,7 +77,9 @@ describe("workspace RPC payloads (no live mutations)", () => {
     await session.cancelWorktreeSetup(threadId);
     expect(sent.map((call) => call.method)).toEqual(["vcs.switchRef", "vcs.createRef", "vcs.pull", "vcs.createWorktree", "vcs.removeWorktree", "shell.openInEditor", "worktreeSetup.cancel"]);
     const schemas = [VcsSwitchRefInput, VcsCreateRefInput, VcsPullInput, VcsCreateWorktreeInput, VcsRemoveWorktreeInput, LaunchEditorInput, WorktreeSetupCancelInput];
-    schemas.forEach((schema, index) => expect(Schema.is(schema)(sent[index]!.input)).toBe(true));
+    schemas.forEach((schema, index) => {
+      expect(Schema.is(schema)(sent[index]!.input)).toBe(true);
+    });
     expect(sent[1]!.input).toMatchObject({ switchRef: true });
     expect(sent[3]!.input).toEqual({ cwd: "/repo", refName: "main", newRefName: "new-work", path: null });
     expect(sent[4]!.input).not.toHaveProperty("force");

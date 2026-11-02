@@ -1,5 +1,6 @@
 import type { ComposerItem } from "../model/composerMenu.ts";
 import { ClickRow } from "./Button.tsx";
+import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
 const MAX_ROWS = 8;
@@ -33,9 +34,4 @@ export function ComposerMenu(props: { readonly items: readonly ComposerItem[]; r
       {items.length > MAX_ROWS ? <text fg={colors.faint} paddingLeft={1}>{`${selected + 1} of ${items.length}`}</text> : null}
     </box>
   );
-}
-
-function truncate(text: string, width: number): string {
-  const single = text.replace(/\s+/g, " ");
-  return single.length > width ? `${single.slice(0, Math.max(0, width - 1))}…` : single;
 }

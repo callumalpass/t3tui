@@ -261,7 +261,10 @@ describe("pull request commands and payloads", () => {
     const payloads = new Map<string, unknown>();
     const capture =
       (method: string, result: unknown) =>
-      (input: unknown) => (payloads.set(method, input), Effect.succeed(result));
+      (input: unknown) => {
+        payloads.set(method, input);
+        return Effect.succeed(result);
+      };
     const rpc = {
       "pullRequests.list": capture("list", listResult([])),
       "pullRequests.detail": capture("detail", detail()),

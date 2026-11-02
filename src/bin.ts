@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
+import type { OrchestrationV2ShellSnapshot, ThreadId } from "@t3tools/contracts";
 
 import { T3Session } from "./client/session.ts";
 import { findThread, lastActivity, relativeTime, rowTime, shortId, statusLabel, threadRows } from "./model/threads.ts";
@@ -88,7 +88,10 @@ async function tmuxCommand(args: string[]) {
   let pending = false;
   let syncing = false;
   const sync = async () => {
-    if (syncing) return void (pending = true);
+    if (syncing) {
+      pending = true;
+      return;
+    }
     syncing = true;
     try {
       const latest = session.getShell().snapshot;
@@ -115,7 +118,7 @@ async function tmuxCommand(args: string[]) {
 
 async function runUi(attachNeedle?: string) {
   const { session, snapshot } = await connectedSession();
-  let attachThreadId;
+  let attachThreadId: ThreadId | undefined;
   if (attachNeedle) {
     const thread = findThread(snapshot, attachNeedle);
     if (!thread) {

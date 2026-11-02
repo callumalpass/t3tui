@@ -38,6 +38,7 @@ import {
 } from "../model/pullRequests.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import { editInEditor } from "./editor.ts";
+import { firstLine } from "./text.ts";
 import type { PullRequestViewState } from "./PullRequestView.tsx";
 
 export interface PullRequestDeps {
@@ -92,7 +93,10 @@ export function usePullRequests(deps: PullRequestDeps) {
   const load = async (link: ThreadPullRequestLink, reference: PullRequestRef) => {
     const token = { link, reference };
     try {
-      const [detail, activity] = await Promise.all([session.pullRequestDetail(reference), session.pullRequestActivity(reference)]);
+      const [detail, activity] = await Promise.all([
+        session.pullRequestDetail(reference),
+        session.pullRequestActivity(reference),
+      ]);
       let merged = detail;
       if (capabilities?.pullRequestChecks === true) {
         const checks = await session.pullRequestChecks(reference).catch(() => null);
@@ -168,7 +172,10 @@ export function usePullRequests(deps: PullRequestDeps) {
 
   const comment = () => {
     const current = loadedRef.current;
-    if (!current?.detail || !current.detail.capabilities.comment || !current.detail.viewerPermissions.comment) return deps.say("Commenting is not available on this pull request.", true);
+    const canComment = current?.detail?.capabilities.comment && current.detail.viewerPermissions.comment;
+    if (!current?.detail || !canComment) {
+      return deps.say("Commenting is not available on this pull request.", true);
+    }
     const edited = editInEditor(deps.renderer, "");
     if (edited === null) return deps.say("The editor exited with an error; nothing was posted.", true);
     const body = edited.trim();
@@ -190,8 +197,39 @@ export function usePullRequests(deps: PullRequestDeps) {
     const current = loadedRef.current;
     const detail = current?.detail;
     if (!current || !detail) return;
-    const offered = VERDICTS.filter((verdict) => detail.capabilities.review.verdicts.includes(verdict.value) && detail.viewerPermissions.verdicts.includes(verdict.value));
+    const offered = VERDICTS.filter((verdict) => {
+      const hostOffers = detail.capabilities.review.verdicts.includes(verdict.value);
+      const viewerMay = detail.viewerPermissions.verdicts.includes(verdict.value);
+      return hostOffers && viewerMay;
+    });
     if (offered.length === 0) return deps.say("Reviewing is not available on this pull request.", true);
+
+    const writeReview = (verdict: (typeof VERDICTS)[number]) => {
+      const edited = editInEditor(deps.renderer, "");
+      if (edited === null) return deps.say("The editor exited with an error; the review was not submitted.", true);
+      const body = edited;
+      const summaryRequired = sourceControlClients.get(detail.provider).reviewSummaryRequired("request-changes");
+      // Requesting changes can demand a summary; approving never does.
+      const needsSummary = verdict.value === "request-changes" && summaryRequired;
+      const canSubmit = needsSummary ? body.trim().length > 0 : verdict.value === "approve" || body.trim().length > 0;
+      if (!canSubmit) {
+        const message = needsSummary
+          ? "Summarize your review (required to request changes)."
+          : "Summarize your review or approve without one.";
+        return deps.say(message, true);
+      }
+      deps.confirm({
+        title: `${verdict.label} #${detail.number}?`,
+        ...(body.trim() ? { detail: firstLine(body) } : {}),
+        confirmLabel: "submit review",
+        run: () =>
+          deps.run(verdict.sent, async () => {
+            await session.submitPullRequestReview(current.reference, verdict.value, body);
+            reloadQuietly();
+          }),
+      });
+    };
+
     deps.openPicker({
       placeholder: "Review verdict",
       groups: [
@@ -200,25 +238,7 @@ export function usePullRequests(deps: PullRequestDeps) {
           items: offered.map((verdict) => ({
             id: `verdict:${verdict.value}`,
             title: verdict.label,
-            run: () => {
-              const edited = editInEditor(deps.renderer, "");
-              if (edited === null) return deps.say("The editor exited with an error; the review was not submitted.", true);
-              const body = edited;
-              const summaryRequired = sourceControlClients.get(detail.provider).reviewSummaryRequired("request-changes");
-              const canSubmit =
-                verdict.value === "request-changes" && summaryRequired ? body.trim().length > 0 : verdict.value === "approve" || body.trim().length > 0;
-              if (!canSubmit) return deps.say(verdict.value === "request-changes" && summaryRequired ? "Summarize your review (required to request changes)." : "Summarize your review or approve without one.", true);
-              deps.confirm({
-                title: `${verdict.label} #${detail.number}?`,
-                ...(body.trim() ? { detail: firstLine(body) } : {}),
-                confirmLabel: "submit review",
-                run: () =>
-                  deps.run(verdict.sent, async () => {
-                    await session.submitPullRequestReview(current.reference, verdict.value, body);
-                    reloadQuietly();
-                  }),
-              });
-            },
+            run: () => writeReview(verdict),
           })),
         },
       ],
@@ -306,7 +326,8 @@ export function usePullRequests(deps: PullRequestDeps) {
 
   const setWatching = (link: ThreadPullRequestLink, watching: boolean) => {
     if (!threadShell) return;
-    deps.run(watching ? "Watching for changes" : "Stopped watching", () => session.watchPullRequest(threadShell.id, linkKey(link), watching));
+    const label = watching ? "Watching for changes" : "Stopped watching";
+    deps.run(label, () => session.watchPullRequest(threadShell.id, linkKey(link), watching));
   };
 
   const linkDialog = () => {
@@ -323,8 +344,15 @@ export function usePullRequests(deps: PullRequestDeps) {
         const resolved = resolveLinkInput({ reference: text, project, projects: deps.projects });
         if (resolved === null) return deps.say("Use a pull request URL, 123, or #123.", true);
         if ("error" in resolved) return deps.say(resolved.error, true);
-        const mutation = planThreadPullRequestMutation({ capabilities, threadId: id, reference: resolved.link, linked: true });
-        if (mutation === null || mutation.type !== "thread.pull-request.link") return deps.say("This environment does not support linking this pull request.", true);
+        const mutation = planThreadPullRequestMutation({
+          capabilities,
+          threadId: id,
+          reference: resolved.link,
+          linked: true,
+        });
+        if (mutation === null || mutation.type !== "thread.pull-request.link") {
+          return deps.say("This environment does not support linking this pull request.", true);
+        }
         const { threadId: _threadId, source: _source, url, ...key } = mutation.input;
         deps.run(`Linked #${key.number}`, () => session.linkPullRequest(id, key, url));
       },
@@ -376,7 +404,9 @@ export function usePullRequests(deps: PullRequestDeps) {
     });
   };
 
-  const watchingCurrent = loaded ? links.some((link) => link.host === loaded.link.host && link.repository === loaded.link.repository && link.number === loaded.link.number && link.watch !== undefined) : false;
+  const watchingCurrent = loaded
+    ? links.some((link) => isSameLink(link, loaded.link) && link.watch !== undefined)
+    : false;
 
   const view: PullRequestViewState | null = loaded
     ? {
@@ -441,7 +471,13 @@ export function usePullRequests(deps: PullRequestDeps) {
   }
   if (threadShell) {
     for (const link of links) {
-      commands.push({ id: `unlink-pull-request:${link.number}`, title: `${link.source === "stack" ? "Dismiss" : "Unlink"} pull request #${link.number} from thread`, keywords: ["unlink", "pull request", "pr"], run: () => unlink(link) });
+      const verb = link.source === "stack" ? "Dismiss" : "Unlink";
+      commands.push({
+        id: `unlink-pull-request:${link.number}`,
+        title: `${verb} pull request #${link.number} from thread`,
+        keywords: ["unlink", "pull request", "pr"],
+        run: () => unlink(link),
+      });
       if (supportsWatch && (link.snapshot === null || link.snapshot.state === "open")) {
         const watching = link.watch !== undefined;
         commands.push({
@@ -466,16 +502,18 @@ export function usePullRequests(deps: PullRequestDeps) {
   return { view, isOpen: loaded !== null, open, close, handleKey, commands };
 }
 
+/** Two links name the same pull request when host, repository and number all match. */
+function isSameLink(left: ThreadPullRequestLink, right: ThreadPullRequestLink): boolean {
+  return left.host === right.host && left.repository === right.repository && left.number === right.number;
+}
+
 /** The project's configured merge method, as the web pre-selects it. */
 function preferredMergeMethod(config: ServerConfig, projectId: ProjectId) {
   return resolveProjectSettings(config.settings, projectId).settings.pullRequestMergeMethod ?? undefined;
 }
 
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-function firstLine(text: string): string {
-  const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
-  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -502,16 +540,36 @@ export function useComposerPullRequests(input: {
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const list = await session.pullRequestsList({ state: "all", projectId, limit: COMPOSER_PULL_REQUEST_LIST_LIMIT, ...(textQuery === null ? {} : { query: textQuery }) });
+          const list = await session.pullRequestsList({
+            state: "all",
+            projectId,
+            limit: COMPOSER_PULL_REQUEST_LIST_LIMIT,
+            ...(textQuery === null ? {} : { query: textQuery }),
+          });
           const number = exactPullRequestNumber(query);
           const hasExact =
             number !== null &&
-            list.entries.some((entry) => entry.projectId === projectId && entry.repository.trim().toLowerCase() === repository.trim().toLowerCase() && entry.number === number);
-          const exact = number !== null && !hasExact ? await session.pullRequestDetail({ projectId, repository, number }).catch(() => null) : null;
+            list.entries.some((entry) => {
+              const sameRepository = entry.repository.trim().toLowerCase() === repository.trim().toLowerCase();
+              return entry.projectId === projectId && sameRepository && entry.number === number;
+            });
+          // A typed number names one pull request exactly, so look it up when the list lacks it.
+          const exact =
+            number !== null && !hasExact
+              ? await session.pullRequestDetail({ projectId, repository, number }).catch(() => null)
+              : null;
           const exactDetail = exact?.number === number ? exact : null;
           if (cancelled) return;
-          const matches = rankComposerPullRequests({ result: list, exact: exactDetail, links: linksRef.current, projectId, repository, query });
-          setResult({ key, items: pullRequestItems(matches, repository), failed: list.errors.some((error) => error.projectId === projectId) });
+          const matches = rankComposerPullRequests({
+            result: list,
+            exact: exactDetail,
+            links: linksRef.current,
+            projectId,
+            repository,
+            query,
+          });
+          const failed = list.errors.some((error) => error.projectId === projectId);
+          setResult({ key, items: pullRequestItems(matches, repository), failed });
         } catch {
           if (!cancelled) setResult({ key, items: [], failed: true });
         }

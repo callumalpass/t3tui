@@ -10,17 +10,37 @@ export function usePaletteSearch(session: T3Session, snapshot: OrchestrationV2Sh
   const before = snapshot?.olderSettled?.before;
   const [result, setResult] = useState<{ query: string; value: OrchestrationV2SearchThreadsResult } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     setError(null);
     if (!normalized) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      session.searchThreads({ query: normalized, ...(before ? { olderSettledBefore: before, ...(messageSearchTokens(normalized).long.length ? {} : { titlesOnly: true }) } : {}) }).then(
-        (value) => { if (!cancelled) setResult({ query: normalized, value }); },
-        (error) => { if (!cancelled) setError(`Could not search messages: ${String(error)}`); },
+      // Beyond the live shelf a query with no searchable words can only match titles.
+      const titlesOnly = before ? messageSearchTokens(normalized).long.length === 0 : false;
+      const search = {
+        query: normalized,
+        ...(before ? { olderSettledBefore: before, ...(titlesOnly ? { titlesOnly: true } : {}) } : {}),
+      };
+      session.searchThreads(search).then(
+        (value) => {
+          if (!cancelled) setResult({ query: normalized, value });
+        },
+        (searchError) => {
+          if (!cancelled) setError(`Could not search messages: ${String(searchError)}`);
+        },
       );
     }, 120);
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [session, normalized, before]);
-  return { result: normalized && result?.query === normalized ? result.value : null, pending: normalized !== null && result?.query !== normalized && !error, error };
+
+  const fresh = normalized !== null && result?.query === normalized;
+  return {
+    result: fresh ? result.value : null,
+    pending: normalized !== null && result?.query !== normalized && !error,
+    error,
+  };
 }

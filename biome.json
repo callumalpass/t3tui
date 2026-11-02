@@ -1,0 +1,36 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "formatter": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "a11y": "off",
+      "correctness": {
+        "useExhaustiveDependencies": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        "noArrayIndexKey": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/ui/App.tsx",
+        "src/model/hints.ts",
+        "src/ui/HintBar.tsx",
+        "src/ui/Palette.tsx",
+        "src/model/palette.ts"
+      ],
+      "linter": {
+        "enabled": false
+      }
+    }
+  ]
+}

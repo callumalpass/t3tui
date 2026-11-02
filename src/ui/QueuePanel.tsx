@@ -2,6 +2,7 @@ import type { MouseEvent } from "@opentui/core";
 
 import type { QueuedMessage } from "../model/queue.ts";
 import { Button, Buttons, isLeftClick, useHover } from "./Button.tsx";
+import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
 export interface QueueActions {
@@ -40,11 +41,6 @@ export function QueuePanel(props: { readonly queued: readonly QueuedMessage[]; r
       {queued.length > shown.length ? <text fg={colors.faint}>{`${queued.length - shown.length} more · Q to go through them`}</text> : null}
     </box>
   );
-}
-
-function truncate(text: string, width: number): string {
-  const single = text.replace(/\s+/g, " ").trim();
-  return single.length > width ? `${single.slice(0, Math.max(0, width - 1))}…` : single;
 }
 
 function QueueRow(props: { readonly text: string; readonly width: number; readonly focused: boolean; readonly editing: boolean; readonly index: number; readonly actions: QueueActions }) {
