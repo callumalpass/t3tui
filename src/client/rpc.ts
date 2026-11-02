@@ -18,6 +18,7 @@ import {
   resolveSocketUrl,
   UnauthorizedError,
   type ServerTarget,
+  type StoredCredential,
 } from "./auth.ts";
 
 const makeProtocolClient = RpcClient.make(WsRpcGroup);
@@ -26,6 +27,8 @@ export type T3Rpc = Effect.Success<typeof makeProtocolClient>;
 export interface Connection {
   readonly rpc: T3Rpc;
   readonly target: ServerTarget;
+  /** For the HTTP endpoints, such as older thread history. */
+  readonly credential: StoredCredential;
 }
 
 const socketUrlFor = async (target: ServerTarget) => {
@@ -33,19 +36,20 @@ const socketUrlFor = async (target: ServerTarget) => {
   const existing = await readCredential(target);
   if (existing) {
     try {
-      return await resolveSocketUrl(target, existing, protocol);
+      return { url: await resolveSocketUrl(target, existing, protocol), credential: existing };
     } catch (error) {
       // A revoked or expired token falls through to a fresh one; TUI3_TOKEN never does.
       if (!(error instanceof UnauthorizedError) || process.env.TUI3_TOKEN) throw error;
     }
   }
-  return resolveSocketUrl(target, await issueLocalCredential(target), protocol);
+  const credential = await issueLocalCredential(target);
+  return { url: await resolveSocketUrl(target, credential, protocol), credential };
 };
 
 /** Opens one authenticated socket to the T3 Code server for the life of the scope. */
 export const connect: Effect.Effect<Connection, Error, Scope.Scope> = Effect.gen(function* () {
   const target = yield* Effect.tryPromise({ try: resolveLocalServer, catch: toError });
-  const socketUrl = yield* Effect.tryPromise({ try: () => socketUrlFor(target), catch: toError });
+  const { url: socketUrl, credential } = yield* Effect.tryPromise({ try: () => socketUrlFor(target), catch: toError });
   const protocol = Layer.effect(
     RpcClient.Protocol,
     RpcClient.makeProtocolSocket({
@@ -65,7 +69,7 @@ export const connect: Effect.Effect<Connection, Error, Scope.Scope> = Effect.gen
   );
   const context = yield* Layer.build(protocol);
   const rpc = yield* makeProtocolClient.pipe(Effect.provide(context));
-  return { rpc, target };
+  return { rpc, target, credential };
 });
 
 const toError = (cause: unknown) => (cause instanceof Error ? cause : new Error(String(cause)));

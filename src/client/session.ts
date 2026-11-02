@@ -1,7 +1,10 @@
 import {
   CommandId,
   MessageId,
+  ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2Command,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -10,11 +13,14 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
+import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
+import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { appendFileSync } from "node:fs";
 
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -24,6 +30,7 @@ import { connect, type Connection } from "./rpc.ts";
 export type ConnectionStatus =
   | { readonly type: "connecting" }
   | { readonly type: "live" }
+  | { readonly type: "reconnecting"; readonly message: string }
   | { readonly type: "error"; readonly message: string };
 
 export interface ShellState {
@@ -32,9 +39,18 @@ export interface ShellState {
   readonly serverUrl: string | null;
 }
 
+/** Older turns the server left out of the snapshot, fetched page by page. */
+export interface ThreadHistory {
+  readonly cursor: string | null;
+  readonly hasMore: boolean;
+  readonly loading: boolean;
+  readonly error?: string;
+}
+
 export interface ThreadState {
   readonly status: "loading" | "live" | "error";
   readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly history: ThreadHistory;
   readonly error?: string;
 }
 
@@ -44,12 +60,18 @@ type Listener<T> = (value: T) => void;
 const THREAD_NOTIFY_MS = 33;
 /** Threads you leave stay subscribed this long, so switching back is instant. */
 const THREAD_LINGER_MS = 60_000;
+/** Waits between reconnect attempts after the socket drops. */
+const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 5_000, 10_000];
+
+const NO_HISTORY: ThreadHistory = { cursor: null, hasMore: false, loading: false };
 
 const debugPath = process.env.TUI3_DEBUG;
 /** Appends to the file named by TUI3_DEBUG; the TUI owns stdout and stderr. */
 export function debugLog(message: string): void {
   if (debugPath) appendFileSync(debugPath, `${new Date().toISOString()} ${message}\n`);
 }
+
+const decodeHistoryPage = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage));
 
 interface ThreadEntry {
   state: ThreadState;
@@ -61,11 +83,16 @@ interface ThreadEntry {
 
 /**
  * One connection to T3 Code: a live shell (projects and threads) plus on-demand
- * thread subscriptions, exposed as plain listeners for the UI.
+ * thread subscriptions, exposed as plain listeners for the UI. When the socket
+ * drops, it reconnects and resubscribes everything.
  */
 export class T3Session {
   private scope: Scope.Closeable | null = null;
   private connection: Connection | null = null;
+  private stopped = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private recovering = false;
   private shell: ShellState = { status: { type: "connecting" }, snapshot: null, serverUrl: null };
   private readonly shellListeners = new Set<Listener<ShellState>>();
   private readonly threads = new Map<ThreadId, ThreadEntry>();
@@ -76,17 +103,22 @@ export class T3Session {
     try {
       this.connection = await Effect.runPromise(connect.pipe(Scope.provide(scope)));
     } catch (error) {
+      this.scope = null;
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+      if (this.reconnectAttempt > 0) return this.scheduleReconnect(messageOf(error));
       this.setShell({ status: { type: "error", message: messageOf(error) } });
       return;
     }
+    this.recovering = false;
     this.setShell({ serverUrl: this.connection.target.httpBaseUrl });
     this.runInScope(this.shellStream());
+    for (const [threadId, entry] of this.threads) entry.fiber = this.runInScope(this.threadStream(threadId));
   }
 
   async stop(): Promise<void> {
-    const scope = this.scope;
-    this.scope = null;
-    if (scope) await Effect.runPromise(Scope.close(scope, Exit.void));
+    this.stopped = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    await this.closeScope();
   }
 
   getShell(): ShellState {
@@ -106,9 +138,9 @@ export class T3Session {
   watchThread(threadId: ThreadId, listener: Listener<ThreadState>): () => void {
     let entry = this.threads.get(threadId);
     if (!entry) {
-      entry = { state: { status: "loading", projection: null }, listeners: new Set(), fiber: null, notifyTimer: null, lingerTimer: null };
+      entry = { state: { status: "loading", projection: null, history: NO_HISTORY }, listeners: new Set(), fiber: null, notifyTimer: null, lingerTimer: null };
       this.threads.set(threadId, entry);
-      entry.fiber = this.runInScope(this.threadStream(threadId));
+      if (this.connection) entry.fiber = this.runInScope(this.threadStream(threadId));
       debugLog(`subscribe ${threadId}`);
     }
     if (entry.lingerTimer) clearTimeout(entry.lingerTimer);
@@ -127,6 +159,34 @@ export class T3Session {
         if (watched.fiber) Effect.runFork(Fiber.interrupt(watched.fiber));
       }, THREAD_LINGER_MS);
     };
+  }
+
+  /** Fetches the next page of older turns and prepends it. Resolves false when there was nothing to load. */
+  async loadEarlier(threadId: ThreadId): Promise<boolean> {
+    const entry = this.threads.get(threadId);
+    const cursor = entry?.state.history.cursor;
+    if (!entry || !cursor || !entry.state.history.hasMore || entry.state.history.loading) return false;
+    const { target, credential } = this.requireConnection();
+    this.setThread(threadId, { history: { ...entry.state.history, loading: true } });
+    try {
+      const url = new URL(`/api/orchestration/threads/${encodeURIComponent(threadId)}/history`, target.httpBaseUrl);
+      url.searchParams.set("cursor", cursor);
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${credential.bearerToken}`, [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+      });
+      if (!response.ok) throw new Error(`${response.status} ${(await response.text()).slice(0, 200)}`);
+      const page = decodeHistoryPage(await response.json());
+      // A resubscribe while the page was in flight replaced the projection; drop the stale page.
+      if (entry.state.history.cursor !== cursor || !entry.state.projection) return false;
+      this.setThread(threadId, {
+        projection: mergeOlderHistoryIntoProjection(entry.state.projection, page.items),
+        history: { cursor: page.nextCursor, hasMore: page.hasMoreHistory, loading: false },
+      });
+      return true;
+    } catch (error) {
+      this.setThread(threadId, { history: { ...entry.state.history, loading: false, error: messageOf(error) } });
+      throw error;
+    }
   }
 
   sendMessage(threadId: ThreadId, text: string, mode: "queue" | "steer" = "queue"): Promise<void> {
@@ -170,6 +230,7 @@ export class T3Session {
           const previous = this.shell.snapshot;
           switch (item.kind) {
             case "synchronized":
+              this.reconnectAttempt = 0;
               this.setShell({ status: { type: "live" } });
               return;
             case "snapshot":
@@ -186,13 +247,17 @@ export class T3Session {
           }
         }),
       ),
-      Effect.catchCause((cause) => Effect.sync(() => this.setShell({ status: { type: "error", message: prettyCause(cause) } }))),
+      Effect.catchCause((cause) => Effect.sync(() => this.connectionLost(prettyCause(cause)))),
+      // The shell stream only ends when the socket does.
+      Effect.ensuring(Effect.sync(() => this.connectionLost("connection closed"))),
     );
   }
 
   private threadStream(threadId: ThreadId) {
     const rpc = this.requireConnection().rpc;
-    return rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({ threadId, requestCompletionMarker: true }).pipe(
+    // Bounded: the server sends the recent window and a cursor for older turns,
+    // which keeps long threads under the socket's message size limit.
+    return rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({ threadId, requestCompletionMarker: true, acceptBoundedSnapshot: true }).pipe(
       Stream.runForEach((item) =>
         Effect.sync(() => {
           const entry = this.threads.get(threadId);
@@ -201,10 +266,15 @@ export class T3Session {
             case "synchronized":
               this.setThread(threadId, { status: "live" });
               return;
-            case "snapshot":
-              debugLog(`snapshot ${threadId} items=${item.projection.visibleTurnItems.length}`);
-              this.setThread(threadId, { projection: item.projection });
+            case "snapshot": {
+              const projection = boundedSnapshotProjection(item);
+              debugLog(`snapshot ${threadId} items=${projection.visibleTurnItems.length} more=${item.hasMoreHistory === true}`);
+              this.setThread(threadId, {
+                projection,
+                history: { cursor: item.historyCursor ?? null, hasMore: item.hasMoreHistory === true, loading: false },
+              });
               return;
+            }
             case "event":
               this.setThread(threadId, { projection: applyOrchestrationV2ProjectionEvent(entry.state.projection, item.event) });
               return;
@@ -213,8 +283,40 @@ export class T3Session {
           }
         }),
       ),
-      Effect.catchCause((cause) => Effect.sync(() => this.setThread(threadId, { status: "error", error: prettyCause(cause) }))),
+      Effect.catchCause((cause) =>
+        Effect.sync(() => {
+          const message = prettyCause(cause);
+          // A dropped socket is the shell's to recover from; the thread resubscribes after.
+          if (!isSocketFailure(message)) this.setThread(threadId, { status: "error", error: message });
+        }),
+      ),
     );
+  }
+
+  private connectionLost(message: string): void {
+    if (this.stopped || this.recovering) return;
+    this.recovering = true;
+    debugLog(`connection lost: ${message}`);
+    void this.closeScope().then(() => this.scheduleReconnect(message));
+  }
+
+  private scheduleReconnect(message: string): void {
+    if (this.stopped || this.reconnectTimer) return;
+    const delay = RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)]!;
+    this.reconnectAttempt++;
+    this.setShell({ status: { type: "reconnecting", message } });
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.start();
+    }, delay);
+  }
+
+  private async closeScope(): Promise<void> {
+    const scope = this.scope;
+    this.scope = null;
+    this.connection = null;
+    for (const entry of this.threads.values()) entry.fiber = null;
+    if (scope) await Effect.runPromise(Scope.close(scope, Exit.void));
   }
 
   private runInScope<A, E>(effect: Effect.Effect<A, E>): Fiber.Fiber<unknown, unknown> {
@@ -239,8 +341,8 @@ export class T3Session {
     if (!entry) return;
     entry.state = { ...entry.state, ...patch };
     if (entry.notifyTimer) return;
-    // The first snapshot and status changes show at once; streamed events batch.
-    const immediate = patch.status !== undefined || entry.state.status === "loading";
+    // The first snapshot, status and history changes show at once; streamed events batch.
+    const immediate = patch.status !== undefined || patch.history !== undefined || entry.state.status === "loading";
     const notify = () => {
       entry.notifyTimer = null;
       for (const listener of entry.listeners) listener(entry.state);
@@ -251,6 +353,8 @@ export class T3Session {
 }
 
 const isActiveRun = (status: string) => status === "preparing" || status === "starting" || status === "running" || status === "waiting";
+
+const isSocketFailure = (message: string) => /Socket(Close|Open|Generic)?Error|socket/i.test(message);
 
 const newCommandId = () => CommandId.make(crypto.randomUUID());
 

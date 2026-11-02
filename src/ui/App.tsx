@@ -175,7 +175,14 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     return { needs, active };
   }, [shell.snapshot]);
 
-  const status = shell.status.type === "error" ? `error: ${shell.status.message}` : shell.status.type === "connecting" ? "connecting…" : (shell.serverUrl ?? "");
+  const status =
+    shell.status.type === "error"
+      ? `error: ${shell.status.message}`
+      : shell.status.type === "connecting"
+        ? "connecting…"
+        : shell.status.type === "reconnecting"
+          ? "reconnecting…"
+          : (shell.serverUrl ?? "");
   const listWidth = attachThreadId ? 0 : Math.min(46, Math.max(28, Math.floor(width * 0.3)));
   const subtitle = threadShell
     ? [threadShell.modelSelection.model === "default" ? "" : threadShell.modelSelection.model, threadShell.branch, relativeTime(lastActivity(threadShell))].filter(Boolean).join(" · ")
