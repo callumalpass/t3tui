@@ -4,14 +4,15 @@
   "private": true,
   "type": "module",
   "bin": {
-    "tui3": "./src/bin.ts"
+    "tui3": "./dist/bin.js"
   },
   "scripts": {
     "dev": "bun run src/bin.ts",
+    "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint src test",
     "test": "bun test",
-    "postinstall": "bun run scripts/link-vendor.ts"
+    "postinstall": "bun run scripts/link-vendor.ts && bun run scripts/build.ts"
   },
   "dependencies": {
     "@opentui/core": "0.2.7",

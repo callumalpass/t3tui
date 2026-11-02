@@ -8,9 +8,11 @@ Built with Bun and [OpenTUI](https://github.com/anomalyco/opentui) (React).
 
 ```sh
 git clone --recurse-submodules <this repo> && cd tui3
-bun install          # also links the pinned T3 Code packages into node_modules
+bun install          # also links the pinned T3 Code packages into node_modules and builds dist/
 bun link             # optional: puts `tui3` on your PATH
 ```
+
+`tui3` runs the bundle in `dist/`, which uses over 100 MB less memory than the sources. After pulling changes, run `bun run build` (or `bun install`) to rebuild it; `bun run dev` runs the sources directly.
 
 ## Use
 
