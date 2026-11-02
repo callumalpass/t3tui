@@ -2,6 +2,7 @@
   "name": "tui3",
   "version": "0.0.1",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "tui3": "./dist/bin.js"
