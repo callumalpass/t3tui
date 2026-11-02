@@ -9,6 +9,7 @@ import type { ConnectionStatus, T3Session } from "../../src/client/session.ts";
 import { DEFAULT_CONFIG, type T3tuiConfig } from "../../src/config.ts";
 import type { Layout } from "../../src/layout.ts";
 import { App } from "../../src/ui/App.tsx";
+import type { Clipboard, ClipboardImage } from "../../src/ui/clipboard.ts";
 import { v2Projection, v2ShellSnapshot, v2ThreadId } from "../../vendor/t3code/packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
 
 export { v2Projection, v2ShellSnapshot, v2ThreadId };
@@ -45,6 +46,8 @@ export function fakeSession(
     readonly terminals?: readonly unknown[];
     readonly terminalEvents?: readonly unknown[];
     readonly failures?: Record<string, string>;
+    /** The server's config; loading by default. */
+    readonly serverConfig?: unknown;
   } = {},
 ) {
   const calls: Call[] = [];
@@ -58,7 +61,7 @@ export function fakeSession(
     getShell: () => ({ status: state.status ?? { type: "live" }, snapshot, serverUrl: "ws://test" }),
     onShell: () => () => {},
     watchThread: (_id: ThreadId, listener: (value: unknown) => void) => live({ status: "live", projection, history: { cursor: null, hasMore: false, loading: false } })(listener),
-    watchServerConfig: live({ status: "loading", config: null }),
+    watchServerConfig: live(state.serverConfig ? { status: "live", config: state.serverConfig } : { status: "loading", config: null }),
     watchServers: live({ status: "live", items: [] }),
     watchAutomations: live({ status: "live", items: [] }),
     watchTerminals: live({ status: "live", items: state.terminals ?? [] }),
@@ -86,10 +89,28 @@ export function fakeSession(
 }
 
 /** Renders the whole app against a fake session, with helpers to drive it by key and mouse. */
-export async function renderApp(options: { readonly session?: ReturnType<typeof fakeSession>; readonly config?: Partial<T3tuiConfig>; readonly layout?: Layout; readonly width?: number; readonly height?: number } = {}) {
+export async function renderApp(
+  options: {
+    readonly session?: ReturnType<typeof fakeSession>;
+    readonly config?: Partial<T3tuiConfig>;
+    readonly layout?: Layout;
+    readonly width?: number;
+    readonly height?: number;
+    /** What the clipboard holds; copies to it are recorded as "copy" calls. */
+    readonly clipboard?: { readonly image?: ClipboardImage; readonly text?: string };
+  } = {},
+) {
   const fake = options.session ?? fakeSession();
   const config = { ...DEFAULT_CONFIG, ...options.config };
-  const rig = await testRender(<App session={fake.session} config={config} {...(options.layout ? { layout: options.layout } : {})} />, { width: options.width ?? 140, height: options.height ?? 40 });
+  const clipboard: Clipboard = {
+    readImage: async () => options.clipboard?.image ?? "empty",
+    readText: async () => options.clipboard?.text ?? null,
+    copy: async (text) => {
+      fake.calls.push({ method: "copy", args: [text] });
+      return true;
+    },
+  };
+  const rig = await testRender(<App session={fake.session} config={config} clipboard={clipboard} {...(options.layout ? { layout: options.layout } : {})} />, { width: options.width ?? 140, height: options.height ?? 40 });
   // The app runs on timers and subscriptions, as it does live: tests wait for frames rather than wrap each update in act().
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   const keys = createMockKeys(rig.renderer);
@@ -121,6 +142,11 @@ export async function renderApp(options: { readonly session?: ReturnType<typeof 
     await keys.typeText(text);
     await settle();
   };
+  /** A bracketed paste, as a terminal sends one. */
+  const paste = async (text: string) => {
+    await keys.pasteBracketedText(text);
+    await settle();
+  };
   const click = async (x: number, y: number, button: 0 | 2 = 0) => {
     await rig.mockMouse.click(x, y, button);
     await settle();
@@ -139,5 +165,5 @@ export async function renderApp(options: { readonly session?: ReturnType<typeof 
   };
   const calls = (method: string) => fake.calls.filter((call) => call.method === method);
   const destroy = () => rig.renderer.destroy();
-  return { ...rig, session: fake.session, press, type, click, settle, frame, hints, find, calls, destroy };
+  return { ...rig, session: fake.session, press, type, paste, click, settle, frame, hints, find, calls, destroy };
 }

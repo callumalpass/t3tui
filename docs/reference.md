@@ -76,6 +76,8 @@ Navigation:
 
 `shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`) in the terminal pane; save and quit to bring it back.
 
+`ctrl+v` attaches the clipboard's image, or pastes its text when there is no image. Pasting or dropping the path of an image file (quoted, as a `file://` URL, or with `\ ` before spaces) attaches the file rather than typing the path. See [Attachments](#attachments).
+
 With the box empty after an interrupted run (or one a usage limit stopped), `enter` continues where it left off and releases messages held in the queue.
 
 Typing a trigger opens a list of suggestions above the box:
@@ -137,7 +139,9 @@ Submenus open as their own list, and typing finds their items from the top (`thr
 
 ## Attachments
 
-`a` in navigation (or `Attach file…` in the palette) prompts for a path: `~` expands, and a relative path is taken from the thread's worktree or project folder. `Paste image from clipboard` in the palette takes a clipboard image instead (`wl-paste`, `xclip`, or `pngpaste` on macOS). Files upload at once, and their names show above the message box until the next message sends them; `Remove attachment: …` in the palette takes one back. A message can be attachments alone.
+`a` in navigation (or `Attach file…` in the palette) prompts for a path: `~` expands, and a relative path is taken from the thread's worktree or project folder. `ctrl+v` in the message box, or `Paste image from clipboard` in the palette, takes the clipboard's image instead (PNG, JPEG, WebP or GIF), as does a paste that comes through empty, which is how many terminals pass on a copied image. The clipboard is read through OpenTUI, then `wl-paste` or `xclip` (or `pngpaste` or `osascript` on macOS) when that finds nothing it can read. Over SSH the clipboard is on the other machine, so use `a` there. Pasting an image file's path attaches the file. Files upload at once, and their names show above the message box until the next message sends them; `Remove attachment: …` in the palette takes one back. A message can be attachments alone.
+
+Sent images show in their message, up to 12 rows tall, through kitty or sixel graphics where the terminal has them and as coloured blocks elsewhere; the file's name is under each.
 
 Limits: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other files up to the server's limit (50 MB at most), and 100 attachments per message.
 

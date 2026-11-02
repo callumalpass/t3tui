@@ -32,14 +32,78 @@ export function expandAttachmentPath(input: string, cwd: string | null): string 
   return isAbsolute(expanded) ? expanded : resolve(cwd ?? process.cwd(), expanded);
 }
 
+/** Image types asked of the clipboard, in order of preference; all of them can be sent. */
+export const CLIPBOARD_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
+
+/** A platform tool that reads a clipboard image, for when OpenTUI's clipboard service can't. */
+export interface ClipboardImageTool {
+  /** Lists the clipboard's types, one per line; absent for a tool that reads one fixed type. */
+  readonly types?: readonly string[];
+  readonly read: (mimeType: string) => readonly string[];
+  /** The type a fixed-type tool reads. */
+  readonly mimeType?: string;
+  /** Turns what the tool printed into the image's bytes, when it doesn't print them raw. */
+  readonly decode?: (stdout: Uint8Array) => Uint8Array | null;
+}
+
 /** The clipboard readers, in order: the platform's usual image grabber first. */
-export function clipboardImageCommands(platform: string): readonly (readonly string[])[] {
+export function clipboardImageCommands(platform: string): readonly ClipboardImageTool[] {
   return platform === "darwin"
-    ? [["pngpaste", "-"]]
+    ? [
+        { read: () => ["pngpaste", "-"], mimeType: "image/png" },
+        { read: () => ["osascript", "-e", "the clipboard as «class PNGf»"], mimeType: "image/png", decode: decodeAppleScriptData },
+      ]
     : [
-        ["wl-paste", "--type", "image/png"],
-        ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+        { types: ["wl-paste", "--list-types"], read: (type) => ["wl-paste", "--type", type] },
+        { types: ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"], read: (type) => ["xclip", "-selection", "clipboard", "-t", type, "-o"] },
       ];
+}
+
+/** The image type to ask for among the clipboard's: a preferred one, else any image. */
+export function pickClipboardImageType(types: readonly string[]): string | null {
+  const offered = types.map((type) => type.trim().toLowerCase());
+  return CLIPBOARD_IMAGE_TYPES.find((type) => offered.includes(type)) ?? offered.find((type) => type.startsWith("image/")) ?? null;
+}
+
+/** AppleScript prints clipboard data as `«data PNGf89504E47…»`; this is the bytes. */
+export function decodeAppleScriptData(stdout: Uint8Array): Uint8Array | null {
+  const hex = /«data \w{4}([0-9A-Fa-f]+)»/.exec(new TextDecoder().decode(stdout))?.[1];
+  return hex ? Uint8Array.from(hex.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16)) : null;
+}
+
+/** The file name for a pasted image of this type. */
+export function pastedImageName(mimeType: string): string {
+  const extension = Object.entries(IMAGE_MIME_BY_EXTENSION).find(([, type]) => type === mimeType)?.[0] ?? "png";
+  return `pasted-image.${extension === "jpeg" ? "jpg" : extension}`;
+}
+
+/**
+ * The image file a paste names, as terminals paste a dropped file: quoted, as a file://
+ * URL, or with its spaces escaped. Null unless it is one path with an image's extension;
+ * whether the file exists is the caller's to check.
+ */
+export function pastedImagePath(text: string, cwd: string | null): string | null {
+  const raw = text.trim().replace(/^(['"])(.*)\1$/s, "$2");
+  if (!raw || raw.includes("\n")) return null;
+  let path: string;
+  if (raw.startsWith("file://")) {
+    try {
+      const url = new URL(raw);
+      if (url.hostname && url.hostname !== "localhost") return null;
+      path = decodeURIComponent(url.pathname);
+    } catch {
+      return null;
+    }
+  } else {
+    path = raw.replace(/\\(.)/g, "$1");
+  }
+  if (!path.startsWith("/") && !path.startsWith("~") && !path.startsWith(".")) return null;
+  return imageMimeTypeForName(path) ? expandAttachmentPath(path, cwd) : null;
+}
+
+/** Over SSH the clipboard is on the other machine, out of reach of the tools here. */
+export function isRemoteTerminal(env: Record<string, string | undefined>): boolean {
+  return Boolean(env.SSH_CONNECTION || env.SSH_TTY);
 }
 
 export type AttachmentCheck =

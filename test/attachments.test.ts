@@ -4,7 +4,17 @@ import * as Schema from "effect/Schema";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { attachmentLine, checkAttachment, clipboardImageCommands, expandAttachmentPath } from "../src/model/attachments.ts";
+import {
+  attachmentLine,
+  checkAttachment,
+  clipboardImageCommands,
+  decodeAppleScriptData,
+  expandAttachmentPath,
+  isRemoteTerminal,
+  pastedImageName,
+  pastedImagePath,
+  pickClipboardImageType,
+} from "../src/model/attachments.ts";
 
 const isUpload = Schema.is(AttachmentCreateUploadUrlInput);
 
@@ -50,9 +60,60 @@ describe("checkAttachment", () => {
 });
 
 describe("clipboard", () => {
-  test("each platform's grabber comes first", () => {
-    expect(clipboardImageCommands("darwin")).toEqual([["pngpaste", "-"]]);
-    expect(clipboardImageCommands("linux")[0]).toEqual(["wl-paste", "--type", "image/png"]);
+  test("each platform's grabber comes first, reading whichever image type is there", () => {
+    const [pngpaste, osascript] = clipboardImageCommands("darwin");
+    expect(pngpaste?.read("image/png")).toEqual(["pngpaste", "-"]);
+    expect(osascript?.read("image/png")).toEqual(["osascript", "-e", "the clipboard as «class PNGf»"]);
+    const [wayland] = clipboardImageCommands("linux");
+    expect(wayland?.types).toEqual(["wl-paste", "--list-types"]);
+    expect(wayland?.read("image/jpeg")).toEqual(["wl-paste", "--type", "image/jpeg"]);
     expect(attachmentLine([{ type: "file", id: "a", name: "a.txt", mimeType: "text/plain", sizeBytes: 1 }])).toBe("Attached: a.txt");
+  });
+});
+
+describe("clipboard images", () => {
+  test("a PNG is preferred, but any image type will do", () => {
+    expect(pickClipboardImageType(["text/plain", "image/jpeg", "image/png"])).toBe("image/png");
+    expect(pickClipboardImageType(["TARGETS", "image/webp\r"])).toBe("image/webp");
+    expect(pickClipboardImageType(["image/bmp"])).toBe("image/bmp");
+    expect(pickClipboardImageType(["text/plain", "UTF8_STRING"])).toBeNull();
+  });
+
+  test("osascript's «data PNGf…» output decodes to the bytes", () => {
+    const out = new TextEncoder().encode("«data PNGf89504E470D0A1A0A»\n");
+    expect([...(decodeAppleScriptData(out) ?? [])]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(decodeAppleScriptData(new TextEncoder().encode("execution error"))).toBeNull();
+  });
+
+  test("a pasted image is named for its type", () => {
+    expect(pastedImageName("image/png")).toBe("pasted-image.png");
+    expect(pastedImageName("image/jpeg")).toBe("pasted-image.jpg");
+    expect(pastedImageName("image/webp")).toBe("pasted-image.webp");
+  });
+
+  test("SSH means the clipboard is out of reach", () => {
+    expect(isRemoteTerminal({ SSH_CONNECTION: "1.2.3.4 5 6.7.8.9 22" })).toBe(true);
+    expect(isRemoteTerminal({ SSH_TTY: "/dev/pts/3" })).toBe(true);
+    expect(isRemoteTerminal({})).toBe(false);
+  });
+});
+
+describe("pasted paths", () => {
+  test("a dropped image path is read whether quoted, a file:// URL, or with escaped spaces", () => {
+    expect(pastedImagePath("/tmp/shot.png", null)).toBe("/tmp/shot.png");
+    expect(pastedImagePath("'/tmp/my shot.png' ", null)).toBe("/tmp/my shot.png");
+    expect(pastedImagePath('"/tmp/my shot.PNG"', null)).toBe("/tmp/my shot.PNG");
+    expect(pastedImagePath("/tmp/my\\ shot.jpg", null)).toBe("/tmp/my shot.jpg");
+    expect(pastedImagePath("file:///tmp/my%20shot.webp", null)).toBe("/tmp/my shot.webp");
+    expect(pastedImagePath("file://localhost/tmp/a.gif", null)).toBe("/tmp/a.gif");
+    expect(pastedImagePath("./shots/a.png", "/work")).toBe("/work/shots/a.png");
+  });
+
+  test("anything else is text", () => {
+    expect(pastedImagePath("/tmp/notes.txt", null)).toBeNull();
+    expect(pastedImagePath("look at shot.png please", null)).toBeNull();
+    expect(pastedImagePath("/tmp/a.png\n/tmp/b.png", null)).toBeNull();
+    expect(pastedImagePath("file://elsewhere/tmp/a.png", null)).toBeNull();
+    expect(pastedImagePath("", null)).toBeNull();
   });
 });

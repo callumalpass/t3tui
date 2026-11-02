@@ -1,7 +1,7 @@
-import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
-import type { ThreadId, TurnItemId } from "@t3tools/contracts";
+import type { ImageRenderable, MouseEvent, ScrollBoxRenderable } from "@opentui/core";
+import type { ChatAttachment, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
-import { memo, useEffect, useState, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import * as DateTime from "effect/DateTime";
 import { findTextSegments } from "../model/search.ts";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
@@ -175,7 +175,7 @@ const Row = memo(function Row(props: {
       }
       const summary = row.assistantTurnDiffSummary;
       const menu = { kind: "message", messageId: message.id, role: message.role, text: message.text, ...(summary && summary.files.length > 0 ? { checkpointTurnCount: summary.checkpointTurnCount } : {}) } as const;
-      if (message.role === "user") return <UserMessage text={message.text} messageId={message.id} selected={props.selected} onSelect={() => mouse.selectTurn(message.id)} onMenu={() => mouse.menu(menu)} />;
+      if (message.role === "user") return <UserMessage session={props.session} text={message.text} attachments={message.attachments ?? []} messageId={message.id} selected={props.selected} onSelect={() => mouse.selectTurn(message.id)} onMenu={() => mouse.menu(menu)} />;
       if (message.role === "system") return <text marginTop={1} fg={colors.muted} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>{message.text}</text>;
       return (
         <box marginTop={1} flexDirection="column" onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
@@ -308,7 +308,7 @@ const USER_FOLD_LINES = 8;
 const USER_FOLD_CHARS = 600;
 
 /** Your message: a full-width raised block, folded past 8 lines or 600 characters. */
-function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly text: string; readonly messageId: string; readonly selected: boolean; readonly onSelect: () => void; readonly onMenu: () => void }) {
+function UserMessage({ session, text, attachments, messageId, selected, onSelect, onMenu }: { readonly session: T3Session; readonly text: string; readonly attachments: readonly ChatAttachment[]; readonly messageId: string; readonly selected: boolean; readonly onSelect: () => void; readonly onMenu: () => void }) {
   const [hover, hoverProps] = useHover();
   const trimmed = text.trim();
   const lines = trimmed.split("\n");
@@ -319,6 +319,45 @@ function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly
     <box id={`turn-${messageId}`} border={["left"]} customBorderChars={BAR} borderColor={colors.accent} marginTop={1} backgroundColor={hover ? colors.elementHover : selected ? colors.selectedBg : colors.element} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu() : isLeftClick(event) ? onSelect() : undefined)}>
       <text fg={colors.text}>{shown}</text>
       {folded ? <text fg={colors.faint}>{`… ${Math.max(1, lines.length - shown.split("\n").length)} more lines`}</text> : null}
+      {attachments.map((attachment) => (attachment.type === "image" ? <MessageImage key={attachment.id} session={session} attachment={attachment} /> : <text key={attachment.id} fg={colors.muted}>{`▤ ${attachment.name}`}</text>))}
+    </box>
+  );
+}
+
+const IMAGE_ROWS = 12;
+
+/** A sent image, shown in the terminal's best image protocol; its name alone until it loads, or if it can't. */
+function MessageImage({ session, attachment }: { readonly session: T3Session; readonly attachment: ChatAttachment }) {
+  const [bytes, setBytes] = useState<Uint8Array | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [size, setSize] = useState({ width: CONTENT_WIDTH, height: IMAGE_ROWS });
+  const image = useRef<ImageRenderable | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    session.attachmentImage(attachment).then(
+      (loaded) => !cancelled && setBytes(loaded),
+      () => !cancelled && setFailed(true),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [session, attachment]);
+  const name = <text fg={colors.muted}>{`▣ ${attachment.name}`}</text>;
+  if (!bytes || failed) return <box marginTop={1}>{name}</box>;
+  return (
+    <box marginTop={1} flexDirection="column">
+      <image
+        ref={image}
+        source={bytes}
+        fit="fit"
+        protocol="auto"
+        width={size.width}
+        maxWidth="100%"
+        height={size.height}
+        onLoad={() => image.current && setSize(image.current.getFittedSize(CONTENT_WIDTH, IMAGE_ROWS))}
+        onError={() => setFailed(true)}
+      />
+      {name}
     </box>
   );
 }

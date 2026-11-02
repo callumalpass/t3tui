@@ -1,4 +1,4 @@
-import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRenderable } from "@opentui/core";
+import { decodePasteBytes, type KeyEvent, type MouseEvent, type PasteEvent, type ScrollBoxRenderable, type Selection, type TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
+import { pastedImagePath } from "../model/attachments.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type T3tuiConfig } from "../config.ts";
 import { saveLayout, type Layout } from "../layout.ts";
@@ -45,6 +46,7 @@ import { PullRequestView } from "./PullRequestView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
+import { rendererClipboard, type Clipboard } from "./clipboard.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors, statusColor } from "./theme.ts";
 import { BAR, NO_BORDER } from "./edges.ts";
@@ -103,10 +105,11 @@ const COMPOSER_KEYS = {
 /** The composer's key while a new thread is being drafted. */
 const DRAFT_KEY = "draft";
 
-export function App(props: { readonly session: T3Session; readonly config: T3tuiConfig; readonly layout?: Layout; readonly attachThreadId?: ThreadId }) {
+export function App(props: { readonly session: T3Session; readonly config: T3tuiConfig; readonly layout?: Layout; readonly attachThreadId?: ThreadId; readonly clipboard?: Clipboard }) {
   const { session, attachThreadId } = props;
   const attached = attachThreadId !== undefined;
   const renderer = useRenderer();
+  const [clipboard] = useState(() => props.clipboard ?? rendererClipboard(renderer));
   const { width, height } = useTerminalDimensions();
   const [shell, setShell] = useState<ShellState>(session.getShell());
   // Any thread, listed or not: subagents open here too.
@@ -419,6 +422,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const attachCwd = draft ? (shell.snapshot?.projects.find((candidate) => candidate.id === draft.projectId)?.workspaceRoot ?? null) : (threadShell?.worktreePath ?? project?.workspaceRoot ?? null);
   const attach = useAttachments({
     session,
+    clipboard,
     composerKey,
     cwd: attachCwd,
     maxFileBytes: serverConfig?.config ? (serverConfig.config.environment.capabilities.fileAttachments?.maxUploadBytes ?? null) : undefined,
@@ -894,6 +898,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     queue.keys.input,
     { keys: [], label: config.sendShortcut === "enter" ? "shift+enter or \\" : "enter", hint: "newline" },
     editorKey && hinted(editorKey, "editor"),
+    { keys: ["ctrl+v"], run: () => attach.paste((text) => composerRef.current?.insertText(text)) },
     { keys: ["esc"], run: () => setMode("nav"), hint: "navigate" },
     !attached && hinted(nextThreadKey, "thread"),
   );
@@ -1308,6 +1313,15 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                   wrapMode="word"
                   keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
                   onSubmit={() => submit()}
+                  onPaste={(event: PasteEvent) => {
+                    const text = decodePasteBytes(event.bytes);
+                    // An empty paste is how terminals pass on a copied image they can't send as text.
+                    const path = text.trim() ? pastedImagePath(text, attachCwd) : null;
+                    if (text.trim() && !(path && existsSync(path))) return;
+                    event.preventDefault();
+                    if (path) attach.attachPath(path);
+                    else attach.paste();
+                  }}
                   onCursorChange={composerMenu.sync}
                   onContentChange={() => {
                     composerMenu.sync();

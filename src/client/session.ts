@@ -200,6 +200,7 @@ export class T3Session {
   private readonly shellListeners = new Set<Listener<ShellState>>();
   private readonly threads = new Map<ThreadId, ThreadEntry>();
   private readonly feeds = new Map<string, FeedEntry>();
+  private readonly attachmentImages = new Map<string, Promise<Uint8Array>>();
 
   async start(): Promise<void> {
     const scope = Effect.runSync(Scope.make());
@@ -475,6 +476,23 @@ export class T3Session {
     const response = await fetch(url, { method: "POST", headers: { "content-type": upload.mimeType }, body: bytes as BodyInit });
     if (!response.ok) throw new Error(`Upload rejected (${response.status})`);
     return { type: upload.type === "file" ? "file" : "image", id: minted.attachmentId, name: upload.name, mimeType: upload.mimeType, sizeBytes: upload.sizeBytes } as ChatAttachment;
+  }
+
+  /** A sent image's bytes, fetched once per session through a signed inline URL, as the web shows it. */
+  attachmentImage(attachment: Pick<ChatAttachment, "id" | "name" | "mimeType">): Promise<Uint8Array> {
+    const cached = this.attachmentImages.get(attachment.id);
+    if (cached) return cached;
+    const loading = (async () => {
+      const { rpc, target } = this.requireConnection();
+      const resource = { _tag: "attachment", attachmentId: attachment.id, fileName: attachment.name, mimeType: attachment.mimeType, disposition: "inline" } as const;
+      const minted = await Effect.runPromise(rpc[WS_METHODS.assetsCreateUrl]({ resource }));
+      const response = await fetch(new URL(minted.relativeUrl, target.httpBaseUrl));
+      if (!response.ok) throw new Error(`Image request failed (${response.status})`);
+      return new Uint8Array(await response.arrayBuffer());
+    })();
+    this.attachmentImages.set(attachment.id, loading);
+    loading.catch(() => this.attachmentImages.delete(attachment.id));
+    return loading;
   }
 
   /** Deletes an unsent upload, as removing it in the web composer does. */
