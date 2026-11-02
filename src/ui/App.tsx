@@ -777,30 +777,15 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     { keys: ["enter", "space"], run: () => cycleSetting(settingsIndex ?? 0), hint: "change" },
     { keys: ["esc", "q", "h", "←"], run: closeSettings, hint: "close" },
   );
-  const prCommand = (prefix: string) => pullRequests.commands.find((command) => command.id.startsWith(prefix));
-  const prKey = (key: string, prefix: string, hint: string): Binding | null => {
-    const command = prCommand(prefix);
-    return command ? { keys: [key], run: command.run, hint } : null;
-  };
   const pullRequestKeys = keys(
     { keys: ["j", "↓"], label: "j/k", run: () => scrollBy(1), hint: "scroll" },
     { keys: ["k", "↑"], run: () => scrollBy(-1) },
     { keys: ["g"], run: () => scrollRef.current?.scrollTo(0) },
     { keys: ["G"], run: () => scrollRef.current?.scrollTo(scrollRef.current.scrollHeight) },
-    prKey("o", "pr-open", "open"),
-    prKey("r", "pr-refresh", "refresh"),
-    prKey("c", "pr-comment", "comment"),
-    prKey("R", "pr-review", "review"),
-    prKey("a", "pr-actions", "actions"),
-    prKey("w", "watch-pull-request", "watch"),
-    prKey("u", "unlink-pull-request", "unlink"),
-    { keys: ["esc", "q"], run: pullRequests.close, hint: "close" },
+    pullRequests.viewKeys,
   );
   const findKeys = keys(
-    { keys: ["enter"], run: () => find.step(1), hint: "next match" },
-    { keys: ["shift+enter"], run: () => find.step(-1), hint: "previous" },
-    { keys: ["ctrl+n"], label: "ctrl+n/p", run: () => find.step(1), hint: "match" },
-    { keys: ["ctrl+p"], run: () => find.step(-1) },
+    find.bindings,
     { keys: ["esc"], run: () => setMode("nav"), hint: "close find" },
     quitKey,
     paletteKey,

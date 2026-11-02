@@ -1,4 +1,4 @@
-import type { CliRenderer, KeyEvent, ScrollBoxRenderable } from "@opentui/core";
+import type { CliRenderer } from "@opentui/core";
 import type {
   GitPreparePullRequestThreadResult,
   OrchestrationProjectShell,
@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { T3Session } from "../client/session.ts";
 import { pullRequestItems, type ComposerItem } from "../model/composerMenu.ts";
+import { keys, type Binding } from "../model/keymap.ts";
 import type { PaletteCommand, Picker } from "../model/palette.ts";
 import {
   COMPOSER_PULL_REQUEST_LIST_LIMIT,
@@ -417,50 +418,22 @@ export function usePullRequests(deps: PullRequestDeps) {
       }
     : null;
 
-  /** Keys inside the PR view. Returns true when handled. */
-  const handleKey = (key: KeyEvent, scroll: ScrollBoxRenderable | null): boolean => {
-    if (!loadedRef.current) return false;
-    const current = loadedRef.current;
-    switch (key.name) {
-      case "j":
-      case "down":
-        scroll?.scrollBy(1);
-        return true;
-      case "k":
-      case "up":
-        scroll?.scrollBy(-1);
-        return true;
-      case "g":
-        if (key.shift) scroll?.scrollTo(scroll.scrollHeight);
-        else scroll?.scrollTo(0);
-        return true;
-      case "o":
-        openInBrowser();
-        return true;
-      case "r":
-        if (key.shift) review();
-        else refresh();
-        return true;
-      case "c":
-        comment();
-        return true;
-      case "a":
-        actions();
-        return true;
-      case "w":
-        if (supportsWatch && (current.link.snapshot === null || current.link.snapshot.state === "open")) setWatching(current.link, !watchingCurrent);
-        return true;
-      case "u":
-        unlink(current.link);
-        return true;
-      case "escape":
-      case "q":
-        close();
-        return true;
-      default:
-        return false;
-    }
-  };
+  /** Keys inside the PR view, for the PR it shows. */
+  const current = loaded;
+  const viewKeys: Binding[] = current
+    ? keys(
+        { keys: ["o"], run: openInBrowser, hint: "open" },
+        { keys: ["r"], run: refresh, hint: "refresh" },
+        current.detail && [
+          { keys: ["c"], run: comment, hint: "comment" },
+          { keys: ["R"], run: review, hint: "review" },
+          { keys: ["a"], run: actions, hint: "actions" },
+        ],
+        supportsWatch && (current.link.snapshot === null || current.link.snapshot.state === "open") && { keys: ["w"], run: () => setWatching(current.link, !watchingCurrent), hint: watchingCurrent ? "unwatch" : "watch" },
+        { keys: ["u"], run: () => unlink(current.link), hint: current.link.source === "stack" ? "dismiss" : "unlink" },
+        { keys: ["esc", "q"], run: close, hint: "close" },
+      )
+    : [];
 
   const commands: (PaletteCommand & { run: () => void })[] = [];
   if (threadShell && links.length > 0) {
@@ -499,7 +472,7 @@ export function usePullRequests(deps: PullRequestDeps) {
     commands.push({ id: "pr-refresh", title: "Refresh pull request", shortcut: "r", keywords: ["refresh", "reload"], run: refresh });
   }
 
-  return { view, isOpen: loaded !== null, open, close, handleKey, commands };
+  return { view, isOpen: loaded !== null, open, close, commands, viewKeys };
 }
 
 /** Two links name the same pull request when host, repository and number all match. */

@@ -1,7 +1,7 @@
-import type { KeyEvent } from "@opentui/core";
 import type { OrchestrationV2SearchThreadResult, ThreadId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import type { T3Session, ThreadState } from "../client/session.ts";
+import type { Binding } from "../model/keymap.ts";
 import type { Timeline } from "../model/timeline.ts";
 import { stepThreadFindIndex } from "../../vendor/t3code/apps/web/src/components/chat/threadFind.ts";
 
@@ -62,15 +62,13 @@ export function useThreadFind(session: T3Session, id: ThreadId | undefined, thre
     if (data) setIndex(stepThreadFindIndex(data.activeIndex, data.totalMatches, delta));
   };
 
-  const handleKey = (keyEvent: KeyEvent): boolean => {
-    if (!open) return false;
-    if (keyEvent.name === "escape") return true;
-    if (keyEvent.name === "return") step(keyEvent.shift ? -1 : 1);
-    else if (keyEvent.ctrl && keyEvent.name === "n") step(1);
-    else if (keyEvent.ctrl && keyEvent.name === "p") step(-1);
-    else return false;
-    return true;
-  };
+  /** While the find bar has the keys, next to the query field. */
+  const bindings: Binding[] = [
+    { keys: ["enter"], run: () => step(1), hint: "next match" },
+    { keys: ["shift+enter"], run: () => step(-1), hint: "previous" },
+    { keys: ["ctrl+n"], label: "ctrl+n/p", run: () => step(1), hint: "match" },
+    { keys: ["ctrl+p"], run: () => step(-1) },
+  ];
 
   const onQuery = (value: string) => {
     setQuery(value);
@@ -86,6 +84,6 @@ export function useThreadFind(session: T3Session, id: ThreadId | undefined, thre
     error,
     pending: key !== null && data === null && !error,
     step,
-    handleKey,
+    bindings,
   };
 }
