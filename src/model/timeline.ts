@@ -1,11 +1,13 @@
 import { turnTargets, type TurnTarget } from "./turns.ts";
 import type { OrchestrationV2ThreadProjection, RunAttemptId, RunId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { derivePendingThreadRequests, type PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 
 // The web app's own timeline derivation: tui3 shows the same rows, folds and labels.
 import {
@@ -26,6 +28,12 @@ export type { MessagesTimelineRow } from "../../vendor/t3code/apps/web/src/compo
 export type { WorkLogEntry } from "../../vendor/t3code/apps/web/src/session-logic.ts";
 export { liveWorkEntryLabel, workEntryDisplayLabel } from "../../vendor/t3code/apps/web/src/components/chat/MessagesTimeline.logic.ts";
 
+/** What a turn footer needs of its run: the model, and how long it ran. */
+export interface RunMeta {
+  readonly model: string;
+  readonly durationMs: number | null;
+}
+
 export interface Timeline {
   readonly rows: readonly MessagesTimelineRow[];
   readonly pending: PendingThreadRequests;
@@ -33,6 +41,8 @@ export interface Timeline {
   readonly isWorking: boolean;
   /** When the current run started working, for "Working for 12s". */
   readonly workStartedAt: string | null;
+  /** Footers by run, keyed as messages key their runs. */
+  readonly runMeta: ReadonlyMap<string, RunMeta>;
   /** Carried into the next build so unchanged rows keep their identity. */
   readonly cache: TimelineCache;
 }
@@ -92,7 +102,7 @@ export function buildTimeline(
       isWorking,
       runlessWorkActive: runlessStartedAt !== null,
       activeTurnStartedAt: workStartedAt,
-      turnDiffSummaries: [],
+      turnDiffSummaries: deriveThreadCheckpointSummaries(projection),
       supportsConversationRollback: false,
     },
     cache?.rows ?? null,
@@ -104,6 +114,13 @@ export function buildTimeline(
     turns: turnTargets(projection, entries.entries, isWorking ? runtime?.activeRunId ?? null : null, options.historyComplete),
     isWorking,
     workStartedAt,
+    runMeta: new Map(
+      projection.runs.map((run) => {
+        const started = run.workStartedAt ?? run.startedAt ?? run.requestedAt;
+        const durationMs = run.completedAt ? DateTime.toEpochMillis(run.completedAt) - DateTime.toEpochMillis(started) : null;
+        return [run.id as string, { model: run.modelSelection.model, durationMs: durationMs !== null && durationMs >= 0 ? durationMs : null }] as const;
+      }),
+    ),
     cache: { entries, rows, stable, expandAll: options.expandAll, expanded: opened },
   };
 }

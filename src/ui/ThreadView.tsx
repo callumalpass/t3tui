@@ -8,6 +8,9 @@ import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
 import { FindText } from "./FindText.tsx";
 import { Button, Buttons, isLeftClick, isRightClick, useHover } from "./Button.tsx";
+import { checkpointFileTotals, type ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import type { Tui3Config } from "../config.ts";
 
 import { CommandOutput } from "./CommandOutput.tsx";
 import { BAR } from "./edges.ts";
@@ -19,7 +22,7 @@ import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
 
 /** What a right-click in the conversation was on. */
 export type ConversationTarget =
-  | { readonly kind: "message"; readonly messageId: string; readonly role: "user" | "assistant" | "system"; readonly text: string }
+  | { readonly kind: "message"; readonly messageId: string; readonly role: "user" | "assistant" | "system"; readonly text: string; readonly checkpointTurnCount?: number }
   /** `omitted`: the server left the output out of the thread; `source` is where to fetch it. */
   | { readonly kind: "command"; readonly command: string; readonly output: string; readonly omitted: boolean; readonly source: { readonly threadId: ThreadId; readonly itemId: TurnItemId } | null };
 
@@ -31,6 +34,8 @@ export interface ConversationMouse {
   readonly toggleFold: (id: string) => void;
   readonly loadEarlier: () => void;
   readonly menu: (target: ConversationTarget) => void;
+  /** A click on a changed file: that turn's diff. */
+  readonly openTurnDiff: (checkpointTurnCount: number) => void;
 }
 
 /** The conversation, row for row as the web app derives it (MessagesTimeline.logic). */
@@ -45,6 +50,7 @@ export function ThreadView(props: {
   readonly loading: boolean;
   readonly error?: string | undefined;
   readonly workspaceRoot: string | undefined;
+  readonly timestampFormat: Tui3Config["timestampFormat"];
   readonly now: number;
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>;
   /** For a subagent or fork: the thread it came from, shown as a link in the header. */
@@ -79,6 +85,7 @@ export function ThreadView(props: {
             activeOccurrence={props.findMatch?.entryId === row.id ? props.findMatch.occurrence : null}
             pending={row.kind === "event" && pendingIds.has(eventRequestId(row) ?? "")}
             workspaceRoot={props.workspaceRoot}
+            footer={assistantFooter(row, timeline, props.timestampFormat, props.now)}
             now={row.kind === "working" ? props.now : 0}
             workStartedAt={timeline.workStartedAt}
             onOpenThread={props.onOpenThread}
@@ -88,6 +95,39 @@ export function ThreadView(props: {
       </scrollbox>
     </box>
   );
+}
+
+/**
+ * The turn footer's text: model, how long the run took, and when the reply
+ * landed, day-aware as the web's is. Parts a row doesn't carry are left out;
+ * only a finished turn's last reply (or its detached meta row) gets one.
+ */
+function assistantFooter(row: MessagesTimelineRow, timeline: Timeline, timestampFormat: Tui3Config["timestampFormat"], now: number): string {
+  const message = row.kind === "assistant-meta" ? row.message : row.kind === "message" && row.showAssistantMeta ? row.message : null;
+  if (message?.role !== "assistant" || message.streaming) return "";
+  const meta = message.runId ? timeline.runMeta.get(message.runId) : undefined;
+  const projected = row.kind === "message" || row.kind === "assistant-meta" ? row.projectedItem : undefined;
+  const status = projected && projected.item.status !== "completed" ? projected.item.status : "";
+  const parts = [
+    meta?.model && meta.model !== "default" ? meta.model : "",
+    meta?.durationMs !== null && meta?.durationMs !== undefined ? formatDuration(meta.durationMs) : "",
+    dayAwareTime(message.updatedAt, timestampFormat, now),
+    status,
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** The web's day-aware timestamp: a time today, "yesterday at …", then a short date. */
+function dayAwareTime(iso: string, format: Tui3Config["timestampFormat"], now: number): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", ...(format === "locale" ? {} : { hour12: format === "12-hour" }) });
+  const today = new Date(now);
+  const dayDiff = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86_400_000);
+  if (dayDiff <= 0) return time;
+  if (dayDiff === 1) return `yesterday at ${time}`;
+  const day = date.toLocaleDateString(undefined, { month: "numeric", day: "numeric", ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" as const }) });
+  return `${day} ${time}`;
 }
 
 function LoadEarlier({ history, onLoad }: { readonly history: ThreadHistory; readonly onLoad: () => void }) {
@@ -119,6 +159,8 @@ const Row = memo(function Row(props: {
   readonly activeOccurrence: number | null;
   readonly pending: boolean;
   readonly workspaceRoot: string | undefined;
+  /** The turn footer's text for this row, or "" for none. */
+  readonly footer: string;
   readonly now: number;
   readonly workStartedAt: string | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
@@ -132,15 +174,20 @@ const Row = memo(function Row(props: {
         const segments = findTextSegments(message.text, message.role === "user");
         if (segments.some((segment) => findThreadSearchOccurrences(segment, props.findQuery).length > 0)) return <FindText segments={segments} query={props.findQuery} activeOccurrence={props.activeOccurrence} scrollRef={props.scrollRef} />;
       }
-      const menu = { kind: "message", messageId: message.id, role: message.role, text: message.text } as const;
+      const summary = row.assistantTurnDiffSummary;
+      const menu = { kind: "message", messageId: message.id, role: message.role, text: message.text, ...(summary && summary.files.length > 0 ? { checkpointTurnCount: summary.checkpointTurnCount } : {}) } as const;
       if (message.role === "user") return <UserMessage text={message.text} messageId={message.id} selected={props.selected} onSelect={() => mouse.selectTurn(message.id)} onMenu={() => mouse.menu(menu)} />;
       if (message.role === "system") return <text marginTop={1} fg={colors.muted} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>{message.text}</text>;
       return (
-        <box marginTop={1} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
+        <box marginTop={1} flexDirection="column" onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
           <markdown content={message.text || "…"} syntaxStyle={getMarkdownStyle()} streaming={message.streaming} conceal />
+          {summary && summary.files.length > 0 ? <ChangedFiles summary={summary} onOpenTurnDiff={mouse.openTurnDiff} /> : null}
+          {props.footer ? <text marginTop={1} fg={colors.faint}>{props.footer}</text> : null}
         </box>
       );
     }
+    case "assistant-meta":
+      return props.footer ? <text marginTop={1} fg={colors.faint}>{props.footer}</text> : null;
     case "turn-fold":
     case "attempt-fold":
       // The finished turn's work, folded: the web's turn separator.
@@ -209,10 +256,66 @@ const Row = memo(function Row(props: {
         </text>
       );
     default:
-      // assistant-meta, html-render, mcp-app: nothing a terminal can show.
+      // html-render, mcp-app: nothing a terminal can show.
       return null;
   }
 });
+
+/** The files a turn changed, folded to one line; a file opens that turn's diff. */
+function ChangedFiles({ summary, onOpenTurnDiff }: { readonly summary: ThreadCheckpointSummary; readonly onOpenTurnDiff: (checkpointTurnCount: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [hover, hoverProps] = useHover();
+  const totals = checkpointFileTotals(summary);
+  const hidden = totals.count - summary.files.length;
+  const openDiff = () => onOpenTurnDiff(summary.checkpointTurnCount);
+  return (
+    <box marginTop={1} flexDirection="column">
+      <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && setOpen(!open)}>
+        <text fg={hover ? colors.text : colors.muted} selectable={false}>
+          <span fg={hover ? colors.text : colors.faint}>✎</span>
+          {` ${totals.count} ${totals.count === 1 ? "file" : "files"}  `}
+        </text>
+        <DiffCounts additions={totals.additions} deletions={totals.deletions} />
+        <text fg={colors.faint} selectable={false}>{` ${open ? "⌄" : "›"}`}</text>
+      </box>
+      {open ? (
+        <box flexDirection="column" paddingLeft={2}>
+          {summary.files.map((file) => (
+            <ChangedFile key={file.path} path={file.path} additions={file.additions} deletions={file.deletions} onPress={openDiff} />
+          ))}
+          {hidden > 0 ? (
+            <box flexDirection="row" onMouseDown={(event: MouseEvent) => isLeftClick(event) && openDiff()}>
+              <text fg={colors.faint} selectable={false}>{`… ${hidden} more ${hidden === 1 ? "file" : "files"}`}</text>
+            </box>
+          ) : null}
+        </box>
+      ) : null}
+    </box>
+  );
+}
+
+function ChangedFile({ path, additions, deletions, onPress }: { readonly path: string; readonly additions: number; readonly deletions: number; readonly onPress: () => void }) {
+  const [hover, hoverProps] = useHover();
+  return (
+    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onPress()}>
+      <text fg={hover ? colors.text : colors.muted} selectable={false} wrapMode="none">{path}</text>
+      <box flexGrow={1} />
+      <DiffCounts additions={additions} deletions={deletions} />
+    </box>
+  );
+}
+
+/** `+42 −7`, each count in its own colour; a zero count is left out. */
+function DiffCounts({ additions, deletions }: { readonly additions: number; readonly deletions: number }) {
+  if (additions === 0 && deletions === 0) return null;
+  return (
+    <text selectable={false} flexShrink={0}>
+      {additions > 0 ? <span fg={colors.good}>{`+${additions}`}</span> : null}
+      {additions > 0 && deletions > 0 ? " " : ""}
+      {deletions > 0 ? <span fg={colors.bad}>{`−${deletions}`}</span> : null}
+    </text>
+  );
+}
 
 const USER_FOLD_LINES = 8;
 const USER_FOLD_CHARS = 600;

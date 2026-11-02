@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { omittedCommand, withApproval, withOmittedOutput, withQuestion } from "./fixtures.ts";
+import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion } from "./fixtures.ts";
 import { loadLayout } from "../../src/layout.ts";
 import { fakeSession, renderApp, v2ThreadId } from "./harness.tsx";
 
@@ -135,6 +135,31 @@ describe("palette and pickers", () => {
     await app.press("return");
     expect(app.calls("markUnread").map((call) => call.args[0])).toEqual([v2ThreadId]);
     expect(app.hints()).toBe("Marked unread");
+  });
+});
+
+describe("a finished turn", () => {
+  test("its changed files fold out under the reply, and a file opens the turn's diff", async () => {
+    const patch = "diff --git a/src/index.ts b/src/index.ts\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const app = await open({ session: fakeSession({ projection: withCompletedTurn(), results: { turnDiff: { diff: patch } } }) });
+    expect(app.frame()).toContain("✎ 3 files  +42 −7 ›");
+    expect(app.frame()).not.toContain("src/util.ts");
+    const line = app.find("3 files");
+    await app.click(line.x, line.y);
+    expect(app.frame()).toContain("src/index.ts");
+    expect(app.frame()).toContain("src/util.ts");
+    expect(app.frame()).toContain("+30 −5");
+    const file = app.find("src/util.ts");
+    await app.click(file.x, file.y);
+    await app.settle(50);
+    expect(app.calls("turnDiff").map((call) => call.args[0])).toEqual([{ threadId: v2ThreadId, toTurnCount: 1, ignoreWhitespace: true, fromTurnCount: 0 }]);
+    expect(app.frame()).toContain("Turn 1");
+  });
+
+  test("its footer names the model, the duration and the time", async () => {
+    const app = await open({ session: fakeSession({ projection: withCompletedTurn() }) });
+    // The date half is locale- and timezone-shaped; the model and duration are not.
+    expect(app.frame()).toMatch(/gpt-5\.4 · 3m 12s · /);
   });
 });
 

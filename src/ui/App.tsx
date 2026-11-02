@@ -921,6 +921,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     ),
     loadEarlier: useEvent(() => loadEarlier()),
     menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
+    openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
   };
   const copy = (label: string, text: string) => {
     copyText(renderer, text);
@@ -944,6 +945,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           ]
         : [
             { id: "copy-message", title: "Copy message", run: () => copy("the message", target.text) },
+            ...(target.checkpointTurnCount !== undefined ? [{ id: "turn-diff", title: "View changes from this turn", run: () => turns.openTurnDiff(target.checkpointTurnCount!) }] : []),
             ...(target.role === "user" ? turns.menuFor(target.messageId) : []),
           ];
     if (target.kind === "message" && target.role === "user") turns.select(target.messageId);
@@ -1122,6 +1124,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               loading={watchedId !== threadId || thread?.status === "loading"}
               error={thread?.error}
               workspaceRoot={threadShell?.worktreePath ?? undefined}
+              timestampFormat={config.timestampFormat}
               now={now}
               scrollRef={scrollRef}
               parent={parent}
