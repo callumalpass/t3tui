@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { cycleConfig, DEFAULT_CONFIG, formatClock, parseConfig } from "../src/config.ts";
+import { DEFAULT_LAYOUT, parseLayout } from "../src/layout.ts";
 import { settingRows } from "../src/model/settings.ts";
 
 describe("config", () => {
@@ -30,5 +31,13 @@ describe("config", () => {
     const rows = settingRows({ ...DEFAULT_CONFIG, followUpBehavior: "queue" });
     expect(rows.map((row) => row.key)).toEqual(["followUpBehavior", "sendShortcut", "timestampFormat", "diffIgnoreWhitespace", "notificationMode", "inAppNotificationsEnabled", "theme"]);
     expect(rows[0]?.value).toBe("queues");
+  });
+});
+
+describe("layout", () => {
+  test("keeps the drawer's height and where terminals go, and defaults the rest", () => {
+    expect(parseLayout({ drawerHeight: 14, terminalPlacement: "side" })).toEqual({ ...DEFAULT_LAYOUT, drawerHeight: 14, terminalPlacement: "side" });
+    expect(parseLayout({ drawerHeight: -3, terminalPlacement: "left" })).toEqual(DEFAULT_LAYOUT);
+    expect(parseLayout(null)).toEqual(DEFAULT_LAYOUT);
   });
 });

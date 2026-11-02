@@ -230,4 +230,30 @@ describe("editing a changed file", () => {
       restoreEditor(previous);
     }
   });
+
+  test("on a narrow window the column, editor and all, takes the conversation's place", async () => {
+    const root = mkdtempSync(join(tmpdir(), "t3tui-edit-"));
+    writeFileSync(join(root, "README.md"), "hello\n");
+    const project = { ...v2ShellSnapshot.projects[0]!, workspaceRoot: root };
+    const previous = { visual: process.env.VISUAL, editor: process.env.EDITOR };
+    delete process.env.VISUAL;
+    process.env.EDITOR = "sleep 3; true";
+    try {
+      const app = await open({ width: 100, session: fakeSession({ vcs, snapshot: { ...v2ShellSnapshot, projects: [project] }, projection: withReply("The reply under the column.", false) }) });
+      await app.press("d");
+      await app.press("l");
+      await app.press("o");
+      expect(app.find("Editing README.md").x).toBeLessThan(50);
+      expect(app.frame()).not.toContain("The reply under");
+      expect(app.frame()).toContain("Press i to type");
+      // d hides the column, editor and all, and brings it back with the editor still running.
+      await app.press("\\", { ctrl: true });
+      await app.press("d");
+      expect(app.frame()).toContain("The reply under");
+      await app.press("d");
+      expect(app.frame()).toContain("Editing README.md");
+    } finally {
+      restoreEditor(previous);
+    }
+  });
 });

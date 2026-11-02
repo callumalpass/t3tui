@@ -5,6 +5,7 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContex
 import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { isAbsolute, relative } from "node:path";
 import { parseFileUrlHref, resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -614,7 +615,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     const raw = url ? (url.startsWith("file:") ? decodeURIComponent(parseFileUrlHref(url)?.path ?? "") : url) : shown && pathAt(shown.text, shown.index);
     if (!raw || !attachCwd) return;
     const { path } = splitFilePathPosition(resolvePathLinkTarget(raw, attachCwd));
-    if (existsSync(path) && statSync(path).isFile()) editFile(path, attachCwd);
+    const inside = relative(attachCwd, path);
+    if (existsSync(path) && statSync(path).isFile()) editFile(inside.startsWith("..") || isAbsolute(inside) ? path : inside, attachCwd);
   };
 
   const settingsRows = settingRows(config);
@@ -1128,7 +1130,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const rightColumn = columnVisible && !columnInPlace;
   // The drawer leaves the conversation some rows, or takes its place when it can't.
   const drawer = placement === "bottom" ? panes.terminal : null;
-  const drawerRoom = areaHeight - MIN_CONVERSATION_ROWS;
+  // The edge above it takes a row too.
+  const drawerRoom = areaHeight - MIN_CONVERSATION_ROWS - 1;
   const drawerInPlace = drawer !== null && drawerRoom < MIN_DRAWER_ROWS;
   const drawerHeight = Math.max(MIN_DRAWER_ROWS, Math.min(drawerRoom, drawerHeightPref ?? Math.round(areaHeight * DRAWER_SHARE)));
   const conversationHidden = (columnVisible && columnInPlace) || drawerInPlace;
@@ -1336,7 +1339,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                   }}
                 />
               )}
-              <box flexDirection="column" flexShrink={0} minHeight={0} {...(drawerInPlace ? { flexGrow: 1 } : { height: drawerHeight })}>
+              <box flexDirection="column" minHeight={0} {...(drawerInPlace ? { flexGrow: 1, flexShrink: 1 } : { height: drawerHeight, flexShrink: 0 })}>
                 {terminalPane}
               </box>
             </>

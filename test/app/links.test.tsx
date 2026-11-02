@@ -63,7 +63,7 @@ describe("links and paths in replies", () => {
     expect(opened()).toEqual(["https://example.com/docs", "https://bare.example.org/x"]);
   });
 
-  test("a click on a workspace file's path opens it in the editor pane", async () => {
+  test("a click on a workspace file's path opens it in the column's editor, named from the workspace", async () => {
     delete process.env.VISUAL;
     process.env.EDITOR = "sleep 3; :";
     const { snapshot } = workspace();
@@ -73,8 +73,8 @@ describe("links and paths in replies", () => {
     expect(app.frame()).not.toContain("Editing");
     const path = app.find("a.ts:3");
     await app.click(path.x, path.y);
-    expect(app.frame()).toContain("Editing ");
-    expect(app.frame()).toContain("src/a.ts");
+    expect(app.frame()).toContain("Details  Editor");
+    expect(app.frame()).toContain("Editing src/a.ts ");
   });
 
   test("a drag over a link selects it rather than opening it", async () => {
