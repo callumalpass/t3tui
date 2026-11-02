@@ -281,7 +281,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const loaded = current !== null;
   useEffect(() => {
     if (!loaded) return;
-    const timer = setTimeout(() => scrollRef.current?.scrollTo(scrollRef.current.scrollHeight), 0);
+    const timer = setTimeout(() => scrollToEnd(scrollRef.current), 0);
     return () => clearTimeout(timer);
   }, [loaded, watchedId]);
 
@@ -790,7 +790,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     !attached && { keys: ["z"], run: () => setShowFolded((value) => !value), command: { id: "settled", title: showFolded ? "Hide settled threads" : "Show settled threads", keywords: ["snoozed", "archive"] } },
     threadId && working && { keys: ["S"], run: () => run("Stop requested", () => session.stopThread(threadId)), command: { id: "stop", title: "Stop thread", keywords: ["interrupt", "cancel"] } },
     { keys: ["g"], run: () => scrollRef.current?.scrollTo(0) },
-    { keys: ["G"], run: () => scrollRef.current?.scrollTo(scrollRef.current.scrollHeight) },
+    { keys: ["G"], run: () => scrollToEnd(scrollRef.current) },
     { keys: [":"], run: openPalette },
     cancelDraftKey,
   );
@@ -850,7 +850,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     { keys: ["j", "↓"], label: "j/k", run: () => scrollBy(1), hint: "scroll" },
     { keys: ["k", "↑"], run: () => scrollBy(-1) },
     { keys: ["g"], run: () => scrollRef.current?.scrollTo(0) },
-    { keys: ["G"], run: () => scrollRef.current?.scrollTo(scrollRef.current.scrollHeight) },
+    { keys: ["G"], run: () => scrollToEnd(scrollRef.current) },
     pullRequests.viewKeys,
   );
   const findKeys = keys(
@@ -1339,6 +1339,11 @@ function composerLineCount(composer: TextareaRenderable): number {
 }
 
 /** The thread list keeps room for itself and for the conversation. */
+/** Scrolls to the last line; OpenTUI 0.8 rejects a target past the end. */
+function scrollToEnd(box: ScrollBoxRenderable | null): void {
+  box?.scrollTo(Math.max(0, box.scrollHeight - box.viewport.height));
+}
+
 function clampListWidth(columns: number, width: number): number {
   return Math.max(20, Math.min(columns, width - MIN_CONVERSATION_WIDTH));
 }
