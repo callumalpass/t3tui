@@ -41,6 +41,7 @@ import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors, statusColor } from "./theme.ts";
+import { BAR, NO_BORDER } from "./edges.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { useTurns } from "./useTurns.ts";
 import { ThreadView, type ConversationMouse, type ConversationTarget } from "./ThreadView.tsx";
@@ -969,6 +970,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
   const detailsColumn = panel.show && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
   const detailsInPlace = panel.show && !detailsColumn;
+  // The block's height: a row of padding on top, the text, then the model line inside it.
   const composerHeight = Math.min(MAX_COMPOSER_LINES, composerLines) + 2;
   const placeholder =
     mode !== "input"
@@ -989,16 +991,16 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 : "Steer the agent (alt+enter to queue instead)"
               : "Ask anything";
   // The model with its options, then the mode when it isn't full access; click or m to change.
+  // The name reads quiet; the effort and mode after it are the parts worth a colour.
   const pendingModel = draft ? undefined : models.pendingFor(threadShell?.id);
-  const footer =
-    currentModel && runtimeMode
-      ? [
-          providerConfig ? modelSummary(providerConfig, currentModel) : currentModel.model === "default" ? "" : currentModel.model,
-          runtimeMode === "full-access" ? "" : (RUNTIME_MODE_LABELS[runtimeMode] ?? runtimeMode),
-        ]
-          .filter(Boolean)
-          .join(" · ")
-      : "";
+  const footerParts = ((): { readonly name: string; readonly rest: string } => {
+    if (!currentModel || !runtimeMode) return { name: "", rest: "" };
+    const summary = providerConfig ? modelSummary(providerConfig, currentModel) : currentModel.model === "default" ? "" : currentModel.model;
+    const [name = "", ...options] = summary.split(" · ");
+    const mode = runtimeMode === "full-access" ? "" : (RUNTIME_MODE_LABELS[runtimeMode] ?? runtimeMode);
+    return { name, rest: [...options, mode].filter(Boolean).join(" · ") };
+  })();
+  const composerBarColor = mode === "input" ? colors.accent : colors.border;
   const detailsPanel = (inPlace: boolean) => (
     <DetailsPanel
       details={panel.details}
@@ -1109,9 +1111,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           ) : threadId ? (
             <ThreadView
               key={watchedId}
-              project={threadRow?.projectName ?? ""}
-              title={title}
-              detail={threadShell?.branch ?? ""}
               timeline={current}
               findQuery={find.open ? find.query.trim() : ""}
               findMatch={find.match}
@@ -1169,47 +1168,68 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             </box>
           ) : null}
           {threadId || draft ? (
-            <box
-              border
-              borderStyle="rounded"
-              borderColor={mode === "input" ? colors.borderFocused : colors.border}
-              height={composerHeight}
-              flexShrink={0}
-              marginLeft={1}
-              marginRight={1}
-              paddingLeft={1}
-              paddingRight={1}
-              onMouseDown={() => setMode("input")}
-            >
-              <textarea
-                key={composerKey}
-                ref={composerRef}
-                focused={mode === "input"}
-                initialValue={drafts.current.get(composerKey) ?? ""}
-                placeholder={placeholder}
-                placeholderColor={colors.faint}
-                textColor={colors.text}
-                wrapMode="word"
-                keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
-                onSubmit={() => submit()}
-                onCursorChange={composerMenu.sync}
-                onContentChange={() => {
-                  composerMenu.sync();
-                  const composer = composerRef.current;
-                  const text = composer?.plainText ?? "";
-                  if (text) drafts.current.set(composerKey, text);
-                  else drafts.current.delete(composerKey);
-                  // Wrapped lines count too, so a long paragraph grows the box.
-                  setComposerLines(composer ? composerLineCount(composer) : 1);
-                  setComposerEmpty(text.trim() === "");
-                }}
-              />
-            </box>
-          ) : null}
-          {threadId || draft ? (
-            <box flexDirection="row" height={1} flexShrink={0} paddingLeft={2} paddingRight={2} onMouseDown={models.open}>
-              <text fg={colors.faint}>{footer}</text>
-              {pendingModel ? <text fg={colors.accent}>{"  · next message"}</text> : null}
+            <box flexDirection="column" flexShrink={0} marginLeft={1} marginRight={1}>
+              <box
+                border={["left"]}
+                customBorderChars={BAR}
+                borderColor={composerBarColor}
+                backgroundColor={colors.element}
+                height={composerHeight}
+                flexShrink={0}
+                flexDirection="column"
+                paddingTop={1}
+                paddingLeft={2}
+                paddingRight={2}
+                onMouseDown={() => setMode("input")}
+              >
+                <textarea
+                  key={composerKey}
+                  ref={composerRef}
+                  focused={mode === "input"}
+                  flexGrow={1}
+                  initialValue={drafts.current.get(composerKey) ?? ""}
+                  placeholder={placeholder}
+                  placeholderColor={colors.faint}
+                  textColor={colors.text}
+                  backgroundColor={colors.element}
+                  focusedBackgroundColor={colors.element}
+                  wrapMode="word"
+                  keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
+                  onSubmit={() => submit()}
+                  onCursorChange={composerMenu.sync}
+                  onContentChange={() => {
+                    composerMenu.sync();
+                    const composer = composerRef.current;
+                    const text = composer?.plainText ?? "";
+                    if (text) drafts.current.set(composerKey, text);
+                    else drafts.current.delete(composerKey);
+                    // Wrapped lines count too, so a long paragraph grows the box.
+                    setComposerLines(composer ? composerLineCount(composer) : 1);
+                    setComposerEmpty(text.trim() === "");
+                  }}
+                />
+                <box
+                  flexDirection="row"
+                  height={1}
+                  flexShrink={0}
+                  onMouseDown={(event: MouseEvent) => {
+                    event.stopPropagation();
+                    models.open();
+                  }}
+                >
+                  <text fg={colors.muted}>{footerParts.name}</text>
+                  {footerParts.rest ? (
+                    <>
+                      <text fg={colors.muted}>{footerParts.name ? " · " : ""}</text>
+                      <text fg={colors.warn}>{footerParts.rest}</text>
+                    </>
+                  ) : null}
+                  {pendingModel ? <text fg={colors.accent}>{"  · next message"}</text> : null}
+                </box>
+              </box>
+              <box height={1} flexShrink={0} border={["left"]} borderColor={composerBarColor} customBorderChars={{ ...NO_BORDER, vertical: "╹" }}>
+                <box height={1} border={["bottom"]} borderColor={colors.element} customBorderChars={{ ...NO_BORDER, horizontal: "▀" }} />
+              </box>
             </box>
           ) : null}
         </box>
