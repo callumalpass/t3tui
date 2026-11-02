@@ -39,8 +39,8 @@ export function PullRequestView(props: { readonly view: PullRequestViewState; re
         <text> </text>
         <Button label="Close" shortcut="esc" onPress={props.onClose} />
       </box>
-      {view.status === "loading" ? <text fg={colors.muted}>Loading pull request…</text> : null}
-      {view.status === "error" ? <text fg={colors.bad}>{`Could not load the pull request: ${view.error ?? "unknown error"}`}</text> : null}
+      {view.status === "loading" ? <text fg={colors.muted} flexShrink={0}>Loading pull request…</text> : null}
+      {view.status === "error" ? <text fg={colors.bad} flexShrink={0}>{`Could not load the pull request: ${view.error ?? "unknown error"}`}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
         {view.lines.map((line, index) =>
           line.kind === "title" && index > 0 ? (

@@ -33,10 +33,10 @@ export function DiffView(props: { readonly diff: DiffState; readonly scrollRef: 
         <box flexGrow={1} />
         <text fg={colors.faint}>{diff.source ? "[/] file · x whole file / collapse · esc close" : "[/] file · esc close"}</text>
       </box>
-      {diff.status === "loading" ? <text fg={colors.muted}>Loading diff…</text> : null}
-      {diff.status === "error" ? <text fg={colors.bad}>{`Could not load the diff: ${diff.error ?? "unknown error"}`}</text> : null}
-      {diff.status === "ready" && files.length === 0 ? <text fg={colors.muted}>No changes.</text> : null}
-      {diff.truncated ? <text fg={colors.warn}>The diff was too large and is cut short.</text> : null}
+      {diff.status === "loading" ? <text fg={colors.muted} flexShrink={0}>Loading diff…</text> : null}
+      {diff.status === "error" ? <text fg={colors.bad} flexShrink={0}>{`Could not load the diff: ${diff.error ?? "unknown error"}`}</text> : null}
+      {diff.status === "ready" && files.length === 0 ? <text fg={colors.muted} flexShrink={0}>No changes.</text> : null}
+      {diff.truncated ? <text fg={colors.warn} flexShrink={0}>The diff was too large and is cut short.</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} minHeight={0}>
         {files.map((file, index) => (
           <box key={file.path} id={`diff-file-${index}`} flexDirection="column" marginTop={1}>
