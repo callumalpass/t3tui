@@ -31,7 +31,11 @@ export function desktopNotify(title: string, body: string): void {
  * desktop through its clipboard tool too, for terminals that ignore OSC 52.
  */
 export function copyText(renderer: CliRenderer, text: string): void {
-  renderer.copyToClipboardOSC52(text);
+  try {
+    renderer.copyToClipboardOSC52(text);
+  } catch {
+    // OpenTUI refuses when it isn't drawing (suspended, or a test renderer); the tool may still copy.
+  }
   if (process.env.SSH_CONNECTION) return;
   const tool =
     process.platform === "darwin" ? ["pbcopy"] : process.env.WAYLAND_DISPLAY ? ["wl-copy"] : process.env.DISPLAY ? ["xclip", "-selection", "clipboard"] : null;
