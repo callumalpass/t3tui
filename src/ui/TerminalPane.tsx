@@ -1,11 +1,10 @@
 import { EmbeddedTerminalRenderable, type EmbeddedTerminalDataSource } from "@opentui/core";
 import { extend } from "@opentui/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import type { T3Session } from "../client/session.ts";
 import { BAR } from "./edges.ts";
 import type { TerminalTarget } from "./terminalAttach.ts";
-import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 import { useEvent } from "./useEvent.ts";
 
@@ -19,7 +18,7 @@ extend({ embeddedTerminal: EmbeddedTerminalRenderable });
 
 /** What runs in the pane: one of T3's terminals, or a program run here, like $EDITOR. */
 export type PaneProgram =
-  | { readonly kind: "server"; readonly id: string; readonly title: string; readonly target: TerminalTarget }
+  | { readonly kind: "server"; readonly id: string; readonly target: TerminalTarget }
   | { readonly kind: "local"; readonly id: string; readonly title: string; readonly command: readonly string[]; readonly cwd?: string | undefined; readonly onExit: (code: number) => void };
 
 /** How the pane talks to its program once it knows its size. */
@@ -30,19 +29,20 @@ interface Link {
 }
 
 /**
- * A terminal in the right-hand column: keys go to its program while it has focus, its size
- * follows the column, and it closes when the program exits. Key it by the program's id.
+ * A terminal filling its box: the drawer, a tab of the right-hand column or the composer's
+ * place. Keys go to its program while it has focus, its size follows the box, and it closes
+ * when the program exits. Key it by the program's id.
  */
 export function TerminalPane(props: {
   readonly program: PaneProgram;
   readonly session: T3Session;
   readonly focused: boolean;
-  /** A column this wide beside the conversation, or the conversation's place: from `left`, `height` tall. */
-  readonly place: { readonly width: number } | { readonly left: number; readonly height: number };
+  /** The row above the terminal: its title, or the drawer's tabs. */
+  readonly header: ReactNode;
   readonly onFocus: () => void;
   readonly onClose: (message?: string) => void;
 }) {
-  const { program, focused, place } = props;
+  const { program, focused } = props;
   const terminal = useRef<EmbeddedTerminalRenderable | null>(null);
   const link = useRef<Link | null>(null);
   const onFocus = useEvent(props.onFocus);
@@ -69,7 +69,7 @@ export function TerminalPane(props: {
 
   return (
     <box
-      {...("width" in place ? { width: place.width, flexShrink: 0 } : { position: "absolute", left: place.left, right: 0, top: 0, height: place.height })}
+      flexGrow={1}
       minHeight={0}
       flexDirection="column"
       overflow="hidden"
@@ -80,8 +80,7 @@ export function TerminalPane(props: {
       onMouseDown={onFocus}
     >
       <box flexDirection="row" height={1} flexShrink={0} paddingLeft={1} paddingRight={1}>
-        <text fg={focused ? colors.text : colors.muted} wrapMode="none">{truncate(program.title, Math.max(8, ("width" in place ? place.width : 80) - 17))}</text>
-        <box flexGrow={1} />
+        {props.header}
         <text fg={colors.faint} wrapMode="none" flexShrink={0}>{focused ? "ctrl+\\ leave" : "ctrl+\\ focus"}</text>
       </box>
       <embeddedTerminal

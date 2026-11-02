@@ -37,10 +37,10 @@ export function DetailsPanel(props: {
   return (
     <box
       width={width}
-      // In place of the conversation the panel must take its column's height, or its
-      // scrollbox grows with its content and spills over the composer below.
-      flexGrow={props.inPlace ? 1 : 0}
-      flexShrink={props.inPlace ? 1 : 0}
+      // The panel takes its column's height, or its scrollbox grows with its content and spills
+      // past the column's end.
+      flexGrow={1}
+      flexShrink={1}
       minHeight={0}
       flexDirection="column"
       overflow="hidden"

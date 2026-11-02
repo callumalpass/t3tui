@@ -1,5 +1,5 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
-import type { OrchestrationProjectShell, OrchestrationV2ThreadShell, ServerConfig, ServerLifecycleStreamEvent, TerminalSummary, WorktreeSetupSnapshot } from "@t3tools/contracts";
+import type { OrchestrationProjectShell, OrchestrationV2ThreadShell, ServerConfig, ServerLifecycleStreamEvent, TerminalSummary, ThreadId, WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -25,7 +25,7 @@ export function useWorkspace(input: {
   readonly draft: boolean;
   readonly diff: DiffState | null;
   readonly openPicker: (picker: Picker) => void;
-  /** Shows a terminal in the pane beside the conversation. */
+  /** Shows a terminal in the drawer, or the right-hand column's Terminal tab. */
   readonly openPane: (target: TerminalTarget) => void;
   readonly confirm: (confirmation: Confirmation) => void;
   readonly run: (label: string, action: () => Promise<unknown>) => void;
@@ -78,14 +78,19 @@ export function useWorkspace(input: {
   const threadTerminals = (terminals?.items ?? []).filter((terminal) => terminal.threadId === thread?.id);
   const cwd = thread?.worktreePath ?? project?.workspaceRoot;
   const label = (terminal: TerminalSummary) => resolveTerminalSessionLabel(terminal.terminalId, terminal);
-  /** In the pane, or with the whole screen. */
+  const targetOf = (threadId: ThreadId, terminal: Pick<TerminalSummary, "terminalId" | "cwd" | "worktreePath" | "label">): TerminalTarget => ({
+    threadId,
+    terminalId: terminal.terminalId,
+    cwd: terminal.cwd,
+    worktreePath: terminal.worktreePath,
+    label: resolveTerminalSessionLabel(terminal.terminalId, terminal),
+  });
+  /** The drawer's tabs: the thread's terminals that haven't exited. */
+  const tabs = thread ? threadTerminals.filter((terminal) => terminal.status !== "exited").map((terminal) => targetOf(thread.id, terminal)) : [];
+  /** In the drawer, or with the whole screen. */
   const enterTerminal = (terminal: Pick<TerminalSummary, "terminalId" | "cwd" | "worktreePath" | "label">, fullScreen = false) => {
     if (!thread) return;
-    const target = {
-      threadId: thread.id,
-      ...terminal,
-      label: resolveTerminalSessionLabel(terminal.terminalId, terminal),
-    };
+    const target = targetOf(thread.id, terminal);
     if (!fullScreen) return input.openPane(target);
     void attachTerminal(renderer, session, target, (message) => {
       if (message) say(message);
@@ -164,9 +169,10 @@ export function useWorkspace(input: {
   };
   const openTerminal = () => {
     if (!thread || input.draft) return say("Open a thread first.", true);
-    if (threadTerminals.length === 0) return newTerminal();
-    if (threadTerminals.length === 1) return enterTerminal(threadTerminals[0]!);
-    terminalPicker();
+    // The drawer's tabs reach the others.
+    const first = tabs[0];
+    if (!first) return newTerminal();
+    input.openPane(first);
   };
 
   const branchPicker = () => {
@@ -318,6 +324,8 @@ export function useWorkspace(input: {
     commands,
     key,
     openTerminal,
+    newTerminal: () => newTerminal(),
+    tabs,
     note,
     setupFailed: setup?.phase === "failed" || setupError !== null,
   };
