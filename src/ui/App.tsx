@@ -1179,13 +1179,14 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               <Button label="+ file" shortcut="a" onPress={attach.attachFile} />
             </box>
           ) : null}
-          {working && threadId && !draft ? <LiveStatus label={liveLabel} tool={liveTool} /> : null}
+          {working && threadId && !draft && !pendingApproval ? <LiveStatus label={liveLabel} tool={liveTool} /> : null}
           {threadId || draft ? (
             <box flexDirection="column" flexShrink={0} marginTop={1} marginLeft={1} marginRight={1}>
               {pendingApproval && !draft ? (
-                <ApprovalPanel approval={pendingApproval} onRespond={respond} />
-              ) : (
-                <>
+                <box marginBottom={1} flexShrink={0}>
+                  <ApprovalPanel approval={pendingApproval} onRespond={respond} />
+                </box>
+              ) : null}
               <box
                 border={["left"]}
                 customBorderChars={BAR}
@@ -1248,8 +1249,6 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               <box height={1} flexShrink={0} border={["left"]} borderColor={composerBarColor} customBorderChars={{ ...NO_BORDER, vertical: "╹" }}>
                 <box height={1} border={["bottom"]} borderColor={colors.element} customBorderChars={{ ...NO_BORDER, horizontal: "▀" }} />
               </box>
-                </>
-              )}
             </box>
           ) : null}
         </box>
