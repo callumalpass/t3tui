@@ -10,8 +10,8 @@ export type { ThreadActionMenuId };
 
 const LOCAL = EnvironmentId.make("local");
 
-/** Web-only actions: finding in the thread, project settings, guest links, turning into a project. */
-const UNSUPPORTED: ReadonlySet<ThreadActionMenuId> = new Set(["find", "project-settings", "share-guest", "turn-into-project", "filter-by-project"]);
+/** Web-only actions: project settings, guest links, turning into a project. */
+const UNSUPPORTED: ReadonlySet<ThreadActionMenuId> = new Set(["project-settings", "share-guest", "turn-into-project", "filter-by-project"]);
 
 export interface ThreadMenu {
   readonly items: readonly ContextMenuItem<ThreadActionMenuId>[];
@@ -28,7 +28,7 @@ export function threadMenu(input: { readonly thread: OrchestrationV2ThreadShell;
   const snoozePresets = snoozeMenu(config, input.timestampFormat, now);
   const items = buildThreadActionMenuItems({
     canOperate: true,
-    canFind: false,
+    canFind: true,
     branch: thread.branch ?? null,
     projectFilter: null,
     isPinned: thread.pinnedAt != null,

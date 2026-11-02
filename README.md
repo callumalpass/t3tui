@@ -58,11 +58,14 @@ Navigation:
 | `x` | dismiss the agent's question |
 | `e` | expand all folded turns and work groups |
 | `o` | load earlier turns |
+| `f` | find in the open thread; `enter` / `shift+enter` or `ctrl+n` / `ctrl+p` move between matches, `esc` closes |
+| `A` | show archived threads / return to active threads |
+| `J` / `K` | move the selected pinned thread down / up |
 | `d` | show or hide thread details |
 | `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `t` turns an automation on or off, `esc` comes back |
 | `u` | go to the parent thread (from a fork or subagent) |
 | `:` | command palette |
-| `z` | show the Settled and Snoozed sections |
+| `z` | show the Settled and Snoozed sections; `Show more settled threads` in the palette loads older rows |
 | `/` | filter threads by title or project (the box opens at the top of the thread list) |
 | `S` | stop the thread |
 | `g` / `G` | top / bottom of the conversation |
@@ -77,7 +80,10 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
 - **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
 - **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them).
-- **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring; start with `>` for commands only.
+- **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring, then lists full-text hits with snippets under `In messages`; start with `>` for commands only. Message search needs a word of at least three letters.
+- **Find in thread:** `f` or `Find in thread` in the palette or thread menu searches the whole conversation, counts matches, highlights matching text and loads earlier history to reveal the selected match. Matching Markdown is shown as highlighted plain text while finding.
+- **Archived threads:** `A` or `Show archived threads` in the palette opens the archive. Open a thread normally; `Unarchive thread` in the palette restores it. `Show active threads` returns to the live list.
+- **Ordering:** `J` / `K` or `Move pinned thread down` / `Move pinned thread up` in the palette reorder pinned threads. Active threads stay ordered by return time, as in T3 Code's Working shelf.
 - **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
 - Threads open scrolled to the bottom.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
@@ -93,7 +99,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - Copy the workspace path, branch, thread link or thread ID
 - Archive or delete
 
-Submenus open as their own list, and typing finds their items from the top (`thread id` finds `Copy › Thread ID`). A custom snooze takes a duration (`45m`, `3h`, `2d`, `1w`) or a time of day (`17:30`). Delete asks first, as the app does by default; it doesn't offer to remove the thread's worktree, which the app does. Copying goes through the terminal (OSC 52, so it works over SSH), and through `wl-copy`, `xclip` or `pbcopy` on a local desktop. The app's project settings, guest sharing and find-in-thread aren't here.
+Submenus open as their own list, and typing finds their items from the top (`thread id` finds `Copy › Thread ID`). A custom snooze takes a duration (`45m`, `3h`, `2d`, `1w`) or a time of day (`17:30`). Delete asks first, as the app does by default; it doesn't offer to remove the thread's worktree, which the app does. Copying goes through the terminal (OSC 52, so it works over SSH), and through `wl-copy`, `xclip` or `pbcopy` on a local desktop. The app's project settings and guest sharing aren't here.
 
 ## New threads
 

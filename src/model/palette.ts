@@ -16,7 +16,7 @@ export interface PaletteCommand {
 
 export type PaletteEntry =
   | { readonly kind: "command"; readonly command: PaletteCommand }
-  | { readonly kind: "thread"; readonly threadId: ThreadId; readonly title: string; readonly project: string; readonly subagent: boolean };
+  | { readonly kind: "thread"; readonly threadId: ThreadId; readonly title: string; readonly project: string; readonly subagent: boolean; readonly snippet?: string };
 
 export interface PaletteGroup {
   readonly label: string;

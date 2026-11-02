@@ -6,7 +6,7 @@ import { sortPinnedThreadsByOrderKey, sortSettledThreads } from "@t3tools/client
 import * as DateTime from "effect/DateTime";
 
 /** The web sidebar's sections, in its order. Active has no header unless others show. */
-export type Section = "pinned" | "active" | "working" | "snoozed" | "settled";
+export type Section = "pinned" | "active" | "working" | "snoozed" | "settled" | "archived";
 
 /** The web sidebar's row status (resolveSidebarThreadStatus). */
 export type ThreadStatus = "approval" | "input" | "request" | "waiting" | "working" | "limited" | "failed" | "ready";
@@ -27,9 +27,10 @@ export const SECTION_LABELS: Record<Section, string> = {
   working: "Working",
   snoozed: "Snoozed",
   settled: "Settled",
+  archived: "Archived threads",
 };
 
-export const SECTION_ORDER: readonly Section[] = ["pinned", "active", "working", "snoozed", "settled"];
+export const SECTION_ORDER: readonly Section[] = ["pinned", "active", "working", "snoozed", "settled", "archived"];
 
 /** Only one server, so any constant id works for presentThreadShell. */
 const LOCAL_ENVIRONMENT = "local" as EnvironmentId;
@@ -88,19 +89,19 @@ export type StatusTone = "info" | "muted" | "warn" | "input" | "bad" | "good";
 /** Threads in the web sidebar's sections and order. Subagent threads stay under their parent, so they're left out. */
 export function threadRows(
   snapshot: OrchestrationV2ShellSnapshot | null,
-  options: { readonly query?: string; readonly settledLimit?: number; readonly now?: string } = {},
+  options: { readonly query?: string; readonly settledLimit?: number; readonly archived?: boolean; readonly now?: string } = {},
 ): ThreadRow[] {
   if (!snapshot) return [];
   const projects = new Map<ProjectId, OrchestrationProjectShell>(snapshot.projects.map((project) => [project.id, project]));
   const query = options.query?.trim().toLowerCase();
   const now = options.now ?? new Date().toISOString();
-  const bySection: Record<Section, EnvironmentThreadShell[]> = { pinned: [], active: [], working: [], snoozed: [], settled: [] };
+  const bySection: Record<Section, EnvironmentThreadShell[]> = { pinned: [], active: [], working: [], snoozed: [], settled: [], archived: [] };
   for (const thread of snapshot.threads) {
-    if (thread.archivedAt !== null || thread.deletedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
+    if ((thread.archivedAt !== null) !== (options.archived === true) || thread.deletedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
     const projectName = projectLabel(projects.get(thread.projectId));
     if (query && !thread.title.toLowerCase().includes(query) && !projectName.toLowerCase().includes(query)) continue;
     const shell = presentThreadShell(LOCAL_ENVIRONMENT, thread);
-    const section: Section = effectiveSnoozed(shell, { now })
+    const section: Section = options.archived ? "archived" : effectiveSnoozed(shell, { now })
       ? "snoozed"
       : shell.settledOverride === "settled"
         ? "settled"
@@ -112,6 +113,7 @@ export function threadRows(
     bySection[section].push(shell);
   }
   const sorted: Record<Section, EnvironmentThreadShell[]> = {
+    archived: bySection.archived.toSorted((a, b) => Date.parse(b.archivedAt ?? "") - Date.parse(a.archivedAt ?? "")),
     pinned: sortPinnedThreadsByOrderKey(bySection.pinned),
     active: sortInboxThreadsByReturn(bySection.active),
     working: sortWorkingThreadsBySend(bySection.working),

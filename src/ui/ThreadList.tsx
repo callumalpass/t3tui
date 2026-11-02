@@ -27,6 +27,9 @@ export function ThreadList(props: {
   /** A right-click: the thread's menu. */
   readonly onMenu: (threadId: ThreadId) => void;
   readonly onUnfold: () => void;
+  readonly shelfStatus?: string | null | undefined;
+  readonly showMore?: boolean;
+  readonly onShowMore?: () => void;
 }) {
   const { rows, selected, focused, width, height, now } = props;
   // Rows take two lines plus a header per section; keep the selection in view.
@@ -82,6 +85,8 @@ export function ThreadList(props: {
       ) : null}
       {rows.length === 0 ? <text fg={colors.muted}>{props.filter ? " no matches" : " no threads"}</text> : lines}
       <box flexGrow={1} />
+      {props.shelfStatus ? <text fg={colors.muted} paddingLeft={1}>{props.shelfStatus}</text> : null}
+      {props.showMore ? <text fg={colors.accent} paddingLeft={1} onMouseDown={() => props.onShowMore?.()}>Show more settled threads (ctrl+k)</text> : null}
       {collapsed.map(([section, count]) => (
         <text key={section} fg={colors.faint} onMouseDown={props.onUnfold}>{` › ${SECTION_LABELS[section]} ${count}`}</text>
       ))}
