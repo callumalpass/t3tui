@@ -1,4 +1,4 @@
-import type { EnvironmentId, OrchestrationMessageContext, OrchestrationV2ShellSnapshot, ProjectEntry, ServerProvider, ServerProviderSkill, ThreadContextRecord, ThreadId } from "@t3tools/contracts";
+import type { ComposerContextRecord, EnvironmentId, OrchestrationMessageContext, OrchestrationV2ShellSnapshot, ProjectEntry, ServerProvider, ServerProviderSkill, ThreadId } from "@t3tools/contracts";
 import { resolveProviderSkillsForCwd, resolveProviderSlashCommandsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { getProviderSkillsForSlashMenu, getProviderSlashCommandsForSlashMenu } from "@t3tools/client-runtime/providerSkills";
 import { collectComposerContextReferences, formatComposerContextReference, threadContextRecord } from "@t3tools/shared/composerContextReferences";
@@ -8,22 +8,23 @@ import { foldSearchQuery, scoreThreadSearch } from "@t3tools/shared/paletteSearc
 import { insertRankedSearchResult, normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import * as DateTime from "effect/DateTime";
 
+import { pullRequestContextRecord, type ComposerPullRequest } from "./pullRequests.ts";
 import { scoreProviderSkill, searchProviderSkills } from "../../vendor/t3code/apps/web/src/providerSkillSearch.ts";
 
 export type { ComposerTrigger };
 
 /**
  * A suggestion for the trigger under the cursor, as the web composer's menu offers: `/` for
- * commands, `$` for skills, `@` for files and threads. Choosing one swaps the trigger for
- * `replacement`; `/model` opens the model picker instead.
+ * commands, `$` for skills, `@` for files and threads, `#` for pull requests. Choosing one
+ * swaps the trigger for `replacement`; `/model` opens the model picker instead.
  */
 export interface ComposerItem {
   readonly id: string;
   readonly label: string;
   readonly description: string;
   readonly replacement: string | null;
-  /** A thread mention's record, sent with the message. */
-  readonly record?: ThreadContextRecord;
+  /** A mention's record (a thread, or a pull request), sent with the message. */
+  readonly record?: ComposerContextRecord;
   readonly action?: "model";
 }
 
@@ -114,6 +115,20 @@ export function threadItems(input: { readonly snapshot: OrchestrationV2ShellSnap
     });
 }
 
+/** `#` suggestions, inserted as the web inserts them: a pull request reference sent with the message. */
+export function pullRequestItems(matches: readonly ComposerPullRequest[], repository: string): ComposerItem[] {
+  return matches.map((pullRequest) => {
+    const { record, replacement } = pullRequestContextRecord(pullRequest);
+    return {
+      id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
+      label: `#${pullRequest.number}`,
+      description: pullRequest.repository.trim().toLowerCase() === repository.trim().toLowerCase() ? pullRequest.title : `${pullRequest.repository} · ${pullRequest.title}`,
+      replacement,
+      record,
+    };
+  });
+}
+
 /** `@` path suggestions from the server's search, inserted as the web inserts them: a markdown link. */
 export function pathItems(entries: readonly ProjectEntry[]): ComposerItem[] {
   return entries.map((entry) => {
@@ -133,8 +148,8 @@ export function applyComposerItem(text: string, trigger: ComposerTrigger, replac
   return replaceTextRange(text, trigger.rangeStart, end, replacement);
 }
 
-/** The records for the thread mentions still in the text, as the message's context. */
-export function messageContext(text: string, records: ReadonlyMap<string, ThreadContextRecord>): OrchestrationMessageContext | undefined {
+/** The records for the mentions (threads, pull requests) still in the text, as the message's context. */
+export function messageContext(text: string, records: ReadonlyMap<string, ComposerContextRecord>): OrchestrationMessageContext | undefined {
   const referenced = new Set(collectComposerContextReferences(text).map((occurrence) => occurrence.contextId as string));
   const kept = [...records.values()].filter((record) => referenced.has(record.contextId));
   return kept.length > 0 ? { version: 1, records: kept } : undefined;

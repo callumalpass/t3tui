@@ -42,8 +42,9 @@ As in T3 Code's message box, typing a trigger opens a list of suggestions above 
 | `/` | `/model`, then the provider's commands (only at the start of the message) and skills | `/command`, or `$skill` for a skill; `/model` opens the model picker |
 | `$` | the provider's skills | `$skill` |
 | `@` | threads, then files and folders in the thread's worktree or project | a markdown link to the file, or a link to the thread (sent along with the message, as T3 does) |
+| `#` | pull requests in the thread's repository (by number, or by words in the title) | a link to the pull request (sent along with the message, as T3 does) |
 
-`↑`/`↓` or `ctrl+n`/`ctrl+p` move, `tab` or `enter` chooses, a click chooses, and `esc` closes the list. Links show as raw markdown in the box; T3 shows them as chips. `#` (pull requests) isn't supported yet.
+`↑`/`↓` or `ctrl+n`/`ctrl+p` move, `tab` or `enter` chooses, a click chooses, and `esc` closes the list. Links show as raw markdown in the box; T3 shows them as chips.
 
 Navigation:
 
@@ -59,6 +60,7 @@ Navigation:
 | `e` | expand all folded turns and work groups |
 | `o` | load earlier turns |
 | `d` | show or hide thread details |
+| `P` | show the thread's linked pull request (see below) |
 | `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `t` turns an automation on or off, `esc` comes back |
 | `u` | go to the parent thread (from a fork or subagent) |
 | `:` | command palette |
@@ -75,6 +77,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation.
 - **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `j`/`k` scroll, `esc` closes.
 - **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
+- **Pull requests:** `P` shows a linked pull request in place of the conversation (with several, you pick one): its state, author and branches, description, checks, reviews, recent comments and the review guide when one was written. `j`/`k` scroll, `o` opens it in the browser, `r` refreshes it from the host, and `esc` closes it. From there, `c` comments and `R` reviews (approve / request changes / comment) in `$EDITOR`, `a` offers the host's actions (merge, close, ready…) behind a confirmation, `w` watches or stops watching, and `u` unlinks it. `Link pull request to thread` in the palette links one by URL or number, and `New thread from pull request…` checks one out into a draft in the project folder or a dedicated worktree.
 - **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
 - **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them).
 - **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring; start with `>` for commands only.
@@ -158,4 +161,4 @@ Type errors after a bump point at the protocol changes to adapt to.
 
 ## Not yet supported
 
-Editing queued messages, `#` pull request mentions, plan follow-ups, attachments, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.
+Editing queued messages, plan follow-ups, attachments, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.

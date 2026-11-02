@@ -14,7 +14,7 @@ import { DEFAULT_TERMINAL_ID, type ContextMenuItem, type DiscoveredLocalServer, 
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { OrchestrationMessageContext, ProjectEntry, ThreadContextRecord } from "@t3tools/contracts";
+import type { ComposerContextRecord, OrchestrationMessageContext, ProjectEntry } from "@t3tools/contracts";
 import type { FeedState, ServerConfigState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { applyComposerItem, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
@@ -23,6 +23,7 @@ import { draftDefaults, lockedProviderInstance, modelSummary, optionDescriptors,
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
 import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type Picker, type PickerItem } from "../model/palette.ts";
+import { pullRequestRepository } from "../model/pullRequests.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
 import { threadRows, type Section } from "../model/threads.ts";
@@ -34,7 +35,9 @@ import { DraftView, type DraftLine } from "./DraftView.tsx";
 import { editInEditor } from "./editor.ts";
 import { Palette } from "./Palette.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
+import { PullRequestView } from "./PullRequestView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
+import { useComposerPullRequests, usePullRequests } from "./usePullRequests.ts";
 import { attachTerminal } from "./terminalAttach.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
@@ -46,7 +49,7 @@ import { ThreadView } from "./ThreadView.tsx";
  * "details": j/k move through the details panel. "settings": j/k move through settings.
  * The rest are overlays with their own input.
  */
-type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings";
+type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "pull-request";
 
 /** Holding j/k skims past threads; only subscribe to one you stop on. */
 const SUBSCRIBE_DELAY_MS = 120;
@@ -122,8 +125,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   /** The trigger esc closed the menu for; typing on reopens it. */
   const [menuDismissed, setMenuDismissed] = useState<string | null>(null);
   const [pathResults, setPathResults] = useState<{ key: string; entries: readonly ProjectEntry[] } | null>(null);
-  /** Thread mentions per composer, sent as the message's context. */
-  const mentions = useRef(new Map<string, Map<string, ThreadContextRecord>>());
+  /** Mentions per composer (threads, pull requests), sent as the message's context. */
+  const mentions = useRef(new Map<string, Map<string, ComposerContextRecord>>());
   const [questionDrafts, setQuestionDrafts] = useState<ReadonlyMap<string, QuestionDraft>>(new Map());
   const [now, setNow] = useState(Date.now());
   const scrollRef = useRef<ScrollBoxRenderable | null>(null);
@@ -185,7 +188,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setSettingsIndex(null);
     setDraft(null);
     setDetailsSelected(null);
-    setMode((current) => (current === "details" || current === "settings" ? "nav" : current));
+    setMode((current) => (current === "details" || current === "settings" || current === "pull-request" ? "nav" : current));
   }, []);
 
   const [watchedId, setWatchedId] = useState(threadId);
@@ -920,6 +923,41 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   const scrollPage = (direction: 1 | -1) => scrollRef.current?.scrollBy(direction * Math.max(1, height - 10));
 
+  // Pull requests: the P view, link/unlink/watch, a draft checked out from one.
+  const pullRequests = usePullRequests({
+    session,
+    renderer,
+    threadShell,
+    project: draft ? draftProject : project,
+    projects: shell.snapshot?.projects ?? [],
+    serverConfig: providerConfig,
+    confirm,
+    openPicker,
+    say,
+    run,
+    showView: () => {
+      setDiff(null);
+      setSettingsIndex(null);
+      setMode("pull-request");
+    },
+    hideView: () => setMode("nav"),
+    startDraftFromPullRequest: (targetProject, prepared) => {
+      setDraft({
+        ...draftDefaults({
+          config: providerConfig,
+          project: targetProject,
+          currentModel: threadShell?.modelSelection ?? null,
+          projectHasThreads: shell.snapshot?.threads.some((candidate) => candidate.projectId === targetProject.id) ?? false,
+        }),
+        envMode: prepared.worktreePath ? "worktree" : "local",
+        ...(prepared.worktreePath ? { existingWorktree: { path: prepared.worktreePath, branch: prepared.branch } } : {}),
+      });
+      setDiff(null);
+      setSettingsIndex(null);
+      setMode("input");
+    },
+  });
+
   // The command palette: everything the keys do, plus what the details panel offers.
   const commands: (PaletteCommand & { readonly run: () => void })[] = [];
   const command = (id: string, label: string, action: () => void, extra: Omit<PaletteCommand, "id" | "title"> = {}) => commands.push({ id, title: label, run: action, ...extra });
@@ -959,6 +997,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   if (currentModel) command("model", "Change model, options or mode", openModelPicker, { shortcut: "m", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] });
   if (threadShell && !draft) command("terminal", "Open terminal", openTerminal, { shortcut: "ctrl+j", keywords: ["shell", "console"] });
   if (threadId || draft) command("editor", "Write the message in $EDITOR", openEditor, { shortcut: "ctrl+g", keywords: ["vim", "editor", "compose"] });
+  for (const prCommand of pullRequests.commands) commands.push(prCommand);
   command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options", "notifications", "alerts"] });
   command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
 
@@ -996,7 +1035,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     return false;
   };
 
-  // The / $ @ menu: the web composer's suggestions for the trigger under the cursor.
+  // The / $ @ # menu: the web composer's suggestions for the trigger under the cursor.
   const composerCwd = draft ? (draftProject?.workspaceRoot ?? null) : (threadShell?.worktreePath ?? project?.workspaceRoot ?? null);
   const composerProvider = currentModel ? providerConfig?.providers.find((candidate) => candidate.instanceId === currentModel.instanceId) : undefined;
   const trigger = mode === "input" && (threadId || draft) ? composerTrigger(composerState.text, composerState.cursor) : null;
@@ -1014,6 +1053,13 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     }, 120);
     return () => clearTimeout(timer);
   }, [session, pathKey]);
+  const composerPullRequests = useComposerPullRequests({
+    session,
+    query: trigger?.kind === "pull-request" ? trigger.query : null,
+    projectId: providerConfig ? (draft ? draft.projectId : (threadShell?.projectId ?? null)) : null,
+    repository: providerConfig ? pullRequestRepository(draft ? draftProject : project) : null,
+    links: threadShell?.pullRequests,
+  });
   const menu = ((): { items: ComposerItem[]; empty: string; loading: boolean } | null => {
     if (!trigger || triggerKey === menuDismissed) return null;
     switch (trigger.kind) {
@@ -1028,6 +1074,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         const fresh = pathResults?.key === pathKey;
         return { items: [...threads, ...(fresh ? pathItems(pathResults.entries) : [])], empty: fresh ? "No matching files or folders." : "Searching…", loading: !fresh };
       }
+      case "pull-request":
+        return composerPullRequests;
       default:
         return null;
     }
@@ -1056,7 +1104,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     const at = cursorAtIndex(next.text, next.cursor);
     composer.setCursor(at.row, at.col);
     if (item.record) {
-      const records = mentions.current.get(composerKey) ?? new Map<string, ThreadContextRecord>();
+      const records = mentions.current.get(composerKey) ?? new Map<string, ComposerContextRecord>();
       records.set(item.record.contextId, item.record);
       mentions.current.set(composerKey, records);
     }
@@ -1126,6 +1174,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return;
     }
     const scroll = scrollRef.current;
+    if (mode === "pull-request") {
+      if (pullRequests.handleKey(key, scroll)) return key.preventDefault();
+      return;
+    }
     if (mode === "settings") {
       const index = settingsIndex ?? 0;
       switch (key.name) {
@@ -1191,6 +1243,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       case ".":
         return openSelectedThreadMenu();
       case "p":
+        if (key.shift) return pullRequests.open();
         if (draft) openProjectPicker();
         return;
       case "w":
@@ -1350,6 +1403,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
                 cycleSetting(index);
               }}
             />
+          ) : mode === "pull-request" && pullRequests.view ? (
+            <PullRequestView view={pullRequests.view} scrollRef={scrollRef} />
           ) : diff ? (
             <DiffView diff={diff} scrollRef={scrollRef} />
           ) : draft ? (
@@ -1493,6 +1548,7 @@ function hints(
   if (mode === "confirm") return "enter confirm · esc cancel";
   if (mode === "details") return "j/k move · enter open · t toggle automation · esc back";
   if (mode === "settings") return "j/k move · enter change · esc close";
+  if (mode === "pull-request") return "j/k scroll · o open · r refresh · c comment · R review · a actions · w watch · u unlink · esc close";
   if (mode === "input") {
     const send = state.config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
     const other = state.config.followUpBehavior === "steer" ? "queue" : "steer";

@@ -31,6 +31,20 @@ import {
   type OrchestrationV2ThreadShell,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
+  type GitPreparePullRequestThreadResult,
+  type GitResolvePullRequestResult,
+  type PullRequestActivity,
+  type PullRequestChecks,
+  type PullRequestDetail,
+  type PullRequestListInput,
+  type PullRequestListResult,
+  type PullRequestRef,
+  type PullRequestAction,
+  type PullRequestMergeMethod,
+  type PullRequestReviewGuideResult,
+  type PullRequestReviewVerdict,
+  type PullRequestUpdateMethod,
+  type ThreadPullRequestKey,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
@@ -520,6 +534,78 @@ export class T3Session {
   async searchEntries(cwd: string, query: string, limit: number): Promise<readonly ProjectEntry[]> {
     const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.projectsSearchEntries]({ cwd, query, limit }));
     return result.entries;
+  }
+
+  /** Pull requests for a scope, as the web's list and the composer's `#` menu read them. */
+  async pullRequestsList(input: PullRequestListInput): Promise<PullRequestListResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsList](input));
+  }
+
+  /** One pull request's detail, as the web's detail panel reads it. */
+  async pullRequestDetail(reference: PullRequestRef): Promise<PullRequestDetail> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsDetail]({ ...reference, allowStale: false }));
+  }
+
+  /** One pull request's comments, review threads and commits. */
+  async pullRequestActivity(reference: PullRequestRef): Promise<PullRequestActivity> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsActivity](reference));
+  }
+
+  /** One pull request's checks, fresher than the detail's copy when the server serves them apart. */
+  async pullRequestChecks(reference: PullRequestRef): Promise<PullRequestChecks | null> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsChecks](reference));
+  }
+
+  /** The stored review guide for a pull request, if one was written. */
+  async pullRequestReviewGuide(reference: PullRequestRef): Promise<PullRequestReviewGuideResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsReviewGuide](reference));
+  }
+
+  /** Starts writing a review guide, as the web's "Write guide" does. */
+  async generatePullRequestReviewGuide(reference: PullRequestRef): Promise<PullRequestReviewGuideResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsGenerateReviewGuide](reference));
+  }
+
+  /** Drops the host cache for a pull request so the next read comes from the host, as the web's refresh does. */
+  async invalidatePullRequest(reference: PullRequestRef): Promise<void> {
+    await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsInvalidate]({ reference }));
+  }
+
+  /** A `pullRequests.runAction` action (merge, close, ready…), as the web offers them. */
+  async runPullRequestAction(reference: PullRequestRef, action: PullRequestAction, mergeMethod?: PullRequestMergeMethod, updateMethod?: PullRequestUpdateMethod): Promise<void> {
+    await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsRunAction]({ ...reference, action, ...(mergeMethod ? { mergeMethod } : {}), ...(updateMethod ? { updateMethod } : {}) }));
+  }
+
+  /** Posts a conversation comment on a pull request. */
+  async commentOnPullRequest(reference: PullRequestRef, body: string): Promise<void> {
+    await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsComment]({ ...reference, body }));
+  }
+
+  /** Submits a review with no line comments, as the web's review form does with an empty draft. */
+  async submitPullRequestReview(reference: PullRequestRef, verdict: PullRequestReviewVerdict, body: string): Promise<void> {
+    await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.pullRequestsSubmitReview]({ ...reference, verdict, body, comments: [] }));
+  }
+
+  /** Resolves a pull request URL, checkout command or number against `cwd`'s repository. */
+  async resolvePullRequest(cwd: string, reference: string): Promise<GitResolvePullRequestResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.gitResolvePullRequest]({ cwd, reference }));
+  }
+
+  /** Prepares the checkout a pull request thread runs in: the project folder, or a dedicated worktree. */
+  async preparePullRequestThread(cwd: string, reference: string, mode: "local" | "worktree", threadId?: ThreadId): Promise<GitPreparePullRequestThreadResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.gitPreparePullRequestThread]({ cwd, reference, mode, ...(threadId ? { threadId } : {}) }));
+  }
+
+  linkPullRequest(threadId: ThreadId, key: ThreadPullRequestKey, url: string): Promise<void> {
+    return this.dispatch({ type: "thread.pull-request.link", commandId: newCommandId(), threadId, ...key, url, source: "manual" });
+  }
+
+  unlinkPullRequest(threadId: ThreadId, key: ThreadPullRequestKey): Promise<void> {
+    return this.dispatch({ type: "thread.pull-request.unlink", commandId: newCommandId(), threadId, ...key });
+  }
+
+  watchPullRequest(threadId: ThreadId, key: ThreadPullRequestKey, watching: boolean): Promise<void> {
+    return this.dispatch({ type: "thread.pull-request.watch", commandId: newCommandId(), threadId, ...key, watching });
   }
 
   /** Whether `cwd` is a repository, and its default branch (else the current one), for a new worktree's base. */
