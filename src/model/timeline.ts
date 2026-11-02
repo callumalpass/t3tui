@@ -1,3 +1,4 @@
+import { turnTargets, type TurnTarget } from "./turns.ts";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   deriveRunlessWorkStartedAt,
@@ -28,6 +29,7 @@ export { liveWorkEntryLabel, workEntryDisplayLabel } from "../../vendor/t3code/a
 export interface Timeline {
   readonly rows: readonly MessagesTimelineRow[];
   readonly pending: PendingThreadRequests;
+  readonly turns: readonly TurnTarget[];
   readonly isWorking: boolean;
   /** When the current run started working, for "Working for 12s". */
   readonly workStartedAt: string | null;
@@ -53,7 +55,7 @@ const NOTHING = new Set<never>();
 
 export function buildTimeline(
   projection: OrchestrationV2ThreadProjection,
-  options: { readonly expandAll: boolean },
+  options: { readonly expandAll: boolean; readonly historyComplete: boolean },
   previous: Timeline | null,
 ): Timeline {
   const cache = previous?.cache.expandAll === options.expandAll ? previous.cache : null;
@@ -95,6 +97,7 @@ export function buildTimeline(
   return {
     rows: stable.result,
     pending,
+    turns: turnTargets(projection, entries.entries, isWorking ? runtime?.activeRunId ?? null : null, options.historyComplete),
     isWorking,
     workStartedAt,
     cache: { entries, rows, stable, expandAll: options.expandAll },
