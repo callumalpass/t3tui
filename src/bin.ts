@@ -145,6 +145,20 @@ async function runUi(attachNeedle?: string) {
   const layout = await loadLayout();
   // The kitty keyboard protocol lets terminals that support it send shift+enter, for newlines.
   const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, useKittyKeyboard: {} });
+  // OpenTUI answers SIGHUP and SIGTERM by tearing the screen down without exiting, and the
+  // session's socket would keep a closed terminal's tui3 running for good.
+  renderer.once("destroy", () => {
+    void Promise.race([session.stop(), Bun.sleep(1000)]).finally(() => process.exit(0));
+  });
+  // Bun collects so lazily that a streaming thread takes tui3 past 500 MB of garbage. A full
+  // collection pauses for up to ~150 ms, so it waits for a few seconds without keys or clicks.
+  let lastInput = Date.now();
+  process.stdin.on("data", () => {
+    lastInput = Date.now();
+  });
+  setInterval(() => {
+    if (Date.now() - lastInput > 5_000) Bun.gc(true);
+  }, 30_000).unref();
   const { applyTheme } = await import("./ui/theme.ts");
   // Terminals that don't say what their background is get the dark palette.
   applyTheme(config.theme === "auto" ? ((await renderer.waitForThemeMode(300)) ?? "dark") : config.theme);
