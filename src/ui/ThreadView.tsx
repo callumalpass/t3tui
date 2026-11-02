@@ -281,9 +281,10 @@ function ChangedFiles({ summary, onOpenTurnDiff }: { readonly summary: ThreadChe
 
 function ChangedFile({ path, additions, deletions, onPress }: { readonly path: string; readonly additions: number; readonly deletions: number; readonly onPress: () => void }) {
   const [hover, hoverProps] = useHover();
+  const counts = (additions > 0 ? `+${additions}`.length : 0) + (deletions > 0 ? `−${deletions}`.length : 0) + (additions > 0 && deletions > 0 ? 1 : 0);
   return (
     <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onPress()}>
-      <text fg={hover ? colors.text : colors.muted} selectable={false} wrapMode="none">{path}</text>
+      <text fg={hover ? colors.text : colors.muted} selectable={false} wrapMode="none">{truncate(path, CONTENT_WIDTH - 2 - (counts ? counts + 2 : 0))}</text>
       <box flexGrow={1} />
       <DiffCounts additions={additions} deletions={deletions} />
     </box>

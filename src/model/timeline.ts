@@ -47,13 +47,21 @@ export interface Timeline {
   readonly cache: TimelineCache;
 }
 
+type TurnDiffSummaries = ReturnType<typeof deriveThreadCheckpointSummaries>;
+
 interface TimelineCache {
   readonly entries: TimelineEntriesProjection;
   readonly rows: { readonly input: MessagesTimelineRowsInput; readonly rows: MessagesTimelineRow[] };
   readonly stable: StableMessagesTimelineRowsState;
   readonly expandAll: boolean;
   readonly expanded: ReadonlySet<string>;
+  /** The last summaries and what they were derived from, so unchanged replies keep their row identity. */
+  readonly turnDiffSummaries: TurnDiffSummaries;
+  readonly checkpoints: OrchestrationV2ThreadProjection["checkpoints"];
+  readonly checkpointMessages: OrchestrationV2ThreadProjection["messages"];
 }
+
+const sameItems = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((item, index) => item === b[index]);
 
 /** Answers yes for every id: "expand everything" without knowing the group ids up front. */
 class EverySet<T> extends Set<T> {
@@ -88,6 +96,11 @@ export function buildTimeline(
   const isWorking = derivePhase(runtime) === "running" || runlessStartedAt !== null;
   const workStartedAt = deriveActiveWorkStartedAt(latestRun, runtime, null) ?? runlessStartedAt;
   const pending = derivePendingThreadRequests(projection);
+  const previousCache = previous?.cache;
+  const turnDiffSummaries =
+    previousCache && sameItems(previousCache.checkpoints, projection.checkpoints) && sameItems(previousCache.checkpointMessages, projection.messages)
+      ? previousCache.turnDiffSummaries
+      : deriveThreadCheckpointSummaries(projection);
   const expanded = options.expandAll ? EVERYTHING : opened;
   const rows = deriveMessagesTimelineRowsWithState(
     {
@@ -102,7 +115,7 @@ export function buildTimeline(
       isWorking,
       runlessWorkActive: runlessStartedAt !== null,
       activeTurnStartedAt: workStartedAt,
-      turnDiffSummaries: deriveThreadCheckpointSummaries(projection),
+      turnDiffSummaries,
       supportsConversationRollback: false,
     },
     cache?.rows ?? null,
@@ -121,6 +134,6 @@ export function buildTimeline(
         return [run.id as string, { model: run.modelSelection.model, durationMs: durationMs !== null && durationMs >= 0 ? durationMs : null }] as const;
       }),
     ),
-    cache: { entries, rows, stable, expandAll: options.expandAll, expanded: opened },
+    cache: { entries, rows, stable, expandAll: options.expandAll, expanded: opened, turnDiffSummaries, checkpoints: projection.checkpoints, checkpointMessages: projection.messages },
   };
 }
