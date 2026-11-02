@@ -51,6 +51,7 @@ export function fakeSession(
   } = {},
 ) {
   const calls: Call[] = [];
+  const threadListeners = new Set<(value: unknown) => void>();
   const snapshot = state.snapshot ?? v2ShellSnapshot;
   const projection = state.projection ?? v2Projection;
   const live = <T,>(value: T) => (listener: (value: T) => void) => {
@@ -60,7 +61,11 @@ export function fakeSession(
   const known: Record<string, unknown> = {
     getShell: () => ({ status: state.status ?? { type: "live" }, snapshot, serverUrl: "ws://test" }),
     onShell: () => () => {},
-    watchThread: (_id: ThreadId, listener: (value: unknown) => void) => live({ status: "live", projection, history: { cursor: null, hasMore: false, loading: false } })(listener),
+    watchThread: (_id: ThreadId, listener: (value: unknown) => void) => {
+      threadListeners.add(listener);
+      listener({ status: "live", projection, history: { cursor: null, hasMore: false, loading: false } });
+      return () => threadListeners.delete(listener);
+    },
     watchServerConfig: live(state.serverConfig ? { status: "live", config: state.serverConfig } : { status: "loading", config: null }),
     watchServers: live({ status: "live", items: [] }),
     watchAutomations: live({ status: "live", items: [] }),
@@ -85,7 +90,11 @@ export function fakeSession(
       };
     },
   }) as unknown as T3Session;
-  return { session, calls };
+  /** Sends watchers of the thread a new projection, as the server does when it changes. */
+  const updateThread = (next: OrchestrationV2ThreadProjection) => {
+    for (const listener of threadListeners) listener({ status: "live", projection: next, history: { cursor: null, hasMore: false, loading: false } });
+  };
+  return { session, calls, updateThread };
 }
 
 /** Renders the whole app against a fake session, with helpers to drive it by key and mouse. */

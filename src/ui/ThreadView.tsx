@@ -179,7 +179,7 @@ const Row = memo(function Row(props: {
       if (message.role === "system") return <text marginTop={1} fg={colors.muted} onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>{message.text}</text>;
       return (
         <box marginTop={1} flexDirection="column" onMouseDown={(event: MouseEvent) => isRightClick(event) && mouse.menu(menu)}>
-          <markdown content={message.text || "…"} syntaxStyle={markdownStyle} streaming={message.streaming} conceal />
+          <markdown content={message.text || "…"} syntaxStyle={markdownStyle} streaming={message.streaming} conceal tableOptions={{ widthMode: "content", wrapMode: "word", cellPaddingX: 1, borderColor: colors.border }} />
           {summary && summary.files.length > 0 ? <ChangedFiles summary={summary} onOpenTurnDiff={mouse.openTurnDiff} /> : null}
           {props.footer ? <text marginTop={1} fg={colors.faint}>{props.footer}</text> : null}
         </box>
