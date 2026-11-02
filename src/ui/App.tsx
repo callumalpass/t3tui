@@ -6,7 +6,7 @@ import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId } f
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { OrchestrationV2Subagent } from "@t3tools/contracts";
+import type { ChatAttachment, OrchestrationMessageContext, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { modelSummary } from "../model/models.ts";
@@ -304,7 +304,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   }, [shell.snapshot, familyShells]);
   const say = (text: string, bad = false) => {
     setFlash({ text, bad });
-    setTimeout(() => setFlash((value) => (value?.text === text ? null : value)), 4000);
+    // Errors stay longer: they're longer, and they matter more.
+    setTimeout(() => setFlash((value) => (value?.text === text ? null : value)), bad ? 8000 : 4000);
   };
   // Taking the mouse costs the terminal's own drag-to-select, so a drag selects here and copies on release.
   const copySelection = useEvent((selection: Selection) => {
@@ -511,6 +512,37 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setMode("nav");
   };
 
+  /**
+   * A message that didn't go comes back to its composer, as the web's does: its text, its
+   * attachments and its mentions, unless something new was typed there meanwhile.
+   */
+  const restoreMessage = (key: string, text: string, context: OrchestrationMessageContext | undefined, attachments: readonly ChatAttachment[]) => {
+    const composer = composerRef.current;
+    if (key === activeComposerKey.current && composer) {
+      if (composer.plainText.trim()) return;
+      composer.setText(text);
+      composer.gotoBufferEnd();
+      setComposerLines(composerLineCount(composer));
+      setComposerEmpty(text === "");
+    } else {
+      if (drafts.current.get(key)?.trim()) return;
+      drafts.current.set(key, text);
+    }
+    composerMenu.remember(key, context);
+    attach.restore(key, attachments);
+  };
+  /** Sends; on failure says why and puts the message back. */
+  const send = (label: string, text: string, context: OrchestrationMessageContext | undefined, attachments: readonly ChatAttachment[], action: () => Promise<unknown>) => {
+    const key = composerKey;
+    action().then(
+      () => say(label),
+      (error) => {
+        say(`Not sent: ${messageOf(error)}`, true);
+        restoreMessage(key, text, context, attachments);
+      },
+    );
+  };
+
   const clearComposer = () => {
     composerRef.current?.setText("");
     if (threadId) drafts.current.delete(threadId);
@@ -531,13 +563,15 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return;
     }
     const text = raw.trim();
+    // As the web's: refused up front while disconnected, and the message stays put.
+    if (!live && (text || attach.pending.length > 0)) return say("Not connected: message not sent. Reconnecting; try again once it's connected.", true);
     const attachedFiles = attach.pending;
     const context = composerMenu.context(text);
     if (draft) {
       if (!text && attachedFiles.length === 0) return;
       const taken = attach.take();
       clearComposer();
-      return newThread.launch(text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, context, taken);
+      return newThread.launch(text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, context, taken, () => restoreMessage(DRAFT_KEY, text, context, taken));
     }
     if (!threadId) return;
     if (questions.request) {
@@ -554,12 +588,12 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     const sendText = text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
     if (pendingApproval) {
       // As in the web composer: the message declines the request and redirects the agent.
-      if (pendingApproval.supportsFeedback) return run("Declined with feedback", () => session.respond(threadId, pendingApproval.requestId, "decline", text));
-      return run("Declined and redirected", () => session.sendMessage(threadId, sendText, "steer", undefined, context, taken));
+      if (pendingApproval.supportsFeedback) return send("Declined with feedback", text, context, taken, () => session.respond(threadId, pendingApproval.requestId, "decline", text));
+      return send("Declined and redirected", text, context, taken, () => session.sendMessage(threadId, sendText, "steer", undefined, context, taken));
     }
     const dispatchMode = resolveComposerDispatchMode({ running: working, alternateModifier: alternate, activeTurnDefault: config.followUpBehavior });
     const pendingModel = models.take(threadId);
-    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, sendText, dispatchMode, pendingModel, context, taken));
+    send(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", text, context, taken, () => session.sendMessage(threadId, sendText, dispatchMode, pendingModel, context, taken));
   };
 
   const loadEarlier = () => {
@@ -683,6 +717,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const detailsKey = panel.keys.focus;
   const cancelDraftKey = newThread.keys?.cancel;
   const navKeys = keys(
+    shell.status.type === "reconnecting" && { keys: ["r"], run: () => session.retryNow(), hint: "reconnect now", command: { id: "reconnect", title: "Reconnect now", keywords: ["retry", "connection", "server"] } },
     diff && [scrollDiffDown, { keys: ["k", "↑"], run: () => scrollBy(-1) }, closeDiff],
     turns.bindings,
     pendingApproval && [
@@ -911,14 +946,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     panel.leave();
   };
 
-  const status =
-    shell.status.type === "error"
-      ? `error: ${shell.status.message}`
-      : shell.status.type === "connecting"
-        ? "connecting…"
-        : shell.status.type === "reconnecting"
-          ? "reconnecting…"
-          : (shell.serverUrl ?? "");
+  const status = connectionLabel(shell, now);
   const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
   const detailsColumn = panel.show && width - listWidth - DETAILS_WIDTH >= MIN_CONVERSATION_WIDTH;
   const detailsInPlace = panel.show && !detailsColumn;
@@ -983,7 +1011,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         <text fg={colors.accent}>
           <strong>tui3</strong>
         </text>
-        <text fg={shell.status.type === "live" ? colors.faint : colors.warn}>{`  ${status}`}</text>
+        <text fg={shell.status.type === "live" ? colors.faint : colors.warn} wrapMode="none" onMouseDown={() => session.retryNow()}>{`  ${status}`}</text>
         {usageInfo.note ? <text fg={colors.warn} wrapMode="none">{`  ${usageInfo.note}`}</text> : null}
         <box flexGrow={1} />
         <Button label="commands" shortcut="ctrl+k" onPress={openPalette} />
@@ -1207,4 +1235,13 @@ function composerLineCount(composer: TextareaRenderable): number {
 /** The thread list keeps room for itself and for the conversation. */
 function clampListWidth(columns: number, width: number): number {
   return Math.max(20, Math.min(columns, width - MIN_CONVERSATION_WIDTH));
+}
+
+/** The header's connection note, as the web words it: what failed, and when it tries again. */
+function connectionLabel(shell: ShellState, now: number): string {
+  const status = shell.status;
+  if (status.type === "live") return shell.serverUrl ?? "";
+  if (status.type === "connecting") return "connecting…";
+  const wait = status.retryAt === null ? 0 : Math.max(0, Math.ceil((status.retryAt - now) / 1000));
+  return `couldn't connect, ${wait > 0 ? `retrying in ${wait}s` : "retrying…"} · ${truncate(firstLine(status.message), 60)}`;
 }

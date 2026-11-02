@@ -79,8 +79,8 @@ export function useDraft(deps: {
     setDraft({ ...rest, envMode: draft.existingWorktree ? "local" : draft.envMode === "local" ? "worktree" : "local" });
   };
 
-  /** Sends the first message, which creates the thread. */
-  const launch = (text: string, context?: OrchestrationMessageContext, attachments: readonly ChatAttachment[] = []) => {
+  /** Sends the first message, which creates the thread; `onFailed` gets the message back. */
+  const launch = (text: string, context: OrchestrationMessageContext | undefined, attachments: readonly ChatAttachment[], onFailed: () => void) => {
     if (!draft || !project) return;
     const launching = draft;
     const root = project.workspaceRoot;
@@ -113,7 +113,10 @@ export function useDraft(deps: {
           deps.onLaunched(id);
           say("Thread started");
         },
-        (error) => say(`Could not start the thread: ${error instanceof Error ? error.message : String(error)}`, true),
+        (error) => {
+          say(`Could not start the thread: ${error instanceof Error ? error.message : String(error)}`, true);
+          onFailed();
+        },
       );
   };
 

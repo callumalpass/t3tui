@@ -43,13 +43,15 @@ async function main(argv: string[]) {
   }
 }
 
+/** For one-off commands: fails on the first failed attempt rather than retrying, as the UI does. */
 async function connectedSession(): Promise<{ session: T3Session; snapshot: OrchestrationV2ShellSnapshot }> {
   const session = new T3Session();
   await session.start();
   const snapshot = await new Promise<OrchestrationV2ShellSnapshot>((resolve, reject) => {
     const off = session.onShell((shell) => {
-      if (shell.status.type === "error") {
+      if (shell.status.type === "reconnecting") {
         queueMicrotask(() => off());
+        void session.stop();
         reject(new Error(shell.status.message));
       } else if (shell.status.type === "live" && shell.snapshot) {
         queueMicrotask(() => off());
@@ -109,18 +111,22 @@ async function tmuxCommand(args: string[]) {
       }
     }
   };
-  session.onShell((shell) => {
-    if (shell.status.type === "error") fail(shell.status.message);
-    void sync();
-  });
+  // A dropped connection retries by itself; sync runs again once the shell is back.
+  session.onShell(() => void sync());
   await new Promise(() => {});
 }
 
 async function runUi(attachNeedle?: string) {
-  const { session, snapshot } = await connectedSession();
+  let session: T3Session;
   let attachThreadId: ThreadId | undefined;
-  if (attachNeedle) {
-    const thread = findThread(snapshot, attachNeedle);
+  if (!attachNeedle) {
+    // The UI opens at once and shows the connection, retrying until the server is there.
+    session = new T3Session();
+    void session.start();
+  } else {
+    const connected = await connectedSession();
+    session = connected.session;
+    const thread = findThread(connected.snapshot, attachNeedle);
     if (!thread) {
       await session.stop();
       return fail(`No thread matches "${attachNeedle}".`);

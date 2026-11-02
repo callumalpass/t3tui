@@ -207,6 +207,41 @@ describe("composer", () => {
   });
 });
 
+describe("connection", () => {
+  const reconnecting = () => ({ type: "reconnecting", message: "connect ECONNREFUSED 127.0.0.1:3773", retryAt: Date.now() + 5_000 }) as const;
+
+  test("a dropped connection says why and when it retries; r and a click on it retry now", async () => {
+    const app = await open({ session: fakeSession({ status: reconnecting() }) });
+    expect(app.frame()).toMatch(/couldn't connect, retrying in \ds · connect ECONNREFUSED/);
+    expect(app.hints()).toStartWith("r reconnect now · ");
+    await app.press("r");
+    expect(app.calls("retryNow")).toHaveLength(1);
+    const at = app.find("couldn't connect");
+    await app.click(at.x, at.y);
+    expect(app.calls("retryNow")).toHaveLength(2);
+  });
+
+  test("while disconnected, enter keeps the message rather than sending it", async () => {
+    const app = await open({ session: fakeSession({ status: reconnecting() }) });
+    await app.press("i");
+    await app.type("hello there");
+    await app.press("return");
+    expect(app.calls("sendMessage")).toHaveLength(0);
+    expect(app.hints()).toStartWith("Not connected: message not sent.");
+    expect(app.frame()).toContain("hello there");
+  });
+
+  test("a send that fails puts the message back in the composer", async () => {
+    const app = await open({ session: fakeSession({ failures: { sendMessage: "socket closed" } }) });
+    await app.press("i");
+    await app.type("hello there");
+    await app.press("return");
+    expect(app.calls("sendMessage")).toHaveLength(1);
+    expect(app.hints()).toBe("Not sent: socket closed");
+    expect(app.frame()).toContain("hello there");
+  });
+});
+
 describe("mouse", () => {
   test("the header button opens the palette", async () => {
     const app = await open();

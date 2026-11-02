@@ -39,6 +39,7 @@ import {
 } from "../model/pullRequests.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import { editInEditor } from "./editor.ts";
+import { copyText } from "./terminalOut.ts";
 import { firstLine } from "./text.ts";
 import type { PullRequestViewState } from "./PullRequestView.tsx";
 
@@ -159,10 +160,19 @@ export function usePullRequests(deps: PullRequestDeps) {
   const openInBrowser = () => {
     const url = loadedRef.current?.detail?.url ?? loadedRef.current?.link.url;
     if (!url) return;
+    // Over SSH or without a desktop there may be no browser to open: copy the link instead.
+    const fallBack = (reason: string) => {
+      copyText(deps.renderer, url);
+      deps.say(`Could not open the browser (${reason}); link copied: ${url}`, true);
+    };
     try {
-      Bun.spawn([process.platform === "darwin" ? "open" : "xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-    } catch {
-      deps.say(`Could not open ${url}`, true);
+      const opener = process.platform === "darwin" ? "open" : "xdg-open";
+      const child = Bun.spawn([opener, url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      void child.exited.then((code) => {
+        if (code !== 0) fallBack(`${opener} exited with ${code}`);
+      });
+    } catch (error) {
+      fallBack(messageOf(error));
     }
   };
 

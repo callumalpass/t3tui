@@ -113,6 +113,13 @@ export function useComposerMenu(deps: {
   const context = (text: string): OrchestrationMessageContext | undefined => messageContext(text, mentions.current.get(composerKey) ?? new Map());
   /** The message went: its mentions go with it. */
   const forget = () => mentions.current.delete(composerKey);
+  /** A message that didn't send came back to its composer: so do its mentions. */
+  const remember = (key: string, restored: OrchestrationMessageContext | undefined) => {
+    if (!restored) return;
+    const records = mentions.current.get(key) ?? new Map<string, ComposerContextRecord>();
+    for (const record of restored.records) records.set(record.contextId, record);
+    mentions.current.set(key, records);
+  };
 
   const bindings: Binding[] = menu
     ? keys(
@@ -128,5 +135,5 @@ export function useComposerMenu(deps: {
       )
     : [];
 
-  return { menu, selected, sync, pick: (at: number) => menu && choose(menu.items[at]), context, forget, bindings };
+  return { menu, selected, sync, pick: (at: number) => menu && choose(menu.items[at]), context, forget, remember, bindings };
 }

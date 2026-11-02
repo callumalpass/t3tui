@@ -19,6 +19,8 @@ export interface Attachments {
   readonly remove: (attachment: ChatAttachment) => void;
   /** Hands the pending attachments to a send and clears them. */
   readonly take: () => readonly ChatAttachment[];
+  /** A send failed: its attachments go back to their composer, unless it has new ones. */
+  readonly restore: (composerKey: string, attachments: readonly ChatAttachment[]) => void;
 }
 
 /**
@@ -138,6 +140,10 @@ export function useAttachments(deps: {
       const taken = byComposer.get(composerKey) ?? [];
       if (taken.length > 0) setPending([]);
       return taken;
+    },
+    restore: (key, attachments) => {
+      if (attachments.length === 0) return;
+      setByComposer((previous) => ((previous.get(key) ?? []).length > 0 ? previous : new Map(previous).set(key, attachments)));
     },
   };
 }

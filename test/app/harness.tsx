@@ -2,7 +2,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { createMockKeys, type KeyInput } from "@opentui/core/testing";
 import type { OrchestrationV2ShellSnapshot, OrchestrationV2ThreadProjection, ThreadId } from "@t3tools/contracts";
 
-import type { T3Session } from "../../src/client/session.ts";
+import type { ConnectionStatus, T3Session } from "../../src/client/session.ts";
 import { DEFAULT_CONFIG, type Tui3Config } from "../../src/config.ts";
 import { App } from "../../src/ui/App.tsx";
 import { v2Projection, v2ShellSnapshot, v2ThreadId } from "../../vendor/t3code/packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
@@ -23,9 +23,18 @@ export interface Call {
 
 /**
  * A session that serves fixed state and records every other call. Watchers get one live
- * value straight away; anything not listed resolves to undefined.
+ * value straight away; anything not listed resolves to undefined, or rejects with its
+ * `failures` message.
  */
-export function fakeSession(state: { readonly snapshot?: OrchestrationV2ShellSnapshot; readonly projection?: OrchestrationV2ThreadProjection; readonly results?: Record<string, unknown> } = {}) {
+export function fakeSession(
+  state: {
+    readonly snapshot?: OrchestrationV2ShellSnapshot;
+    readonly projection?: OrchestrationV2ThreadProjection;
+    readonly status?: ConnectionStatus;
+    readonly results?: Record<string, unknown>;
+    readonly failures?: Record<string, string>;
+  } = {},
+) {
   const calls: Call[] = [];
   const snapshot = state.snapshot ?? v2ShellSnapshot;
   const projection = state.projection ?? v2Projection;
@@ -34,7 +43,7 @@ export function fakeSession(state: { readonly snapshot?: OrchestrationV2ShellSna
     return () => {};
   };
   const known: Record<string, unknown> = {
-    getShell: () => ({ status: { type: "live" }, snapshot, serverUrl: "ws://test" }),
+    getShell: () => ({ status: state.status ?? { type: "live" }, snapshot, serverUrl: "ws://test" }),
     onShell: () => () => {},
     watchThread: (_id: ThreadId, listener: (value: unknown) => void) => live({ status: "live", projection, history: { cursor: null, hasMore: false, loading: false } })(listener),
     watchServerConfig: live({ status: "loading", config: null }),
@@ -51,7 +60,8 @@ export function fakeSession(state: { readonly snapshot?: OrchestrationV2ShellSna
       return (...args: unknown[]) => {
         calls.push({ method: name, args });
         if (name.startsWith("watch") || name.startsWith("on")) return () => {};
-        return Promise.resolve(state.results?.[name]);
+        const failure = state.failures?.[name];
+        return failure ? Promise.reject(new Error(failure)) : Promise.resolve(state.results?.[name]);
       };
     },
   }) as unknown as T3Session;

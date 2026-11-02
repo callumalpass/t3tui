@@ -89,11 +89,12 @@ import { applyShellStreamEvent, mergeShellSnapshotProjects } from "../../vendor/
 import { applyCommandOutputFrame, EMPTY_COMMAND_OUTPUT, type CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import { connect, type Connection } from "./rpc.ts";
 
+/** As the web's supervisor: it keeps retrying, first connection included, with the last failure as the reason. */
 export type ConnectionStatus =
   | { readonly type: "connecting" }
   | { readonly type: "live" }
-  | { readonly type: "reconnecting"; readonly message: string }
-  | { readonly type: "error"; readonly message: string };
+  /** `retryAt`: when the next attempt starts (epoch ms); null while one is under way. */
+  | { readonly type: "reconnecting"; readonly message: string; readonly retryAt: number | null };
 
 export interface ShellState {
   readonly status: ConnectionStatus;
@@ -207,9 +208,7 @@ export class T3Session {
     } catch (error) {
       this.scope = null;
       await Effect.runPromise(Scope.close(scope, Exit.void));
-      if (this.reconnectAttempt > 0) return this.scheduleReconnect(messageOf(error));
-      this.setShell({ status: { type: "error", message: messageOf(error) } });
-      return;
+      return this.scheduleReconnect(messageOf(error));
     }
     this.recovering = false;
     this.setShell({ serverUrl: this.connection.target.httpBaseUrl });
@@ -222,6 +221,14 @@ export class T3Session {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     await this.closeScope();
+  }
+
+  /** Skips the wait before the next reconnect attempt. */
+  retryNow(): void {
+    if (this.stopped || !this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.attempt();
   }
 
   getShell(): ShellState {
@@ -1109,11 +1116,17 @@ export class T3Session {
     if (this.stopped || this.reconnectTimer) return;
     const delay = RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)]!;
     this.reconnectAttempt++;
-    this.setShell({ status: { type: "reconnecting", message } });
+    this.setShell({ status: { type: "reconnecting", message, retryAt: Date.now() + delay } });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.start();
+      this.attempt();
     }, delay);
+  }
+
+  private attempt(): void {
+    const status = this.shell.status;
+    if (status.type === "reconnecting") this.setShell({ status: { ...status, retryAt: null } });
+    void this.start();
   }
 
   private async closeScope(): Promise<void> {
