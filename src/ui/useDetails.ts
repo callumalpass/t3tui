@@ -8,6 +8,7 @@ import { keys, type Binding } from "../model/keymap.ts";
 import type { Automations } from "./useAutomations.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import type { DiffState } from "./DiffView.tsx";
+import { firstLine } from "./text.ts";
 
 /** The details column opens by itself on terminals at least this wide. */
 const AUTO_WIDTH = 160;
@@ -221,8 +222,3 @@ export function useDetails(deps: {
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-function firstLine(text: string): string {
-  const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
-  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
-}

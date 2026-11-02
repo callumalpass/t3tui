@@ -46,6 +46,7 @@ import { ThreadView, type ConversationMouse, type ConversationTarget } from "./T
 import { Button, ResizeHandle } from "./Button.tsx";
 import { HintBar } from "./HintBar.tsx";
 import { bindingFor, commandsFor, fromCommand, hinted, hintsFor, keys, type Binding } from "../model/keymap.ts";
+import { firstLine, truncate } from "./text.ts";
 import { useEvent } from "./useEvent.ts";
 import { useQueue } from "./useQueue.ts";
 import { useSecretRequest } from "./useSecretRequest.ts";
@@ -911,7 +912,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             ...(target.role === "user" ? turns.menuFor(target.messageId) : []),
           ];
     if (target.kind === "message" && target.role === "user") turns.select(target.messageId);
-    openPicker({ placeholder: target.kind === "command" ? "Command" : target.role === "user" ? "Your message" : "Message", groups: [{ label: truncateLabel(target.kind === "command" ? target.command : target.text, 60), items }] });
+    openPicker({ placeholder: target.kind === "command" ? "Command" : target.role === "user" ? "Your message" : "Message", groups: [{ label: truncate(firstLine(target.kind === "command" ? target.command : target.text), 60), items }] });
   };
   /** The right-click menu in the pull request view: its palette commands, as a picker. */
   const openPullRequestMenu = () =>
@@ -1221,14 +1222,4 @@ function composerLineCount(composer: TextareaRenderable): number {
 /** The thread list keeps room for itself and for the conversation. */
 function clampListWidth(columns: number, width: number): number {
   return Math.max(20, Math.min(columns, width - MIN_CONVERSATION_WIDTH));
-}
-
-function truncateLabel(text: string, width: number): string {
-  const line = firstLine(text);
-  return line.length > width ? `${line.slice(0, width - 1)}…` : line;
-}
-
-function firstLine(text: string): string {
-  const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
-  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
 }

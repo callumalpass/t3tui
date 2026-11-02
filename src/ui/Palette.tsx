@@ -2,6 +2,7 @@ import type { PaletteEntry, PaletteGroup } from "../model/palette.ts";
 import type { MouseEvent } from "@opentui/core";
 
 import { ClickRow, wheelStep } from "./Button.tsx";
+import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
 /**
@@ -75,7 +76,3 @@ export function entryKey(entry: PaletteEntry): string {
   return entry.kind === "command" ? `c:${entry.command.id}` : `t:${entry.threadId}`;
 }
 
-function truncate(text: string, width: number): string {
-  const single = text.replace(/\s+/g, " ");
-  return single.length > width ? `${single.slice(0, Math.max(0, width - 1))}…` : single;
-}
