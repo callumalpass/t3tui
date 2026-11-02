@@ -2,6 +2,7 @@ import type { PaletteEntry, PaletteGroup } from "../model/palette.ts";
 import type { MouseEvent } from "@opentui/core";
 
 import { ClickRow, wheelStep } from "./Button.tsx";
+import { BAR } from "./edges.ts";
 import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
@@ -35,20 +36,19 @@ export function Palette(props: {
   }
   const selectedRow = rows.findIndex((row) => row.kind === "entry" && row.index === props.selected);
   const start = Math.max(0, Math.min(selectedRow - Math.floor(listHeight / 2), rows.length - listHeight));
-  const inner = width - 4;
+  const inner = width - 3;
   return (
-    <box position="absolute" top={2} left={Math.floor((props.width - width) / 2)} width={width} zIndex={10} flexDirection="column" border borderStyle="rounded" borderColor={colors.borderFocused} backgroundColor={colors.panel}>
-      <box paddingLeft={1} paddingRight={1} height={1} flexDirection="row">
-        <text fg={colors.accent}>{"› "}</text>
-        <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.panel} focusedBackgroundColor={colors.panel} />
+    <box position="absolute" top={2} left={Math.floor((props.width - width) / 2)} width={width} zIndex={10} flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1} backgroundColor={colors.panel}>
+      <box border={["left"]} customBorderChars={BAR} borderColor={colors.accent} backgroundColor={colors.element} height={1} flexDirection="row" flexShrink={0}>
+        <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.element} focusedBackgroundColor={colors.element} />
       </box>
-      {props.status ? <text fg={colors.muted} paddingLeft={1}>{props.status}</text> : null}
-      <box border={["top"]} borderColor={colors.border} flexDirection="column" height={listHeight + 1} onMouseScroll={(event: MouseEvent) => { const step = wheelStep(event); if (step) props.onMove(step); }}>
-        {rows.length === 0 ? <text fg={colors.muted} paddingLeft={1}>No matches</text> : null}
+      {props.status ? <text fg={colors.muted}>{props.status}</text> : null}
+      <box flexDirection="column" height={listHeight} marginTop={1} onMouseScroll={(event: MouseEvent) => { const step = wheelStep(event); if (step) props.onMove(step); }}>
+        {rows.length === 0 ? <text fg={colors.muted}>No matches</text> : null}
         {rows.slice(start, start + listHeight).map((row) =>
           row.kind === "header" ? (
-            <text key={row.key} fg={colors.faint} paddingLeft={1}>
-              {row.label}
+            <text key={row.key} fg={colors.faint}>
+              <strong>{row.label}</strong>
             </text>
           ) : (
             <Row key={entryKey(row.entry)} entry={row.entry} selected={row.index === props.selected} inner={inner} onPick={() => props.onPick(row.index)} />
@@ -64,7 +64,8 @@ function Row(props: { readonly entry: PaletteEntry; readonly selected: boolean; 
   const right = entry.kind === "command" ? (entry.command.shortcut ?? "") : entry.project;
   const title = entry.kind === "command" ? entry.command.title : `${entry.subagent ? "↳ " : ""}${entry.snippet ? truncate(entry.title, Math.max(12, Math.floor(props.inner / 3))) : entry.title}${entry.snippet ? ` — ${entry.snippet}` : ""}`;
   return (
-    <ClickRow flexDirection="row" paddingLeft={1} paddingRight={1} selected={props.selected} onPress={props.onPick}>
+    <ClickRow flexDirection="row" selected={props.selected} onPress={props.onPick}>
+      <text fg={colors.accent} flexShrink={0} selectable={false}>{props.selected ? "▌" : " "}</text>
       <text fg={props.selected ? colors.text : entry.kind === "command" ? colors.text : colors.muted}>{truncate(title, props.inner - right.length - 2)}</text>
       <box flexGrow={1} />
       <text fg={colors.faint}>{right}</text>

@@ -25,16 +25,20 @@ export function DetailsPanel(props: {
   readonly empty?: string;
 }) {
   const { details } = props;
-  // In place of the conversation it sits beside the thread list's border and needs none of its own.
   const width = props.inPlace ? Math.min(props.width, IN_PLACE_MAX_WIDTH) : props.width;
-  const inner = Math.max(10, width - (props.inPlace ? 3 : 4));
+  // A column of padding on each side, and one more for the scrollbox's scrollbar.
+  const inner = Math.max(10, width - 3);
   return (
     <box
-      {...(props.inPlace ? {} : { border: ["left"] as const, borderColor: props.selected ? colors.borderFocused : colors.border })}
       width={width}
-      flexShrink={0}
+      // In place of the conversation the panel must take its column's height, or its
+      // scrollbox grows with its content and spills over the composer below.
+      flexGrow={props.inPlace ? 1 : 0}
+      flexShrink={props.inPlace ? 1 : 0}
+      minHeight={0}
       flexDirection="column"
       overflow="hidden"
+      backgroundColor={colors.panel}
     >
       <scrollbox flexGrow={1} minHeight={0} paddingLeft={1} paddingRight={1}>
         {!details ? <text fg={colors.faint}>{props.empty ?? "No thread selected."}</text> : <Sections details={details} inner={inner} loading={props.loading} selected={props.selected} onActivate={props.onActivate} />}
@@ -55,7 +59,7 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
   return (
     <>
       <Section title="Workspace" first>
-        <text fg={colors.text}>{startTruncate(workspace.path, inner)}</text>
+        <text fg={colors.muted}>{startTruncate(workspace.path, inner)}</text>
         {workspace.worktree ? <text fg={colors.faint}>worktree</text> : null}
         <text fg={colors.muted}>{truncate(workspace.model, inner)}</text>
         {workspace.mode ? <text fg={colors.muted}>{truncate(workspace.mode, inner)}</text> : null}
@@ -64,14 +68,14 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
       {branch ? (
         <Section title="Branch">
           <box flexDirection="row">
-            <text fg={colors.text}>{truncate(branch.name, inner - (branch.upstream?.length ?? 0) - 1)}</text>
+            <text fg={colors.muted}>{truncate(branch.name, inner - (branch.upstream?.length ?? 0) - 1)}</text>
             <box flexGrow={1} />
             <text fg={colors.faint}>{branch.upstream ?? ""}</text>
           </box>
           {branch.pullRequest ? (
             <>
               <box flexDirection="row">
-                <text fg={colors.text}>{`PR #${branch.pullRequest.number}  `}</text>
+                <text fg={colors.muted}>{`PR #${branch.pullRequest.number}  `}</text>
                 <text fg={statusColor(branch.pullRequest.tone)}>{branch.pullRequest.state}</text>
                 <box flexGrow={1} />
                 {branch.pullRequest.checks ? <text fg={statusColor(branch.pullRequest.checks.tone)}>{branch.pullRequest.checks.text}</text> : null}
@@ -135,7 +139,7 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
           {details.automations.map((automation) => (
             <Selectable key={automation.task.id} id={`automation:${automation.task.id}`} {...line} inner={inner}>
               <box flexDirection="column">
-                <text fg={colors.text}>{truncate(automation.task.title, inner)}</text>
+                <text fg={colors.muted}>{truncate(automation.task.title, inner)}</text>
                 <box flexDirection="row">
                   <text fg={colors.faint}>{truncate(automation.schedule, inner - automation.status.length - 1)}</text>
                   <box flexGrow={1} />
@@ -157,7 +161,7 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
 
       {details.goal ? (
         <Section title="Goal">
-          <text fg={colors.text}>{details.goal.objective}</text>
+          <text fg={colors.muted}>{details.goal.objective}</text>
           <text fg={statusColor(details.goal.tone)}>{details.goal.status}</text>
         </Section>
       ) : null}
@@ -165,12 +169,17 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
   );
 }
 
-/** A line that does something: highlighted when selected, activated by a click. */
+/**
+ * A line that does something: highlighted when selected, activated by a click. The negative
+ * margins pull the row over the panel's padding, so the selection bar sits at the panel's
+ * edge and its background runs the full width, as in the thread list.
+ */
 function Selectable(props: LineProps & { readonly id: DetailsAction["id"]; readonly inner: number; readonly text?: string; readonly color?: string; readonly children?: ReactNode }) {
   const active = props.selected === props.id;
   return (
-    <ClickRow selected={active} onPress={() => props.onActivate(props.id)}>
-      {props.children ?? <text fg={active ? colors.text : (props.color ?? colors.muted)}>{truncate(props.text ?? "", props.inner)}</text>}
+    <ClickRow flexDirection="row" marginLeft={-1} marginRight={-1} paddingRight={1} selected={active} onPress={() => props.onActivate(props.id)}>
+      <text fg={colors.accent} flexShrink={0} selectable={false}>{active ? "▌" : " "}</text>
+      {props.children ? <box flexGrow={1} flexDirection="column">{props.children}</box> : <text fg={active ? colors.text : (props.color ?? colors.muted)}>{truncate(props.text ?? "", props.inner)}</text>}
     </ClickRow>
   );
 }
@@ -179,7 +188,7 @@ function Section(props: { readonly title: string; readonly right?: ReactNode; re
   return (
     <box flexDirection="column" marginTop={props.first ? 0 : 1} flexShrink={0}>
       <box flexDirection="row">
-        <text fg={colors.muted}>
+        <text fg={colors.text}>
           <strong>{props.title}</strong>
         </text>
         <box flexGrow={1} />

@@ -24,31 +24,40 @@ export function SettingsView(props: {
         <box flexGrow={1} />
         <text fg={colors.faint}>esc close</text>
       </box>
-      <text fg={colors.faint} marginTop={1}>{`tui3 · ${props.path}`}</text>
+      <text fg={colors.text} marginTop={1}>
+        <strong>{`tui3 · ${props.path}`}</strong>
+      </text>
       {props.rows.map((row, index) => {
         const selected = index === props.selected;
         return (
           <ClickRow key={row.key} flexDirection="row" height={1} selected={selected} onPress={() => props.onCycle(index)}>
-            <text fg={colors.muted} flexShrink={0}>{`${selected ? "▸ " : "  "}${row.label.padEnd(labelWidth)}`}</text>
-            <text fg={colors.text} flexShrink={0}>{row.value}</text>
+            <text fg={colors.accent} flexShrink={0} selectable={false}>{selected ? "▌" : " "}</text>
+            <text fg={colors.muted} flexShrink={0}>{` ${row.label.padEnd(labelWidth)}`}</text>
+            <text fg={selected ? colors.text : colors.muted} flexShrink={0}>{row.value}</text>
             <text fg={colors.faint} wrapMode="none">{`  ${row.help}`}</text>
           </ClickRow>
         );
       })}
-      <text fg={colors.faint} marginTop={1}>T3 Code · change these in the app</text>
+      <text fg={colors.text} marginTop={1}>
+        <strong>T3 Code · change these in the app</strong>
+      </text>
       {props.serverStatus === "loading" ? <text fg={colors.muted}>  Loading…</text> : null}
       {props.serverStatus === "error" ? <text fg={colors.bad}>  Could not read the server's settings.</text> : null}
       {props.server.map((line) => (
         <box key={line.label} flexDirection="row" height={1}>
           <text fg={colors.muted} flexShrink={0}>{`  ${line.label.padEnd(labelWidth)}`}</text>
-          <text fg={colors.text}>{line.value}</text>
+          <text fg={colors.muted}>{line.value}</text>
         </box>
       ))}
-      {usage.length > 0 ? <text fg={colors.faint} marginTop={1}>Usage</text> : null}
+      {usage.length > 0 ? (
+        <text fg={colors.text} marginTop={1}>
+          <strong>Usage</strong>
+        </text>
+      ) : null}
       {usage.map((line) => (
         <box key={`${line.label}:${line.value}`} flexDirection="row" height={1}>
           <text fg={colors.muted} flexShrink={0}>{`  ${line.label.padEnd(labelWidth)}`}</text>
-          <text fg={colors.text}>{line.value}</text>
+          <text fg={colors.muted}>{line.value}</text>
         </box>
       ))}
     </box>
