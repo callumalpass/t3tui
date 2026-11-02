@@ -39,13 +39,14 @@ import {
 } from "../model/pullRequests.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import { editInEditor } from "./editor.ts";
-import { copyText } from "./terminalOut.ts";
+import type { Clipboard } from "./clipboard.ts";
 import { firstLine } from "./text.ts";
 import type { PullRequestViewState } from "./PullRequestView.tsx";
 
 export interface PullRequestDeps {
   readonly session: T3Session;
   readonly renderer: CliRenderer;
+  readonly clipboard: Clipboard;
   readonly threadShell: OrchestrationV2ThreadShell | undefined;
   readonly project: OrchestrationProjectShell | undefined;
   readonly projects: readonly OrchestrationProjectShell[];
@@ -162,7 +163,7 @@ export function usePullRequests(deps: PullRequestDeps) {
     if (!url) return;
     // Over SSH or without a desktop there may be no browser to open: copy the link instead.
     const fallBack = (reason: string) => {
-      copyText(deps.renderer, url);
+      void deps.clipboard.copy(url);
       deps.say(`Could not open the browser (${reason}); link copied: ${url}`, true);
     };
     try {

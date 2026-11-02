@@ -47,7 +47,7 @@ import { SettingsView } from "./SettingsView.tsx";
 import { useWorkspace } from "./useWorkspace.ts";
 import { usePullRequests } from "./usePullRequests.ts";
 import { rendererClipboard, type Clipboard } from "./clipboard.ts";
-import { copyText, desktopNotify, ring } from "./terminalOut.ts";
+import { desktopNotify, ring } from "./terminalOut.ts";
 import { colors, statusColor } from "./theme.ts";
 import { BAR, NO_BORDER } from "./edges.ts";
 import { ThreadList } from "./ThreadList.tsx";
@@ -356,8 +356,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const copySelection = useEvent((selection: Selection) => {
     const text = selection.getSelectedText();
     if (!text.trim()) return;
-    copyText(renderer, text);
-    say(`Copied ${text.length === 1 ? "1 character" : `${text.length} characters`}`);
+    void clipboard.copy(text).then((copied) => (copied ? say("Copied") : say("Could not reach the clipboard.", true)));
   });
   useEffect(() => {
     renderer.on("selection", copySelection);
@@ -505,7 +504,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const runtimeMode = models.runtimeMode;
   const threadMenu = useThreadMenu({
     session,
-    renderer,
+    clipboard,
     snapshot: shell.snapshot,
     config: providerConfig,
     timestampFormat: config.timestampFormat,
@@ -725,6 +724,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const pullRequests = usePullRequests({
     session,
     renderer,
+    clipboard,
     threadShell,
     project: draft ? draftProject : project,
     projects: shell.snapshot?.projects ?? [],
@@ -1027,7 +1027,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
   };
   const copy = (label: string, text: string) => {
-    copyText(renderer, text);
+    void clipboard.copy(text);
     say(`Copied ${label}`);
   };
   /** Long output stays on the server until it's asked for. */

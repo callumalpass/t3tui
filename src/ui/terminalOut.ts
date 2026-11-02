@@ -1,5 +1,4 @@
-/** Escape sequences t3tui writes past the renderer: the bell, desktop notifications, the clipboard. */
-import type { CliRenderer } from "@opentui/core";
+/** Escape sequences t3tui writes past the renderer: the bell and desktop notifications. */
 
 /** Inside tmux, escape sequences other than the bell need passthrough to reach the outer terminal. */
 function passthrough(sequence: string): string {
@@ -24,27 +23,4 @@ export function desktopNotify(title: string, body: string): void {
     ? `\x1b]99;i=t3tui:d=0;${clean(title)}\x1b\\\x1b]99;i=t3tui:p=body;${clean(body)}\x1b\\`
     : `\x1b]9;${clean(title)}: ${clean(body)}\x07`;
   process.stdout.write(passthrough(sequence));
-}
-
-/**
- * Copies text: through the terminal (OSC 52, which also works over SSH), and on a local
- * desktop through its clipboard tool too, for terminals that ignore OSC 52.
- */
-export function copyText(renderer: CliRenderer, text: string): void {
-  try {
-    renderer.copyToClipboardOSC52(text);
-  } catch {
-    // OpenTUI refuses when it isn't drawing (suspended, or a test renderer); the tool may still copy.
-  }
-  if (process.env.SSH_CONNECTION) return;
-  const tool =
-    process.platform === "darwin" ? ["pbcopy"] : process.env.WAYLAND_DISPLAY ? ["wl-copy"] : process.env.DISPLAY ? ["xclip", "-selection", "clipboard"] : null;
-  if (!tool || !Bun.which(tool[0]!)) return;
-  try {
-    const child = Bun.spawn(tool, { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
-    child.stdin.write(text);
-    void child.stdin.end();
-  } catch {
-    // OSC 52 already went out; the tool is a fallback.
-  }
 }

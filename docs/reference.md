@@ -114,7 +114,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 
 ## Mouse
 
-- **Select and copy:** drag across any text to select it; it's copied when you let go (through the terminal with OSC 52, and the desktop clipboard locally). A key press clears the highlight. Your terminal's own selection still works with shift held.
+- **Select and copy:** drag across any text, in the conversation or the terminal pane, to select it; it's copied when you let go (through the terminal with OSC 52, and the desktop clipboard locally) and `Copied` shows at the bottom. A program in the pane that takes the mouse itself, like an editor with mouse support, gets the drag instead. A single click still does what it did. A key press clears the highlight. Your terminal's own selection still works with shift held.
 - **Buttons:** approvals, questions (click an option), secret requests, confirmations, queued messages (click one to send it now, edit or remove it), attached files (✕ removes one) and the PR view have buttons, each with its key beside it. Every hint along the bottom that names one key is clickable, and so is `commands` at the top.
 - **Conversation:** a click on a prompt selects that turn, as `[`/`]` do; a click on a folded turn or work group opens just that one; a click on a command shows its output; "Load earlier turns" loads them. In a diff, a click on a file selects it and a second click shows the whole file. In the PR view, the URL opens in the browser.
 - **Right-click menus:** on a thread (its actions), a prompt (copy, view its changes, revert), a reply (copy), a command (copy the command or its output) and the PR view (its actions).
