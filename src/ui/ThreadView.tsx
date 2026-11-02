@@ -13,6 +13,7 @@ import { CommandOutput } from "./CommandOutput.tsx";
 import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
+import { firstLine } from "./text.ts";
 import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
 
 /** What a right-click in the conversation was on. */
@@ -336,9 +337,4 @@ function glyphFor(entry: WorkLogEntry): string {
   if (entry.itemType === "file_search" || entry.itemType === "web_search") return "⌕";
   if (entry.itemType === "todo_list") return "☐";
   return "·";
-}
-
-function firstLine(text: string): string {
-  const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
-  return line.length > 200 ? `${line.slice(0, 197)}…` : line;
 }

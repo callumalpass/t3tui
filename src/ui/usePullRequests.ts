@@ -38,6 +38,7 @@ import {
 } from "../model/pullRequests.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
 import { editInEditor } from "./editor.ts";
+import { firstLine } from "./text.ts";
 import type { PullRequestViewState } from "./PullRequestView.tsx";
 
 export interface PullRequestDeps {
@@ -472,11 +473,6 @@ function preferredMergeMethod(config: ServerConfig, projectId: ProjectId) {
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-function firstLine(text: string): string {
-  const line = (text.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
-  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
-}
 
 /**
  * The composer's `#` search, debounced as the web's (180ms): the recent list (host-searched for
