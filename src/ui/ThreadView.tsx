@@ -1,6 +1,5 @@
 import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
 import type { ThreadId, TurnItemId } from "@t3tools/contracts";
-import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, useEffect, useState, type RefObject } from "react";
 import { findTextSegments } from "../model/search.ts";
@@ -84,8 +83,6 @@ export function ThreadView(props: {
             activeOccurrence={props.findMatch?.entryId === row.id ? props.findMatch.occurrence : null}
             workspaceRoot={props.workspaceRoot}
             footer={assistantFooter(row, timeline, props.timestampFormat, props.now)}
-            now={row.kind === "working" ? props.now : 0}
-            workStartedAt={timeline.workStartedAt}
             onOpenThread={props.onOpenThread}
             mouse={props.mouse}
           />
@@ -144,8 +141,7 @@ function Divider({ label, color, onPress }: { readonly label: string; readonly c
 
 /**
  * Memoized: computeStableMessagesTimelineRows keeps unchanged rows identical,
- * so a streamed update re-renders only its own rows. `now` is nonzero only for
- * the working row, which ticks.
+ * so a streamed update re-renders only its own rows.
  */
 const Row = memo(function Row(props: {
   readonly row: MessagesTimelineRow;
@@ -158,8 +154,6 @@ const Row = memo(function Row(props: {
   readonly workspaceRoot: string | undefined;
   /** The turn footer's text for this row, or "" for none. */
   readonly footer: string;
-  readonly now: number;
-  readonly workStartedAt: string | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly mouse: ConversationMouse;
 }) {
@@ -219,18 +213,10 @@ const Row = memo(function Row(props: {
           <WorkEntry entry={row.entry} expanded={row.expanded} label={liveWorkEntryLabel(row.entry, workspaceRoot, row.active)} onOpenThread={props.onOpenThread} onMenu={mouse.menu} session={props.session} streamCommandOutput={props.streamCommandOutput} scrollRef={props.scrollRef} />
         </box>
       );
-    case "working": {
-      const since = props.workStartedAt ? Date.parse(props.workStartedAt) : NaN;
-      const verb = row.compacting ? "Compacting" : "Working";
-      return (
-        <text marginTop={1} fg={colors.muted}>
-          <span fg={colors.info}>◐</span>
-          {Number.isFinite(since) ? ` ${verb} for ${formatWorkingDurationLabel(props.now - since)}` : ` ${verb}…`}
-        </text>
-      );
-    }
+    case "working":
     case "thinking":
-      return <text marginTop={1} fg={colors.faint}>∴ Thinking…</text>;
+      // The live status line above the composer carries these now.
+      return null;
     case "context-compaction":
       return <Divider label={row.failed ? `${row.title ?? "Compaction failed"}${row.failure ? `: ${row.failure}` : ""}` : (row.title ?? row.label)} color={row.failed ? colors.bad : colors.faint} />;
     case "proposed-plan":

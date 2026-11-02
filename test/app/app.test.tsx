@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion } from "./fixtures.ts";
+import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion, withWorking } from "./fixtures.ts";
 import { loadLayout } from "../../src/layout.ts";
 import { fakeSession, renderApp, v2ThreadId } from "./harness.tsx";
 
@@ -160,6 +160,23 @@ describe("a finished turn", () => {
     const app = await open({ session: fakeSession({ projection: withCompletedTurn() }) });
     // The date half is locale- and timezone-shaped; the model and duration are not.
     expect(app.frame()).toMatch(/gpt-5\.4 · 3m 12s · /);
+  });
+});
+
+describe("live status", () => {
+  test("while working, one status line sits above the composer and none in the timeline", async () => {
+    const app = await open({ session: fakeSession({ projection: withWorking() }) });
+    const frame = app.frame();
+    expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working for /);
+    expect(frame.split("Working for")).toHaveLength(2);
+    expect(frame).not.toContain("◐");
+    const lines = frame.split("\n");
+    const status = lines.findIndex((line) => line.includes("Working for"));
+    const composer = lines.findIndex((line) => line.includes("Press i to type"));
+    expect(status).toBeGreaterThan(-1);
+    expect(status).toBeLessThan(composer);
+    // The live tool itself stays a timeline row.
+    expect(frame).toContain("Running bun");
   });
 });
 

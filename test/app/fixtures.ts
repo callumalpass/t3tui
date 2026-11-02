@@ -130,6 +130,35 @@ export function withCompletedTurn(): OrchestrationV2ThreadProjection {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
+/** A thread mid-run, with a command under way. */
+export function withWorking(): OrchestrationV2ThreadProjection {
+  const base = {
+    threadId: v2Projection.thread.id,
+    runId: "run-1",
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    title: null,
+  };
+  const turnItems = [
+    { ...base, id: "item-user", ordinal: 0, status: "completed", startedAt: at, completedAt: at, updatedAt: at, type: "user_message", createdBy: "user", creationSource: "web", messageId: "msg-user-1", inputIntent: "turn_start", text: "Run the tests", attachments: [] },
+    { ...base, id: "item-cmd", ordinal: 1, status: "running", startedAt: after(10), completedAt: null, updatedAt: after(10), type: "command_execution", input: "bun test", output: "" },
+  ];
+  return {
+    ...v2Projection,
+    runs: [
+      { id: "run-1", threadId: v2Projection.thread.id, ordinal: 1, providerInstanceId: "codex", modelSelection: { instanceId: "codex", model: "gpt-5.4" }, providerThreadId: null, userMessageId: "msg-user-1", rootNodeId: null, activeAttemptId: null, status: "running", requestedAt: at, startedAt: at, completedAt: null, checkpointId: null, contextHandoffId: null },
+    ],
+    messages: [
+      { createdBy: "user", creationSource: "web", id: "msg-user-1", threadId: v2Projection.thread.id, runId: "run-1", nodeId: null, role: "user", text: "Run the tests", attachments: [], streaming: false, createdAt: at, updatedAt: at },
+    ],
+    turnItems,
+    visibleTurnItems: turnItems.map((item, position) => ({ position, visibility: "local", sourceThreadId: v2Projection.thread.id, sourceItemId: item.id, item })),
+  } as unknown as OrchestrationV2ThreadProjection;
+}
+
 export function withOmittedOutput(): OrchestrationV2ThreadProjection {
   return {
     ...v2Projection,
