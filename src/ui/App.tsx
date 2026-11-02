@@ -2,7 +2,7 @@ import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRend
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
-import { type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,7 +12,7 @@ import { createAlerts, type Alert } from "../model/alerts.ts";
 import { modelSummary } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { RUNTIME_MODE_LABELS } from "../model/details.ts";
-import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type Picker, type PickerItem } from "../model/palette.ts";
+import { paletteEntries, paletteGroups, pickerGroups, type Picker, type PickerItem } from "../model/palette.ts";
 import { pullRequestRepository } from "../model/pullRequests.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { resetCreditOutcome, usageLimits, usageSummaryLines } from "../model/usage.ts";
@@ -387,7 +387,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   });
   const usage = useUsageSummary(session, settingsIndex !== null && live);
   const usageInfo = useMemo(() => usageLimits(serverConfig?.config ?? null, now), [serverConfig, now]);
-  const useResetCredit = (credit: (typeof usageInfo.credits)[number]) =>
+  const spendResetCredit = (credit: (typeof usageInfo.credits)[number]) =>
     confirm({
       title: "Use a reset credit?",
       detail: "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
@@ -739,7 +739,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     (projection?.subagents ?? []).filter((agent) => threadId && canStopSubagent(agent)).map((agent): Binding => ({ keys: [], run: () => run("Stop requested", () => session.stopSubagent(agent)), command: { id: `stop-subagent:${agent.id}`, title: `Stop subagent: ${agent.title ?? "subagent"}`, keywords: ["interrupt", "cancel", "kill"] } })),
     panel.keys.commands,
     { keys: [], run: automationEditing.newAutomation, command: { id: "new-automation", title: "New automation", keywords: ["scheduled", "task", "create", "editor"] } },
-    usageInfo.credits.map((credit, index): Binding => ({ keys: [], run: () => useResetCredit(credit), command: { id: `reset-credit:${index}`, title: `Use reset credit: ${credit.label}`, keywords: ["usage", "limit", "reset", "credit"] } })),
+    usageInfo.credits.map((credit, index): Binding => ({ keys: [], run: () => spendResetCredit(credit), command: { id: `reset-credit:${index}`, title: `Use reset credit: ${credit.label}`, keywords: ["usage", "limit", "reset", "credit"] } })),
     // The PR view's keys are its own; the palette shows them without taking them here.
     pullRequests.commands.map((command): Binding => ({ ...fromCommand(command), keys: [], ...(command.shortcut ? { label: command.shortcut } : {}) })),
     { keys: [], run: openSettings, command: { id: "settings", title: "Settings", keywords: ["preferences", "config", "options", "notifications", "alerts"] } },

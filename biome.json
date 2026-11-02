@@ -18,19 +18,5 @@
         "noArrayIndexKey": "off"
       }
     }
-  },
-  "overrides": [
-    {
-      "includes": [
-        "src/ui/App.tsx",
-        "src/model/hints.ts",
-        "src/ui/HintBar.tsx",
-        "src/ui/Palette.tsx",
-        "src/model/palette.ts"
-      ],
-      "linter": {
-        "enabled": false
-      }
-    }
-  ]
+  }
 }
