@@ -18,7 +18,7 @@ function glyphFor(row: ThreadRow) {
 export function ThreadList(props: { readonly rows: readonly ThreadRow[]; readonly selected: number; readonly focused: boolean; readonly width: number; readonly height: number; readonly filter: string }) {
   const { rows, selected, focused, width, height } = props;
   // Rows take two lines and up to three group headers take one each; keep the selection in view.
-  const visibleCount = Math.max(1, Math.floor((height - 2 - 3) / 2));
+  const visibleCount = Math.max(1, Math.floor((height - 3) / 2));
   const start = Math.max(0, Math.min(selected - Math.floor(visibleCount / 2), rows.length - visibleCount));
   const windowRows = rows.slice(start, start + visibleCount);
   const titleWidth = Math.max(8, width - 12);
@@ -50,15 +50,15 @@ export function ThreadList(props: { readonly rows: readonly ThreadRow[]; readonl
   });
   return (
     <box
-      title={props.filter ? ` threads /${props.filter} ` : " threads "}
-      border
-      borderColor={focused ? colors.borderFocused : colors.border}
+      border={["right"]}
+      borderColor={colors.border}
       width={width}
       flexShrink={0}
       overflow="hidden"
       flexDirection="column"
       paddingLeft={0}
     >
+      {props.filter ? <text fg={colors.accent}>{` /${props.filter}`}</text> : null}
       {rows.length === 0 ? <text fg={colors.muted}> no threads</text> : lines}
     </box>
   );

@@ -10,6 +10,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
+import { appendFileSync } from "node:fs";
+
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -38,6 +40,25 @@ export interface ThreadState {
 
 type Listener<T> = (value: T) => void;
 
+/** Streaming deltas arrive far faster than a terminal can usefully redraw. */
+const THREAD_NOTIFY_MS = 33;
+/** Threads you leave stay subscribed this long, so switching back is instant. */
+const THREAD_LINGER_MS = 60_000;
+
+const debugPath = process.env.TUI3_DEBUG;
+/** Appends to the file named by TUI3_DEBUG; the TUI owns stdout and stderr. */
+export function debugLog(message: string): void {
+  if (debugPath) appendFileSync(debugPath, `${new Date().toISOString()} ${message}\n`);
+}
+
+interface ThreadEntry {
+  state: ThreadState;
+  readonly listeners: Set<Listener<ThreadState>>;
+  fiber: Fiber.Fiber<unknown, unknown> | null;
+  notifyTimer: ReturnType<typeof setTimeout> | null;
+  lingerTimer: ReturnType<typeof setTimeout> | null;
+}
+
 /**
  * One connection to T3 Code: a live shell (projects and threads) plus on-demand
  * thread subscriptions, exposed as plain listeners for the UI.
@@ -47,7 +68,7 @@ export class T3Session {
   private connection: Connection | null = null;
   private shell: ShellState = { status: { type: "connecting" }, snapshot: null, serverUrl: null };
   private readonly shellListeners = new Set<Listener<ShellState>>();
-  private readonly threads = new Map<ThreadId, { state: ThreadState; listeners: Set<Listener<ThreadState>>; fiber: Fiber.Fiber<unknown, unknown> | null }>();
+  private readonly threads = new Map<ThreadId, ThreadEntry>();
 
   async start(): Promise<void> {
     const scope = Effect.runSync(Scope.make());
@@ -78,24 +99,33 @@ export class T3Session {
     return () => this.shellListeners.delete(listener);
   }
 
-  /** Subscribes to one thread's live projection; the stream stops when the last listener leaves. */
+  /**
+   * Subscribes to one thread's live projection. The stream outlives its last
+   * listener by THREAD_LINGER_MS, so flipping between threads doesn't reload them.
+   */
   watchThread(threadId: ThreadId, listener: Listener<ThreadState>): () => void {
     let entry = this.threads.get(threadId);
     if (!entry) {
-      entry = { state: { status: "loading", projection: null }, listeners: new Set(), fiber: null };
+      entry = { state: { status: "loading", projection: null }, listeners: new Set(), fiber: null, notifyTimer: null, lingerTimer: null };
       this.threads.set(threadId, entry);
       entry.fiber = this.runInScope(this.threadStream(threadId));
+      debugLog(`subscribe ${threadId}`);
     }
+    if (entry.lingerTimer) clearTimeout(entry.lingerTimer);
+    entry.lingerTimer = null;
     entry.listeners.add(listener);
     listener(entry.state);
+    const watched = entry;
     return () => {
-      const current = this.threads.get(threadId);
-      if (!current) return;
-      current.listeners.delete(listener);
-      if (current.listeners.size === 0) {
+      watched.listeners.delete(listener);
+      if (watched.listeners.size > 0) return;
+      watched.lingerTimer = setTimeout(() => {
+        if (watched.listeners.size > 0 || this.threads.get(threadId) !== watched) return;
         this.threads.delete(threadId);
-        if (current.fiber) Effect.runFork(Fiber.interrupt(current.fiber));
-      }
+        debugLog(`unsubscribe ${threadId}`);
+        if (watched.notifyTimer) clearTimeout(watched.notifyTimer);
+        if (watched.fiber) Effect.runFork(Fiber.interrupt(watched.fiber));
+      }, THREAD_LINGER_MS);
     };
   }
 
@@ -172,6 +202,7 @@ export class T3Session {
               this.setThread(threadId, { status: "live" });
               return;
             case "snapshot":
+              debugLog(`snapshot ${threadId} items=${item.projection.visibleTurnItems.length}`);
               this.setThread(threadId, { projection: item.projection });
               return;
             case "event":
@@ -202,11 +233,20 @@ export class T3Session {
     for (const listener of this.shellListeners) listener(this.shell);
   }
 
+  /** Applies the patch now but tells listeners at most once per THREAD_NOTIFY_MS. */
   private setThread(threadId: ThreadId, patch: Partial<ThreadState>): void {
     const entry = this.threads.get(threadId);
     if (!entry) return;
     entry.state = { ...entry.state, ...patch };
-    for (const listener of entry.listeners) listener(entry.state);
+    if (entry.notifyTimer) return;
+    // The first snapshot and status changes show at once; streamed events batch.
+    const immediate = patch.status !== undefined || entry.state.status === "loading";
+    const notify = () => {
+      entry.notifyTimer = null;
+      for (const listener of entry.listeners) listener(entry.state);
+    };
+    if (immediate) notify();
+    else entry.notifyTimer = setTimeout(notify, THREAD_NOTIFY_MS);
   }
 }
 

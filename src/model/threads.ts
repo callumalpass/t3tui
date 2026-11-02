@@ -35,6 +35,19 @@ export function lastActivity(thread: OrchestrationV2ThreadShell): number {
   return DateTime.toEpochMillis(thread.updatedAt);
 }
 
+const millis = (value: DateTime.Utc | null | undefined) => (value ? DateTime.toEpochMillis(value) : 0);
+
+/**
+ * Sort key within a group. Active threads update every second while they
+ * stream, so they sort by something that holds still: when they started
+ * waiting on you, or when their run began.
+ */
+export function sortKey(thread: OrchestrationV2ThreadShell, group: ThreadGroup): number {
+  if (group === "needs-you") return millis(thread.pendingRuntimeRequest?.createdAt) || millis(thread.createdAt);
+  if (group === "running") return millis(thread.latestRunStartedAt) || millis(thread.latestRunRequestedAt) || millis(thread.createdAt);
+  return lastActivity(thread);
+}
+
 /** Threads in display order: the ones waiting on you, then running, then the most recent. */
 export function threadRows(snapshot: OrchestrationV2ShellSnapshot | null, options: { readonly recentLimit?: number; readonly query?: string } = {}): ThreadRow[] {
   if (!snapshot) return [];
@@ -44,7 +57,7 @@ export function threadRows(snapshot: OrchestrationV2ShellSnapshot | null, option
   const rows = snapshot.threads
     .map((thread) => ({ thread, group: groupOf(thread), projectName: projectLabel(projects.get(thread.projectId)) }))
     .filter((row) => !query || row.thread.title.toLowerCase().includes(query) || row.projectName.toLowerCase().includes(query))
-    .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || lastActivity(b.thread) - lastActivity(a.thread));
+    .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || sortKey(b.thread, b.group) - sortKey(a.thread, a.group) || a.thread.id.localeCompare(b.thread.id));
   const limit = options.recentLimit ?? 60;
   let recent = 0;
   return rows.filter((row) => row.group !== "recent" || recent++ < limit);

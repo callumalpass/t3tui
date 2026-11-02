@@ -21,19 +21,31 @@ tui3 list [--json]    # print threads and exit
 tui3 tmux [--watch]   # mirror active threads into a tmux session, one window each
 ```
 
-Dashboard keys:
+The message box is always at the bottom. tui3 has two modes: **typing**, where keys go to the message box, and **navigation**, where single keys act. `esc` switches to navigation; `i`, `enter` or `tab` switch back. Drafts are kept per thread.
+
+Any mode:
 
 | Key | Action |
 | --- | --- |
-| `j`/`k`, arrows | move in the list, or scroll the thread |
-| `enter`/`tab`, `esc` | switch between list and thread |
-| `/` | filter threads by title or project |
-| `i` | message the thread (queued after the current run) |
+| `ctrl+n` / `ctrl+p` (or `alt+↓`/`alt+↑`) | next / previous thread |
+| `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation |
+| `ctrl+c` | quit |
+
+Typing: `enter` sends (queued after the current run if the thread is busy), `shift+enter` or `ctrl+j` adds a newline.
+
+Navigation:
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, arrows | next / previous thread (scroll, in `attach`) |
 | `y` / `Y` / `n` | accept / accept for session / decline the pending approval |
+| `e` | expand folded work and long messages |
+| `/` | filter threads by title or project |
 | `S` | stop the thread |
-| `r` | show full reasoning |
-| `g` / `G` | top / bottom of the thread |
-| `q`, `ctrl+c` | quit |
+| `g` / `G` | top / bottom of the conversation |
+| `q` | quit |
+
+The conversation shows your messages and the agent's replies; each run of tool calls and reasoning between them folds into one summary line (`▸ 5 commands · 3 edits`), with the latest step shown while it's running.
 
 Threads are grouped into **Needs you** (waiting on an approval), **Running**, and **Recent**.
 
@@ -42,6 +54,8 @@ Threads are grouped into **Needs you** (waiting on an approval), **Running**, an
 - It finds the local server from `~/.t3/userdata/server-runtime.json` (override with `TUI3_SERVER`).
 - On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read` and `orchestration:operate`, and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. For a remote server, pass a token in `TUI3_TOKEN`.
 - It speaks T3 Code's own WebSocket RPC protocol, typed by upstream's `@t3tools/contracts`, and applies thread updates with upstream's own reducers. Both come from `vendor/t3code`, a submodule pinned to the server version this was built against (`v0.1.6-nightly.20261030.3917`).
+
+Set `TUI3_DEBUG=/path/to/log` to log thread subscriptions and snapshots.
 
 ## Updating for a newer T3 Code
 

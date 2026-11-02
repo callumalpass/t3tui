@@ -12,6 +12,7 @@ export const colors = {
   faint: "#545c7e",
   accent: "#7aa2f7",
   user: "#7dcfff",
+  userBg: "#1f2335",
   good: "#9ece6a",
   bad: "#f7768e",
   warn: "#e0af68",
