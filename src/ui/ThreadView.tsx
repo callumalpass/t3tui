@@ -2,6 +2,7 @@ import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
 import type { ThreadId, TurnItemId } from "@t3tools/contracts";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, useEffect, useState, type RefObject } from "react";
+import * as DateTime from "effect/DateTime";
 import { findTextSegments } from "../model/search.ts";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
@@ -69,6 +70,8 @@ export function ThreadView(props: {
       ) : null}
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
+        {/* Prose stops at reading width on wide terminals; the composer below stays full width. */}
+        <box flexDirection="column" maxWidth={100}>
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
         {history?.hasMore || history?.error ? <LoadEarlier history={history} onLoad={props.mouse.loadEarlier} /> : null}
         {timeline?.rows.filter((row) => !isPendingApprovalRow(row, pendingIds)).map((row) => (
@@ -87,6 +90,7 @@ export function ThreadView(props: {
             mouse={props.mouse}
           />
         ))}
+        </box>
       </scrollbox>
     </box>
   );
@@ -181,21 +185,16 @@ const Row = memo(function Row(props: {
       return props.footer ? <text marginTop={1} fg={colors.faint}>{props.footer}</text> : null;
     case "turn-fold":
     case "attempt-fold":
-      // The finished turn's work, folded: the web's turn separator.
+      // The finished turn's work, folded: the web's turn separator, in the work rows' columns.
       return (
         <Toggle onPress={() => mouse.toggleFold(row.kind === "turn-fold" ? row.runId : row.attemptId)}>
-          {(hover) => <text fg={hover ? colors.text : colors.faint} selectable={false}>{`${row.label} ${row.expanded ? "⌄" : "›"}`}</text>}
+          {(hover) => <WorkLine glyph=" " glyphColor={colors.faint} label={`${row.label} ${row.expanded ? "⌄" : "›"}`} labelColor={hover ? colors.text : colors.faint} />}
         </Toggle>
       );
     case "work-toggle":
       return (
         <Toggle onPress={() => mouse.toggleFold(row.groupId)}>
-          {(hover) => (
-            <text fg={hover ? colors.text : colors.muted} selectable={false}>
-              <span fg={row.hasFailure ? colors.bad : hover ? colors.text : colors.faint}>{SUMMARY_GLYPH[row.summaryKind] ?? "•"}</span>
-              {` ${row.summary} ${row.expanded ? "⌄" : "›"}`}
-            </text>
-          )}
+          {(hover) => <WorkLine glyph={SUMMARY_GLYPH[row.summaryKind] ?? "•"} glyphColor={row.hasFailure ? colors.bad : colors.faint} label={`${row.summary} ${row.expanded ? "⌄" : "›"}`} labelColor={hover ? colors.text : colors.muted} />}
         </Toggle>
       );
     case "work":
@@ -312,7 +311,7 @@ function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly
   if (shown.length > USER_FOLD_CHARS) shown = `${shown.slice(0, USER_FOLD_CHARS).trimEnd()}…`;
   const folded = shown.length < trimmed.length;
   return (
-    <box id={`turn-${messageId}`} border={["left"]} customBorderChars={BAR} borderColor={selected ? colors.accent : colors.border} marginTop={1} backgroundColor={hover ? colors.elementHover : colors.element} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu() : isLeftClick(event) ? onSelect() : undefined)}>
+    <box id={`turn-${messageId}`} border={["left"]} customBorderChars={BAR} borderColor={colors.accent} marginTop={1} backgroundColor={hover ? colors.elementHover : selected ? colors.selectedBg : colors.element} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu() : isLeftClick(event) ? onSelect() : undefined)}>
       <text fg={colors.text}>{shown}</text>
       {folded ? <text fg={colors.faint}>{`… ${Math.max(1, lines.length - shown.split("\n").length)} more lines`}</text> : null}
     </box>
@@ -341,6 +340,35 @@ function OmittedOutput({ session, source }: { readonly session: T3Session; reado
   return <text fg={colors.muted}>{state.text || "No output."}</text>;
 }
 
+/** One work/tool line, everywhere the same: glyph, label, result details right-aligned. */
+function WorkLine(props: { readonly glyph: string; readonly glyphColor: string; readonly label: string; readonly labelColor: string; readonly detail?: string; readonly selectable?: boolean }) {
+  return (
+    <box flexDirection="row" width="100%">
+      <text fg={props.glyphColor} flexShrink={0} selectable={false}>{`${props.glyph} `}</text>
+      <text fg={props.labelColor} flexShrink={1} wrapMode="none" selectable={props.selectable ?? false}>{props.label}</text>
+      {props.detail ? (
+        <>
+          <box flexGrow={1} />
+          <text fg={colors.faint} flexShrink={0} selectable={false}>{`  ${props.detail}`}</text>
+        </>
+      ) : null}
+    </box>
+  );
+}
+
+/** What a finished entry can say on the right: a failed exit, an edit's counts, its duration. */
+function workEntryDetail(entry: WorkLogEntry): string {
+  const item = entry.structuredPayload;
+  const parts: string[] = [];
+  if (item?.type === "command_execution" && item.exitCode !== undefined && item.exitCode !== 0) parts.push(`exit ${item.exitCode}`);
+  if (item?.type === "file_change" && (item.additions || item.deletions)) parts.push(`+${item.additions ?? 0} −${item.deletions ?? 0}`);
+  if (item?.startedAt && item.completedAt) {
+    const ms = DateTime.toEpochMillis(item.completedAt) - DateTime.toEpochMillis(item.startedAt);
+    if (ms >= 1_000) parts.push(formatDuration(ms));
+  }
+  return parts.join(" · ");
+}
+
 function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu, session, streamCommandOutput, scrollRef }: { readonly entry: WorkLogEntry; readonly expanded: boolean; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void; readonly onMenu: (target: ConversationTarget) => void; readonly session: T3Session; readonly streamCommandOutput: boolean; readonly scrollRef: RefObject<ScrollBoxRenderable | null> }) {
   const [open, setExpanded] = useState<boolean | null>(null);
   const [hover, hoverProps] = useHover();
@@ -350,19 +378,15 @@ function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu
   const projected = entry.projectedItem;
   const failed = workEntryDisplayIndicatesToolFailure(entry);
   const child = childThreadOf(entry);
-  const glyphColor = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : colors.faint;
+  const glyphColor = failed || entry.tone === "error" ? colors.bad : entry.toolLifecycleStatus === "inProgress" ? colors.info : colors.faint;
   const clickable = Boolean(command || child);
   const labelColor = clickable && hover ? colors.text : entry.tone === "thinking" ? colors.faint : colors.muted;
-  const text = (
-    <text fg={labelColor} selectable={!clickable}>
-      <span fg={clickable && hover ? colors.text : glyphColor}>{failed ? "✕" : glyphFor(entry)}</span>
-      {` ${firstLine(label)}${child ? "  ↗" : ""}`}
-    </text>
-  );
+  const detail = workEntryDetail(entry);
+  const line = (text: string) => <WorkLine glyph={failed ? "✕" : glyphFor(entry)} glyphColor={glyphColor} label={text} labelColor={labelColor} detail={detail} selectable={!clickable} />;
   const source = projected ? { threadId: projected.sourceThreadId, itemId: projected.sourceItemId } : null;
   const streaming = expanded && streamCommandOutput && source !== null;
   if (command) return <box flexDirection="column">
-    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu({ kind: "command", command: command.input, output: command.output ?? "", omitted: command.outputOmitted === true, source }) : isLeftClick(event) ? setExpanded(!expanded) : undefined)}><text fg={colors.faint} selectable={false}>{expanded ? "⌄ " : "› "}</text>{text}</box>
+    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu({ kind: "command", command: command.input, output: command.output ?? "", omitted: command.outputOmitted === true, source }) : isLeftClick(event) ? setExpanded(!expanded) : undefined)}>{line(`${firstLine(label)} ${expanded ? "⌄" : "›"}`)}</box>
     {expanded ? (
       <box border={["left"]} customBorderChars={BAR} borderColor={colors.border} backgroundColor={colors.element} flexDirection="column" marginTop={1} paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
         <text fg={colors.text}>{`$ ${command.input}`}</text>
@@ -374,7 +398,7 @@ function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu
       </box>
     ) : null}
   </box>;
-  return child ? <box {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onOpenThread(child)}>{text}</box> : text;
+  return child ? <box {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onOpenThread(child)}>{line(`${firstLine(label)}  ↗`)}</box> : line(firstLine(label));
 }
 
 /** The thread a subagent work row ran in, when it has its own. */
@@ -391,10 +415,9 @@ function EventRow({ item }: { readonly item: MessagesTimelineRow extends infer R
       return <text marginTop={1} fg={toneColor(block.tone)}>{block.text}</text>;
     case "tool":
       return (
-        <text marginTop={1} fg={colors.muted}>
-          <span fg={toneColor(block.tone)}>{block.icon}</span>
-          {` ${block.label}`}
-        </text>
+        <box marginTop={1}>
+          <WorkLine glyph={block.icon} glyphColor={toneColor(block.tone)} label={block.label} labelColor={colors.muted} selectable />
+        </box>
       );
     case "approval":
       return <text marginTop={1} fg={colors.muted}>{`Approval requested: ${block.title}`}</text>;
