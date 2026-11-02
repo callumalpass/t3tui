@@ -3,58 +3,62 @@ import { SyntaxStyle, type ThemeMode } from "@opentui/core";
 import type { StatusTone } from "../model/threads.ts";
 import type { Tone } from "../model/transcript.ts";
 
-/** Tokyo Night. */
+/** Neutral grey steps with one blue accent, after opencode's default theme. */
 const DARK = {
-  bg: "#16161e",
-  panel: "#1a1b26",
-  border: "#2f334d",
-  borderFocused: "#7aa2f7",
-  text: "#c0caf5",
-  muted: "#737aa2",
-  faint: "#545c7e",
-  accent: "#7aa2f7",
-  user: "#7dcfff",
-  userBg: "#1f2335",
-  good: "#9ece6a",
-  bad: "#f7768e",
-  warn: "#e0af68",
-  selectedBg: "#283457",
+  bg: "#0a0a0a",
+  /** The thread list, details and overlays: a step up from the background. */
+  panel: "#141414",
+  /** Raised blocks on a panel or the background: the composer, your messages, tool output. */
+  element: "#1e1e1e",
+  border: "#3c3c3c",
+  borderFocused: "#5c9cf5",
+  text: "#eeeeee",
+  muted: "#8a8a8a",
+  faint: "#606060",
+  accent: "#5c9cf5",
+  user: "#56b6c2",
+  userBg: "#1e1e1e",
+  good: "#7fd88f",
+  bad: "#e06c75",
+  warn: "#f5a742",
+  selectedBg: "#1d2a3d",
   /** Under the pointer: lighter than the panel, quieter than a selection. */
-  hoverBg: "#202437",
-  buttonBg: "#24283b",
+  hoverBg: "#1a1a1a",
+  buttonBg: "#1e1e1e",
   /** The web app's sky / indigo / violet status hues. */
-  info: "#7dcfff",
-  input: "#bb9af7",
-  plan: "#c099ff",
-  diffAddedBg: "#1e2a1e",
-  diffRemovedBg: "#2d1f24",
+  info: "#56b6c2",
+  input: "#9d7cd8",
+  plan: "#fab283",
+  diffAddedBg: "#14261a",
+  diffRemovedBg: "#2a1517",
 };
 
 export type Palette = { readonly [K in keyof typeof DARK]: string };
 
-/** Tokyo Night Day, for terminals with a light background. */
+/** The same steps for terminals with a light background. */
 const LIGHT: Palette = {
-  bg: "#e1e2e7",
-  panel: "#d6d9e4",
-  border: "#a8aecb",
-  borderFocused: "#2e7de9",
-  text: "#343b58",
-  muted: "#5f6893",
-  faint: "#7a81a8",
-  accent: "#2e7de9",
-  user: "#007197",
-  userBg: "#d0d5e3",
-  good: "#587539",
-  bad: "#d20f39",
-  warn: "#8c6c3e",
-  selectedBg: "#b7c1e3",
-  hoverBg: "#d3d6e2",
-  buttonBg: "#c4c8da",
-  info: "#007197",
-  input: "#9854f1",
-  plan: "#7847bd",
-  diffAddedBg: "#d4e6cc",
-  diffRemovedBg: "#f1d3da",
+  bg: "#ffffff",
+  panel: "#f5f5f5",
+  element: "#ebebeb",
+  border: "#d4d4d4",
+  borderFocused: "#3b7dd8",
+  text: "#1a1a1a",
+  muted: "#6e6e6e",
+  faint: "#9a9a9a",
+  accent: "#3b7dd8",
+  user: "#318795",
+  userBg: "#ebebeb",
+  good: "#3d9a57",
+  bad: "#d1383d",
+  warn: "#b0701a",
+  selectedBg: "#dce8f8",
+  hoverBg: "#efefef",
+  buttonBg: "#ebebeb",
+  info: "#318795",
+  input: "#7b5bb6",
+  plan: "#c06a2b",
+  diffAddedBg: "#e3f3e6",
+  diffRemovedBg: "#fbe4e4",
 };
 
 /** The palette in use. Read at render time, so applyTheme before the first frame sets it everywhere. */
