@@ -220,9 +220,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   const [thread, setThread] = useState<ThreadState | null>(null);
   useEffect(() => {
     setThread(null);
-    if (!watchedId || shell.status.type !== "live") return;
+    if (!watchedId) return;
+    // The session resubscribes after a reconnect; meanwhile the thread stays on screen.
     return session.watchThread(watchedId, setThread);
-  }, [session, watchedId, shell.status.type]);
+  }, [session, watchedId]);
 
   const unread = threadRow?.unread === true;
   useEffect(() => {
