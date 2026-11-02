@@ -98,6 +98,8 @@ export interface DraftThread {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly envMode: ThreadEnvMode;
+  /** Runs in another thread's worktree, from "New thread on <branch>". */
+  readonly existingWorktree?: { readonly path: string; readonly branch: string | null };
 }
 
 /**

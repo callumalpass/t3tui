@@ -51,6 +51,7 @@ Navigation:
 | --- | --- |
 | `j`/`k`, arrows | next / previous thread (scroll, in `attach`) |
 | `c` | new thread (see below) |
+| `.` | thread actions (see below); a right-click on a thread opens them too |
 | `m` | model, options (reasoning, fast mode…) and access mode |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
 | `1`–`9` | pick an option when the agent asks a question (also in an empty message box) |
@@ -80,6 +81,19 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
 - Threads open scrolled to the bottom.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
+
+## Thread actions
+
+`.`, `Thread actions…` in the palette, or a right-click on a thread in the list opens T3 Code's thread menu, built by the web app's own code:
+
+- New thread on the thread's branch (in its worktree, if it has one)
+- Pin or unpin, settle or un-settle, snooze (T3's presets or a custom time) or wake
+- Rename, regenerate the title, mark unread
+- Auto-settle on or off for the thread (on servers that support turning it off)
+- Copy the workspace path, branch, thread link or thread ID
+- Archive or delete
+
+Submenus open as their own list, and typing finds their items from the top (`thread id` finds `Copy › Thread ID`). A custom snooze takes a duration (`45m`, `3h`, `2d`, `1w`) or a time of day (`17:30`). Delete asks first, as the app does by default; it doesn't offer to remove the thread's worktree, which the app does. Copying goes through the terminal (OSC 52, so it works over SSH), and through `wl-copy`, `xclip` or `pbcopy` on a local desktop. The app's project settings, guest sharing and find-in-thread aren't here.
 
 ## New threads
 

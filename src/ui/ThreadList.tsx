@@ -1,3 +1,4 @@
+import type { MouseEvent } from "@opentui/core";
 import { needsAttention, relativeTime, rowTime, SECTION_LABELS, statusLabel, type Section, type ThreadRow } from "../model/threads.ts";
 import type { ThreadId } from "@t3tools/contracts";
 
@@ -23,6 +24,8 @@ export function ThreadList(props: {
   readonly onFilter: (value: string) => void;
   readonly onFilterDone: () => void;
   readonly onPick: (threadId: ThreadId) => void;
+  /** A right-click: the thread's menu. */
+  readonly onMenu: (threadId: ThreadId) => void;
   readonly onUnfold: () => void;
 }) {
   const { rows, selected, focused, width, height, now } = props;
@@ -56,7 +59,7 @@ export function ThreadList(props: {
         paddingLeft={1}
         paddingRight={1}
         backgroundColor={isSelected ? (focused ? colors.selectedBg : colors.panel) : "transparent"}
-        onMouseDown={() => props.onPick(row.thread.id)}
+        onMouseDown={(event: MouseEvent) => (event.button === 2 ? props.onMenu(row.thread.id) : props.onPick(row.thread.id))}
       >
         <box flexDirection="row">
           <text fg={colors.faint}>{left}</text>

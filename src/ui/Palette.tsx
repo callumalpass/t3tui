@@ -19,10 +19,11 @@ export function Palette(props: {
   const width = Math.min(80, props.width - 4);
   const listHeight = Math.max(4, Math.min(props.height - 8, 22));
   // Rows are entries plus a header per group; keep the selection in view.
-  const rows: ({ kind: "header"; label: string } | { kind: "entry"; entry: PaletteEntry; index: number })[] = [];
+  const rows: ({ kind: "header"; label: string; key: string } | { kind: "entry"; entry: PaletteEntry; index: number })[] = [];
   let index = 0;
   for (const group of props.groups) {
-    rows.push({ kind: "header", label: group.label });
+    // Untitled groups (separators) share a label, so the key carries the position.
+    rows.push({ kind: "header", label: group.label, key: `h-${rows.length}-${group.label}` });
     for (const entry of group.entries) rows.push({ kind: "entry", entry, index: index++ });
   }
   const selectedRow = rows.findIndex((row) => row.kind === "entry" && row.index === props.selected);
@@ -38,7 +39,7 @@ export function Palette(props: {
         {rows.length === 0 ? <text fg={colors.muted} paddingLeft={1}>No matches</text> : null}
         {rows.slice(start, start + listHeight).map((row) =>
           row.kind === "header" ? (
-            <text key={`h-${row.label}`} fg={colors.faint} paddingLeft={1}>
+            <text key={row.key} fg={colors.faint} paddingLeft={1}>
               {row.label}
             </text>
           ) : (

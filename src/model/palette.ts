@@ -95,6 +95,8 @@ export interface PickerItem {
   readonly title: string;
   /** Shown on the right: "current", a provider, a status. */
   readonly hint?: string;
+  /** Only listed once you type: a submenu's items, found from the top. */
+  readonly searchOnly?: boolean;
   readonly run: () => void;
 }
 
@@ -114,7 +116,7 @@ export function pickerGroups(picker: Picker, query: string): PaletteGroup[] {
             .filter((candidate) => candidate.match !== null)
             .sort((a, b) => b.match!.score - a.match!.score)
             .map(({ item }) => item)
-        : group.items;
+        : group.items.filter((item) => !item.searchOnly);
       return { label: group.label, entries: items.map((item): PaletteEntry => ({ kind: "command", command: { id: item.id, title: item.title, ...(item.hint ? { shortcut: item.hint } : {}) } })) };
     })
     .filter((group) => group.entries.length > 0);

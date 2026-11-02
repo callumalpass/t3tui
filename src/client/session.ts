@@ -417,6 +417,88 @@ export class T3Session {
     return this.dispatch({ type: "thread.stop", commandId: newCommandId(), threadId });
   }
 
+  // The thread menu's actions, as the web's useThreadActions sends them.
+  settleThread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.settle", commandId: newCommandId(), threadId });
+  }
+
+  /** reason "user" keeps it active until real activity, so auto-settle leaves it alone. */
+  unsettleThread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.unsettle", commandId: newCommandId(), threadId, reason: "user" });
+  }
+
+  pinThread(threadId: ThreadId, orderKey?: string): Promise<void> {
+    return this.dispatch({ type: "thread.pin", commandId: newCommandId(), threadId, ...(orderKey ? { orderKey } : {}) });
+  }
+
+  unpinThread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.unpin", commandId: newCommandId(), threadId });
+  }
+
+  snoozeThread(threadId: ThreadId, snoozedUntil: string): Promise<void> {
+    return this.dispatch({ type: "thread.snooze", commandId: newCommandId(), threadId, snoozedUntil });
+  }
+
+  unsnoozeThread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.unsnooze", commandId: newCommandId(), threadId, reason: "user" });
+  }
+
+  setAutoSettle(threadId: ThreadId, enabled: boolean): Promise<void> {
+    return this.dispatch({ type: "thread.auto-settle.set", commandId: newCommandId(), threadId, enabled });
+  }
+
+  markUnread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.mark-unread", commandId: newCommandId(), threadId });
+  }
+
+  renameThread(threadId: ThreadId, title: string): Promise<void> {
+    return this.dispatch({ type: "thread.metadata.update", commandId: newCommandId(), threadId, title });
+  }
+
+  regenerateTitle(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.metadata.update", commandId: newCommandId(), threadId, regenerateTitle: true });
+  }
+
+  archiveThread(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "thread.archive", commandId: newCommandId(), threadId });
+  }
+
+  /**
+   * Deletes the thread. One with a runtime has its provider sessions detached first, as the
+   * web's stopThreadSession does; their ids come from the thread's projection.
+   */
+  async deleteThread(threadId: ThreadId, hasRuntime: boolean): Promise<void> {
+    if (hasRuntime) {
+      const projection = await this.projectionOnce(threadId);
+      const commandId = newCommandId();
+      for (const providerSession of projection.providerSessions) {
+        await this.dispatch({ type: "provider-session.detach", commandId: CommandId.make(`${commandId}:detach:${providerSession.id}`), threadId, providerSessionId: providerSession.id, reason: "client-requested" });
+      }
+    }
+    return this.dispatch({ type: "thread.delete", commandId: newCommandId(), threadId });
+  }
+
+  /** The thread's projection, subscribing just long enough to get it. */
+  private projectionOnce(threadId: ThreadId): Promise<OrchestrationV2ThreadProjection> {
+    return new Promise((resolve, reject) => {
+      let unwatch: (() => void) | null = null;
+      let done = false;
+      const finish = (action: () => void) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        queueMicrotask(() => unwatch?.());
+        action();
+      };
+      const timer = setTimeout(() => finish(() => reject(new Error("The thread did not load."))), 10_000);
+      unwatch = this.watchThread(threadId, (state) => {
+        if (state.projection) finish(() => resolve(state.projection!));
+        else if (state.status === "error") finish(() => reject(new Error(state.error ?? "The thread did not load.")));
+      });
+      if (done) unwatch();
+    });
+  }
+
   setRuntimeMode(threadId: ThreadId, runtimeMode: RuntimeMode): Promise<void> {
     return this.dispatch({ type: "thread.runtime-mode.set", commandId: newCommandId(), threadId, runtimeMode });
   }

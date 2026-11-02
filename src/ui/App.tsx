@@ -9,7 +9,8 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { DEFAULT_TERMINAL_ID, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type TerminalSummary, type ThreadId } from "@t3tools/contracts";
+import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { DEFAULT_TERMINAL_ID, type ContextMenuItem, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type TerminalSummary, type ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -17,6 +18,7 @@ import type { OrchestrationMessageContext, ProjectEntry, ThreadContextRecord } f
 import type { FeedState, ServerConfigState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { applyComposerItem, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
+import { parseSnooze, pickSnooze, threadHasRuntime, threadMenu, topPinOrderKey, type ThreadActionMenuId } from "../model/threadMenu.ts";
 import { draftDefaults, lockedProviderInstance, modelSummary, optionDescriptors, optionValue, optionValueLabel, providerName, RUNTIME_MODES, sameSelection, selectableProviders, withModel, withOption, type DraftThread } from "../model/models.ts";
 import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
@@ -34,7 +36,7 @@ import { Palette } from "./Palette.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { attachTerminal } from "./terminalAttach.ts";
-import { desktopNotify, ring } from "./terminalOut.ts";
+import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { ThreadView } from "./ThreadView.tsx";
@@ -174,7 +176,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     if (selectedId === undefined && rows[0]) setSelectedId(rows[0].thread.id);
   }, [selectedId, rows]);
 
+  /** A thread you marked unread, left unread until you open it again. */
+  const noVisit = useRef<ThreadId | null>(null);
   const openThread = useCallback((id: ThreadId) => {
+    noVisit.current = null;
     setSelectedId(id);
     setDiff(null);
     setSettingsIndex(null);
@@ -199,7 +204,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
   const unread = threadRow?.unread === true;
   useEffect(() => {
-    if (!watchedId || !unread) return;
+    if (!watchedId || !unread || noVisit.current === watchedId) return;
     const timer = setTimeout(() => void session.visit(watchedId).catch(() => {}), VISIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [session, watchedId, unread]);
@@ -531,6 +536,148 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   };
 
   // New threads, as the web's: a local draft that becomes a thread when its first message is sent.
+  /** The web sidebar's thread menu as a picker: separators become groups, submenus open their own picker. */
+  const openThreadMenu = (target: OrchestrationV2ThreadShell) => {
+    const menu = threadMenu({ thread: target, config: providerConfig, timestampFormat: config.timestampFormat });
+    const toPicker = (title: string, items: readonly ContextMenuItem<ThreadActionMenuId>[]): Picker => {
+      const groups: { label: string; items: PickerItem[] }[] = [{ label: title, items: [] }];
+      for (const item of items) {
+        if (item.separatorBefore && groups[groups.length - 1]!.items.length > 0) groups.push({ label: "", items: [] });
+        const hint = item.disabled ? "unavailable" : item.checked ? "current" : item.children ? "›" : undefined;
+        groups[groups.length - 1]!.items.push({
+          id: `thread-menu:${item.id}`,
+          title: item.label,
+          ...(hint ? { hint } : {}),
+          run: () => {
+            if (item.disabled) return say(`${item.label} is unavailable for this thread right now.`, true);
+            if (item.children) return openPicker(toPicker(`${target.title || "New thread"} › ${item.label}`, item.children));
+            runThreadAction(target, item.id, menu.snoozePresets);
+          },
+        });
+        // A submenu's items are found by typing at the top too: "thread id" finds Copy › Thread ID.
+        for (const child of item.disabled ? [] : (item.children ?? [])) {
+          if (child.disabled) continue;
+          groups[groups.length - 1]!.items.push({ id: `thread-menu:${child.id}`, title: `${item.label} › ${child.label}`, ...(child.checked ? { hint: "current" } : {}), searchOnly: true, run: () => runThreadAction(target, child.id, menu.snoozePresets) });
+        }
+      }
+      return { placeholder: "Thread actions", groups };
+    };
+    openPicker(toPicker(target.title || "New thread", menu.items));
+  };
+  const openSelectedThreadMenu = () => threadShell && openThreadMenu(threadShell);
+
+  const runThreadAction = (target: OrchestrationV2ThreadShell, action: ThreadActionMenuId, snoozePresets: ReturnType<typeof threadMenu>["snoozePresets"]) => {
+    const id = target.id;
+    const title = target.title || "New thread";
+    const leave = () => {
+      if (threadId === id) setSelectedId(undefined);
+    };
+    if (action === "snooze:custom") {
+      confirm({
+        title: `Snooze "${title}"`,
+        detail: "For a while (45m, 3h, 2d, 1w) or until a time (17:30).",
+        message: { placeholder: "3h" },
+        confirmLabel: "snooze",
+        run: (text) => {
+          const wake = parseSnooze(text);
+          if (!wake) return say("Type a duration like 3h or 2d, or a time like 17:30.", true);
+          run(`Snoozed until ${wake.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, () => session.snoozeThread(id, wake.toISOString()));
+        },
+      });
+      return;
+    }
+    if (action.startsWith("snooze:")) {
+      const preset = pickSnooze(snoozePresets, action.slice("snooze:".length), providerConfig, config.timestampFormat);
+      if (!preset) return say("That snooze time has passed. Choose another time.", true);
+      return run(`Snoozed until ${preset.whenLabel}`, () => session.snoozeThread(id, preset.snoozedUntil));
+    }
+    switch (action) {
+      case "settle":
+        return run("Settled", () => session.settleThread(id));
+      case "unsettle":
+        return run("Un-settled", () => session.unsettleThread(id));
+      case "unsnooze":
+        return run("Woke the thread", () => session.unsnoozeThread(id));
+      case "pin":
+        return run("Pinned", () => session.pinThread(id, topPinOrderKey(shell.snapshot)));
+      case "unpin":
+        return run("Unpinned", () => session.unpinThread(id));
+      case "auto-settle:enabled":
+      case "auto-settle:disabled":
+        return run(action === "auto-settle:enabled" ? "Auto-settle on" : "Auto-settle off", () => session.setAutoSettle(id, action === "auto-settle:enabled"));
+      case "regenerate-title":
+        return run("Regenerating the title", () => session.regenerateTitle(id));
+      case "mark-unread":
+        // Opening a thread marks it read; stay unread until you open it again.
+        noVisit.current = id;
+        return run("Marked unread", () => session.markUnread(id));
+      case "rename":
+        confirm({
+          title: "Rename thread",
+          message: { placeholder: title },
+          confirmLabel: "rename",
+          run: (text) => {
+            const next = text.trim();
+            if (next && next !== target.title) run("Renamed", () => session.renameThread(id, next));
+          },
+        });
+        setConfirmMessage(target.title);
+        return;
+      case "new-thread-on-branch": {
+        const project = shell.snapshot?.projects.find((candidate) => candidate.id === target.projectId);
+        if (!project) return say("The thread's project is gone.", true);
+        setDraft({
+          ...draftDefaults({ config: providerConfig, project, currentModel: target.modelSelection, projectHasThreads: true }),
+          envMode: target.worktreePath ? "worktree" : "local",
+          ...(target.worktreePath ? { existingWorktree: { path: target.worktreePath, branch: target.branch } } : {}),
+        });
+        setDiff(null);
+        setSettingsIndex(null);
+        setMode("input");
+        return;
+      }
+      case "copy-path": {
+        const path = target.worktreePath ?? shell.snapshot?.projects.find((candidate) => candidate.id === target.projectId)?.workspaceRoot;
+        if (!path) return say("This thread does not have a workspace path to copy.", true);
+        copyText(renderer, path);
+        return say(`Path copied: ${path}`);
+      }
+      case "copy-branch":
+        if (!target.branch) return;
+        copyText(renderer, target.branch);
+        return say(`Branch copied: ${target.branch}`);
+      case "copy-thread": {
+        const environmentId = providerConfig?.environment.environmentId;
+        if (!environmentId) return say("Server details are still loading.", true);
+        copyText(renderer, threadChipCopyTarget({ environmentId, threadId: id }, title).value);
+        return say(`Thread copied: ${title}`);
+      }
+      case "copy-thread-id":
+        copyText(renderer, id);
+        return say(`Thread ID copied: ${id}`);
+      case "archive":
+        return run("Archived", async () => {
+          await session.archiveThread(id);
+          leave();
+        });
+      case "delete":
+        // The web confirms deletes by default (confirmThreadDelete).
+        confirm({
+          title: `Delete thread "${title}"?`,
+          detail: `This permanently clears conversation history for this thread.${target.worktreePath ? " Its worktree stays on disk." : ""}`,
+          confirmLabel: "delete",
+          run: () =>
+            run("Deleted", async () => {
+              await session.deleteThread(id, threadHasRuntime(target, providerConfig));
+              leave();
+            }),
+        });
+        return;
+      default:
+        return;
+    }
+  };
+
   const startDraft = () => {
     const projects = shell.snapshot?.projects ?? [];
     const project = projects.find((candidate) => candidate.id === threadShell?.projectId) ?? projects[0];
@@ -573,15 +720,20 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       ],
     });
   };
-  const toggleWorkspace = () => draft && setDraft({ ...draft, envMode: draft.envMode === "local" ? "worktree" : "local" });
+  const toggleWorkspace = () => {
+    if (!draft) return;
+    const { existingWorktree: _, ...rest } = draft;
+    setDraft({ ...rest, envMode: draft.existingWorktree ? "local" : draft.envMode === "local" ? "worktree" : "local" });
+  };
   const launchDraft = (text: string, context?: OrchestrationMessageContext) => {
     if (!draft || !draftProject) return;
     const launching = draft;
     const project = draftProject;
     say("Starting thread…");
     void (async () => {
-      let workspaceStrategy: { type: "root" } | { type: "worktree"; baseRef: string; startFromOrigin?: boolean } = { type: "root" };
-      if (launching.envMode === "worktree") {
+      let workspaceStrategy: { type: "root" } | { type: "existing_worktree"; worktreePath: string } | { type: "worktree"; baseRef: string; startFromOrigin?: boolean } = { type: "root" };
+      if (launching.existingWorktree) workspaceStrategy = { type: "existing_worktree", worktreePath: launching.existingWorktree.path };
+      else if (launching.envMode === "worktree") {
         // A worktree starts from the default branch; outside a git repository it runs in place, as the web's.
         const refs = await session.defaultRef(project.workspaceRoot);
         if (refs.isRepo && refs.ref) workspaceStrategy = { type: "worktree", baseRef: refs.ref.name, startFromOrigin: providerConfig?.settings.newWorktreesStartFromOrigin ?? true };
@@ -797,10 +949,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     command("filter", "Filter threads", () => setMode("filter"), { shortcut: "/", keywords: ["search"] });
     command("settled", showFolded ? "Hide settled threads" : "Show settled threads", () => setShowFolded(!showFolded), { shortcut: "z", keywords: ["snoozed", "archive"] });
   }
+  if (threadShell) command("thread-menu", "Thread actions…", openSelectedThreadMenu, { shortcut: ".", keywords: ["settle", "pin", "snooze", "rename", "archive", "delete", "copy", "unread", "menu"] });
   command("new-thread", "New thread", startDraft, { shortcut: "c", keywords: ["create", "start", "chat"] });
   if (draft) {
     command("draft-project", "New thread: choose project", openProjectPicker, { shortcut: "p" });
-    command("draft-workspace", draft.envMode === "local" ? "New thread: use a new worktree" : "New thread: run in the project folder", toggleWorkspace, { shortcut: "w", keywords: ["worktree", "local", "branch"] });
+    command("draft-workspace", draft.envMode === "local" && !draft.existingWorktree ? "New thread: use a new worktree" : "New thread: run in the project folder", toggleWorkspace, { shortcut: "w", keywords: ["worktree", "local", "branch"] });
     command("draft-cancel", "Cancel new thread", () => setDraft(null), { keywords: ["discard"] });
   }
   if (currentModel) command("model", "Change model, options or mode", openModelPicker, { shortcut: "m", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] });
@@ -1035,6 +1188,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         return startDraft();
       case "m":
         return openModelPicker();
+      case ".":
+        return openSelectedThreadMenu();
       case "p":
         if (draft) openProjectPicker();
         return;
@@ -1131,7 +1286,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         { key: "project", label: "Project", value: draftProject?.title ?? "—", shortcut: "p", onPick: openProjectPicker },
         { key: "model", label: "Model", value: modelSummary(providerConfig, draft.modelSelection), shortcut: "m", onPick: openModelPicker },
         { key: "mode", label: "Mode", value: RUNTIME_MODE_LABELS[draft.runtimeMode] ?? draft.runtimeMode, shortcut: "m", onPick: openModelPicker },
-        { key: "workspace", label: "Runs in", value: draft.envMode === "worktree" ? "a new worktree from the default branch" : "the project folder", shortcut: "w", onPick: toggleWorkspace },
+        { key: "workspace", label: "Runs in", value: draft.existingWorktree ? `the ${draft.existingWorktree.branch ?? "thread's"} worktree` : draft.envMode === "worktree" ? "a new worktree from the default branch" : "the project folder", shortcut: "w", onPick: toggleWorkspace },
       ]
     : [];
   const detailsPanel = (inPlace: boolean) => (
@@ -1174,6 +1329,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             onPick={(id) => {
               openThread(id);
               setMode("nav");
+            }}
+            onMenu={(id) => {
+              const target = allRows.find((row) => row.thread.id === id)?.thread;
+              if (target) openThreadMenu(target);
             }}
             onUnfold={() => setShowFolded(true)}
           />
@@ -1347,7 +1506,7 @@ function hints(
   if (state.diff) return "j/k scroll · esc close diff · l details";
   if (state.draft) return "i write the first message · p project · m model & mode · w worktree · esc cancel";
   const parts = state.attached ? ["j/k scroll"] : ["j/k threads", "/ filter"];
-  parts.push("i type", "c new", "m model", "ctrl+j terminal", "l details", "e expand");
+  parts.push("i type", "c new", ". actions", "m model", "ctrl+j terminal", "l details");
   if (state.parent) parts.push("u parent");
   parts.push("ctrl+k commands", "q quit");
   if (state.question) parts.unshift("1-9 pick · x dismiss");
