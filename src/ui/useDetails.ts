@@ -21,6 +21,9 @@ export function useDetails(deps: {
   readonly session: T3Session;
   readonly live: boolean;
   readonly width: number;
+  /** Shown or hidden by `d`, kept across runs; null follows the terminal width. */
+  readonly pref: boolean | null;
+  readonly setPref: (show: boolean) => void;
   readonly thread: OrchestrationV2ThreadShell | undefined;
   readonly project: OrchestrationProjectShell | undefined;
   /** The shell, with fetched subagent families, so lineage can name idle subagents. */
@@ -44,7 +47,7 @@ export function useDetails(deps: {
 }) {
   const { session, live, thread, project, config, confirm, run, say, setDiff } = deps;
   /** null follows the terminal width; d sets it for the rest of the session. */
-  const [pref, setPref] = useState<boolean | null>(null);
+  const { pref, setPref } = deps;
   const [selected, setSelected] = useState<string | null>(null);
   const [unfolded, setUnfolded] = useState<ReadonlySet<DetailsFold>>(() => new Set());
   const show = pref ?? deps.width >= AUTO_WIDTH;

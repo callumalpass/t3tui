@@ -116,10 +116,21 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   /** The thread list's and details column's widths once their edges are dragged; null follows the window. */
   const [listWidthPref, setListWidthPref] = useState<number | null>(props.layout?.listWidth ?? null);
   const [detailsWidthPref, setDetailsWidthPref] = useState<number | null>(props.layout?.detailsWidth ?? null);
-  const layoutNow = useRef<Layout>({ listWidth: listWidthPref, detailsWidth: detailsWidthPref });
-  layoutNow.current = { listWidth: listWidthPref, detailsWidth: detailsWidthPref };
+  const [listHidden, setListHidden] = useState(props.layout?.listHidden ?? false);
+  const [detailsPref, setDetailsPrefState] = useState<boolean | null>(props.layout?.details ?? null);
+  const layoutNow = useRef<Layout>({ listWidth: listWidthPref, detailsWidth: detailsWidthPref, listHidden, details: detailsPref });
+  layoutNow.current = { listWidth: listWidthPref, detailsWidth: detailsWidthPref, listHidden, details: detailsPref };
   /** Kept for the next run; a failed save only costs that. */
   const saveLayoutNow = (change: Partial<Layout> = {}) => void saveLayout({ ...layoutNow.current, ...change }).catch(() => {});
+  const setDetailsPref = (show: boolean) => {
+    setDetailsPrefState(show);
+    saveLayoutNow({ details: show });
+  };
+  const toggleList = () => {
+    setListHidden(!listHidden);
+    saveLayoutNow({ listHidden: !listHidden });
+  };
+  const showList = !attached && !listHidden;
   /** The edge being dragged. */
   const [resizing, setResizing] = useState<"list" | "details" | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
@@ -431,6 +442,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     session,
     live,
     width,
+    pref: detailsPref,
+    setPref: setDetailsPref,
     thread: threadShell,
     project,
     snapshot: detailsSnapshot,
@@ -631,7 +644,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const scrollPage = (direction: 1 | -1) => scrollRef.current?.scrollBy(direction * Math.max(1, height - 10));
 
   const turns = useTurns({ session, threadId, projection, timeline: current, config: providerConfig, cwd: panel.cwd, ignoreWhitespace: config.diffIgnoreWhitespace, enabled: draft === null, diff, setDiff, scrollRef, confirm, say,
-    showConversation: () => { setMode("nav"); panel.setPref((value) => width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value); },
+    showConversation: () => { setMode("nav"); setDetailsPrefState((value) => (width < MIN_CONVERSATION_WIDTH + DETAILS_WIDTH ? false : value)); },
     restorePrompt: (id, text) => {
       const previous = id === activeComposerKey.current ? composerRef.current?.plainText ?? "" : drafts.current.get(id) ?? "";
       const next = text ? previous ? `${previous}\n\n${text}` : text : previous;
@@ -758,6 +771,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     { keys: ["j", "↓"], label: "j/k", run: () => (attached ? scrollBy(1) : move(1)), hint: attached ? "scroll" : "threads" },
     { keys: ["k", "↑"], run: () => (attached ? scrollBy(-1) : move(-1)) },
     !attached && { keys: ["/"], run: () => setMode("filter"), hint: "filter", command: { id: "filter", title: "Filter threads", keywords: ["search"] } },
+    !attached && { keys: ["B"], run: toggleList, command: { id: "thread-list", title: listHidden ? "Show thread list" : "Hide thread list", keywords: ["sidebar", "panel", "threads"] } },
     typeKey,
     projectKey,
     { keys: ["c"], run: () => newThread.start(), hint: "new", command: { id: "new-thread", title: "New thread", keywords: ["create", "start", "chat"] } },
@@ -981,7 +995,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const headerProject = threadRow?.projectName ? truncate(threadRow.projectName, 24) : "";
   const headerRoom = width - 18 - (headerProject ? headerProject.length + 3 : 0) - (headerStatus ? headerStatus.text.length + 2 : 0) - (shell.status.type !== "live" ? status.length + 2 : 0) - (usageInfo.note ? usageInfo.note.length + 2 : 0);
   const headerTitle = truncate(title, Math.max(8, headerRoom));
-  const listWidth = attached ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
+  const listWidth = !showList ? 0 : clampListWidth(listWidthPref ?? Math.min(46, Math.max(28, Math.floor(width * 0.3))), width);
   // Room for the details column and its edge beside the conversation; a dragged width gives way to the conversation first.
   const detailsRoom = width - listWidth - 1 - MIN_CONVERSATION_WIDTH;
   const detailsWidth = Math.min(detailsWidthPref ?? DETAILS_WIDTH, Math.max(DETAILS_WIDTH, detailsRoom));
@@ -1072,7 +1086,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         <Button label="ctrl+k" shortcut="commands" plain onPress={openPalette} />
       </box>
       <box flexDirection="row" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
-        {attached ? null : (
+        {!showList ? null : (
           <ThreadList
             rows={rows}
             collapsed={collapsed}
@@ -1099,7 +1113,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             shelfStatus={library.error ?? (library.loading ? "Loading…" : library.archived ? "Archived threads · A to go back" : null)}
           />
         )}
-        {attached ? null : <ResizeHandle active={resizing === "list"} onStart={() => setResizing("list")} onReset={() => {
+        {!showList ? null : <ResizeHandle active={resizing === "list"} onStart={() => setResizing("list")} onReset={() => {
               setListWidthPref(null);
               saveLayoutNow({ listWidth: null });
             }} />}

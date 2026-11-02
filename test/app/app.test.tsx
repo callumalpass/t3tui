@@ -434,6 +434,27 @@ describe("mouse", () => {
     expect(next.find("┃").x).toBe(before + 7);
   });
 
+  test("B hides the thread list and brings it back, and the next run remembers", async () => {
+    const first = await open();
+    const composer = () => first.find("Press i to type").x;
+    const withList = composer();
+    await first.press("B");
+    expect(composer()).toBeLessThan(withList);
+    expect((await loadLayout()).listHidden).toBe(true);
+    first.destroy();
+    const next = await open({ layout: await loadLayout() });
+    expect(next.find("Press i to type").x).toBeLessThan(withList);
+    await next.press("B");
+    expect(next.find("Press i to type").x).toBe(withList);
+    expect((await loadLayout()).listHidden).toBe(false);
+  });
+
+  test("d's choice for the details column is kept for the next run", async () => {
+    const first = await open({ width: 200 });
+    await first.press("d");
+    expect((await loadLayout()).details).toBe(false);
+  });
+
   test("dragging the details edge resizes it and keeps the width; right-click resets it", async () => {
     // Wide enough for the details column to open by itself.
     const first = await open({ width: 200 });

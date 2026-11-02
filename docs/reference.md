@@ -57,7 +57,8 @@ Navigation:
 | `f` | find in the open thread; `enter` / `shift+enter` or `ctrl+n` / `ctrl+p` move between matches, `esc` closes |
 | `A` | show archived threads / return to active threads |
 | `J` / `K` | move the selected pinned thread down / up |
-| `d` | show or hide thread details |
+| `d` | show or hide thread details (kept for the next run) |
+| `B` | hide or show the thread list (kept for the next run) |
 | `P` | show the thread's linked pull request |
 | `l` / `→` | move into the details panel: `j`/`k` choose, `enter` opens, `t` turns an automation on or off, `esc` comes back |
 | `u` | go to the parent thread (from a fork or subagent) |
@@ -114,7 +115,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Buttons:** approvals, questions (click an option), secret requests, confirmations, queued messages (click one to send it now, edit or remove it), attached files (✕ removes one) and the PR view have buttons, each with its key beside it. Every hint along the bottom that names one key is clickable, and so is `commands` at the top.
 - **Conversation:** a click on a prompt selects that turn, as `[`/`]` do; a click on a folded turn or work group opens just that one; a click on a command shows its output; "Load earlier turns" loads them. In a diff, a click on a file selects it and a second click shows the whole file. In the PR view, the URL opens in the browser.
 - **Right-click menus:** on a thread (its actions), a prompt (copy, view its changes, revert), a reply (copy), a command (copy the command or its output) and the PR view (its actions).
-- **Panes:** clicking the conversation takes the keys out of the message box or details; clicking the message box types. The wheel scrolls the conversation, the thread list (without moving the selection) and the palette. Drag the thread list's right edge to resize it; right-click the edge to reset it.
+- **Panes:** clicking the conversation takes the keys out of the message box or details; clicking the message box types. The wheel scrolls the conversation, the thread list (without moving the selection) and the palette. Drag the thread list's right edge, or the details column's left edge, to resize it; right-click the edge to reset it.
 
 ## Thread actions
 
