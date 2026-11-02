@@ -276,8 +276,8 @@ function latestTasks(projection: OrchestrationV2ThreadProjection | null): Tasks 
   const steps = item.steps;
   const running = steps.findIndex((step) => step.status === "running");
   const current = running >= 0 ? running : Math.max(0, steps.findIndex((step) => step.status === "pending"));
-  // One more step than fits would fold into "1 more"; show it instead.
-  const start = Math.max(0, Math.min(current - 1, steps.length - MAX_TASKS));
+  // Two finished steps lead into the current one; one more step than fits shows rather than folds.
+  const start = Math.max(0, Math.min(current - 2, steps.length - MAX_TASKS));
   return {
     done: steps.filter((step) => step.status === "completed").length,
     total: steps.length,
