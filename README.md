@@ -51,6 +51,7 @@ Navigation:
 | --- | --- |
 | `j`/`k`, arrows | next / previous thread (scroll, in `attach`) |
 | `c` | new thread (see below) |
+| `a` | attach a file to the next message (see below) |
 | `.` | thread actions (see below); a right-click on a thread opens them too |
 | `m` | model, options (reasoning, fast mode…) and access mode |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
@@ -75,7 +76,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Thread details:** a column beside the conversation with the workspace, model and mode, the branch with ahead/behind and its pull request, uncommitted changes per file, lineage (forks and subagents), background work and the goal. It opens by itself on terminals 160 columns or wider; on narrow ones `d` shows it in place of the conversation.
 - **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `j`/`k` scroll, `esc` closes.
 - **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
-- **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
+- **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off). Automations are made and changed from the palette: `New automation` and `Edit automation: …` open the web form's fields in `$EDITOR` (title, schedule, project, workspace, model, mode, prompt); save and quit to save. `Delete automation: …` asks first. Webhook signatures and filters are kept as they are; change those in the app.
 - **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them).
 - **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring; start with `>` for commands only.
 - **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
@@ -98,6 +99,10 @@ Submenus open as their own list, and typing finds their items from the top (`thr
 ## New threads
 
 `c` (or `New thread` in the palette) opens a draft in the current thread's project, with the defaults T3 Code would use: the server's default model and mode for new threads, and the project folder or a new worktree as the project settings say. In the draft, `p` picks the project, `m` the model and mode, and `w` switches between the project folder and a new worktree off the default branch. Write the first message and send it: that starts the thread, which T3 then titles. `esc` cancels.
+
+## Attachments
+
+`a` in navigation (or `Attach file…` in the palette) prompts for a path: `~` expands, and a relative path is taken from the thread's worktree or project folder. `Paste image from clipboard` in the palette takes a clipboard image instead (`wl-paste`, `xclip`, or `pngpaste` on macOS). Files upload at once, as in the web composer, and their names show above the message box until the next message sends them; `Remove attachment: …` in the palette takes one back and deletes the unsent upload. The web composer's limits apply: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other files up to the server's limit (50 MB at most), 100 attachments per message. A message can be attachments alone.
 
 ## Model, options and mode
 
@@ -133,14 +138,14 @@ Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a clic
 | `notificationMode` | `off`, `sound` (bell), `notifications` (desktop), `notifications-and-sound` | `sound` |
 | `inAppNotificationsEnabled` | `true`, `false` | `true` |
 
-These use the web app's names, and its defaults except for the two alert settings, which the web app leaves off. The web app keeps them in each browser, so tui3 can't read yours and keeps its own. The same view shows the server's settings that matter here (model and mode for new threads, auto-settle, rate-limited threads), read-only: change those in the app.
+These use the web app's names, and its defaults except for the two alert settings, which the web app leaves off. The web app keeps them in each browser, so tui3 can't read yours and keeps its own. The same view shows the server's settings that matter here (model and mode for new threads, auto-settle, rate-limited threads), read-only: change those in the app. Below them is usage: each provider's limit windows as room left, its banked reset credits, and the last 30 days' cost and tokens. When a window is 90% used or more, the top line says so. Spend a banked credit from the palette (`Use reset credit: …`); it asks first, as the app does.
 
 Long threads load as a bounded window of recent turns; press `o` for older ones. If the connection drops, tui3 reconnects with backoff and resubscribes.
 
 ## How it connects
 
 - It finds the local server from `~/.t3/userdata/server-runtime.json` (override with `TUI3_SERVER`).
-- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate`, `filesystem:read` (diffs), `source-control:write` (git actions), `terminal:read` and `terminal:operate` (terminals, stopping servers), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
+- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate` (attachments and automations ride on it), `filesystem:read` (diffs), `source-control:write` (git actions), `terminal:read` and `terminal:operate` (terminals, stopping servers), `diagnostics:read` (usage totals) and `providers:manage` (reset credits), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
 - It speaks T3 Code's own WebSocket RPC protocol, typed by upstream's `@t3tools/contracts`, and applies thread updates with upstream's own reducers. Both come from `vendor/t3code`, a submodule pinned to the server version this was built against (`v0.1.6-nightly.20261030.3917`).
 
 Set `TUI3_DEBUG=/path/to/log` to log thread subscriptions and snapshots.
@@ -158,4 +163,4 @@ Type errors after a bump point at the protocol changes to adapt to.
 
 ## Not yet supported
 
-Editing queued messages, `#` pull request mentions, plan follow-ups, attachments, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.
+Editing queued messages, `#` pull request mentions, plan follow-ups, forking threads, and reviewing or commenting on diffs. Use the T3 Code app for those.

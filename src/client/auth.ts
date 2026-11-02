@@ -3,10 +3,11 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * Scopes tui3 asks for: read and operate threads, read diffs, run git actions
- * (commit, push, open a PR), stop a thread's local servers, and use its terminals.
+ * Scopes tui3 asks for: read and operate threads (attachments and automations ride on
+ * operate), read diffs, run git actions (commit, push, open a PR), stop a thread's local
+ * servers, use its terminals, read usage totals, and spend reset credits.
  */
-export const TUI3_SCOPES = ["orchestration:read", "orchestration:operate", "filesystem:read", "source-control:write", "terminal:read", "terminal:operate"] as const;
+export const TUI3_SCOPES = ["orchestration:read", "orchestration:operate", "filesystem:read", "source-control:write", "terminal:read", "terminal:operate", "diagnostics:read", "providers:manage"] as const;
 
 export interface ServerTarget {
   /** e.g. http://127.0.0.1:3773 */

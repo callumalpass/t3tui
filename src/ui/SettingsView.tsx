@@ -6,11 +6,14 @@ export function SettingsView(props: {
   readonly rows: readonly SettingRow[];
   readonly server: readonly { label: string; value: string }[];
   readonly serverStatus: "loading" | "live" | "error";
+  /** Usage limits and the last 30 days' totals, read-only; left out until known. */
+  readonly usage?: readonly { label: string; value: string }[];
   readonly selected: number;
   readonly path: string;
   readonly onCycle: (index: number) => void;
 }) {
-  const labelWidth = Math.max(...props.rows.map((row) => row.label.length), ...props.server.map((line) => line.label.length)) + 2;
+  const usage = props.usage ?? [];
+  const labelWidth = Math.max(...props.rows.map((row) => row.label.length), ...props.server.map((line) => line.label.length), ...usage.map((line) => line.label.length)) + 2;
   return (
     <box flexGrow={1} minHeight={0} flexDirection="column" paddingLeft={2} paddingRight={1}>
       <box flexDirection="row" flexShrink={0} height={1}>
@@ -36,6 +39,13 @@ export function SettingsView(props: {
       {props.serverStatus === "error" ? <text fg={colors.bad}>  Could not read the server's settings.</text> : null}
       {props.server.map((line) => (
         <box key={line.label} flexDirection="row" height={1}>
+          <text fg={colors.muted} flexShrink={0}>{`  ${line.label.padEnd(labelWidth)}`}</text>
+          <text fg={colors.text}>{line.value}</text>
+        </box>
+      ))}
+      {usage.length > 0 ? <text fg={colors.faint} marginTop={1}>Usage</text> : null}
+      {usage.map((line) => (
+        <box key={`${line.label}:${line.value}`} flexDirection="row" height={1}>
           <text fg={colors.muted} flexShrink={0}>{`  ${line.label.padEnd(labelWidth)}`}</text>
           <text fg={colors.text}>{line.value}</text>
         </box>

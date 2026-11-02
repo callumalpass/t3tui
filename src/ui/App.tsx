@@ -9,8 +9,9 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import { DEFAULT_TERMINAL_ID, type ContextMenuItem, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type TerminalSummary, type ThreadId } from "@t3tools/contracts";
+import { DEFAULT_TERMINAL_ID, type ChatAttachment, type ContextMenuItem, type DiscoveredLocalServer, type ModelSelection, type OrchestrationV2ThreadShell, type ProviderApprovalDecision, type ScheduledTask, type TerminalSummary, type ThreadId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -24,6 +25,7 @@ import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.
 import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
 import { paletteEntries, paletteGroups, pickerGroups, type PaletteCommand, type Picker, type PickerItem } from "../model/palette.ts";
 import { serverSettingLines, settingRows } from "../model/settings.ts";
+import { resetCreditOutcome, usageLimits, usageSummaryLines } from "../model/usage.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
 import { threadRows, type Section } from "../model/threads.ts";
 import { ComposerMenu } from "./ComposerMenu.tsx";
@@ -40,6 +42,9 @@ import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { ThreadView } from "./ThreadView.tsx";
+import { useAttachments } from "./useAttachments.ts";
+import { useAutomations } from "./useAutomations.ts";
+import { useUsageSummary } from "./useUsage.ts";
 
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
@@ -354,6 +359,37 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     setConfirmation(null);
     setMode(returnMode.current);
   };
+
+  // Attachments, usage and automation editing: each hook owns its slice; App wires it in below.
+  const attachCwd = draft ? (shell.snapshot?.projects.find((candidate) => candidate.id === draft.projectId)?.workspaceRoot ?? null) : (threadShell?.worktreePath ?? project?.workspaceRoot ?? null);
+  const attach = useAttachments({
+    session,
+    composerKey,
+    cwd: attachCwd,
+    maxFileBytes: serverConfig?.config ? (serverConfig.config.environment.capabilities.fileAttachments?.maxUploadBytes ?? null) : undefined,
+    confirm,
+    say,
+  });
+  const usage = useUsageSummary(session, settingsIndex !== null && live);
+  const usageInfo = useMemo(() => usageLimits(serverConfig?.config ?? null, now), [serverConfig, now]);
+  const useResetCredit = (credit: (typeof usageInfo.credits)[number]) =>
+    confirm({
+      title: "Use a reset credit?",
+      detail: "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      confirmLabel: "use credit",
+      run: () =>
+        session.consumeResetCredit(credit.input).then(
+          (result) => say(resetCreditOutcome(result)),
+          (error) => say(`Could not use the reset credit: ${messageOf(error)}`, true),
+        ),
+    });
+  const automationDefaults = (() => {
+    const projects = shell.snapshot?.projects ?? [];
+    const projectId = threadShell?.projectId ?? draft?.projectId ?? projects[0]?.id;
+    const modelSelection = threadShell?.modelSelection ?? draft?.modelSelection ?? serverConfig?.config?.settings.defaultModelSelection ?? undefined;
+    return projectId && modelSelection ? { projectId, threadId: threadShell?.id ?? "", modelSelection, runtimeMode: threadShell?.runtimeMode ?? draft?.runtimeMode ?? ("full-access" as const) } : null;
+  })();
+  const automationEditing = useAutomations({ session, renderer, projects: shell.snapshot?.projects ?? [], defaults: automationDefaults, confirm, run, say });
 
   const openDiff = (path: string | null) => {
     if (!vcsCwd) return;
@@ -725,7 +761,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     const { existingWorktree: _, ...rest } = draft;
     setDraft({ ...rest, envMode: draft.existingWorktree ? "local" : draft.envMode === "local" ? "worktree" : "local" });
   };
-  const launchDraft = (text: string, context?: OrchestrationMessageContext) => {
+  const launchDraft = (text: string, context?: OrchestrationMessageContext, attachments: readonly ChatAttachment[] = []) => {
     if (!draft || !draftProject) return;
     const launching = draft;
     const project = draftProject;
@@ -740,7 +776,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       }
       return session.launchThread({
         projectId: launching.projectId,
-        title: deriveThreadTitleSeed({ text, attachments: [] }),
+        title: deriveThreadTitleSeed({ text, attachments: [...attachments] }),
         generateTitle: true,
         modelSelection: launching.modelSelection,
         runtimeMode: launching.runtimeMode,
@@ -748,6 +784,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         workspaceStrategy,
         text,
         context,
+        attachments,
       });
     })().then(
       (id) => {
@@ -873,26 +910,32 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       return;
     }
     const text = raw.trim();
+    const attachedFiles = attach.pending;
     const context = messageContext(text, mentions.current.get(composerKey) ?? new Map());
     if (draft) {
-      if (!text) return;
+      if (!text && attachedFiles.length === 0) return;
+      const taken = attach.take();
       clearComposer();
-      return launchDraft(text, context);
+      return launchDraft(text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, context, taken);
     }
     if (!threadId) return;
     if (pendingInput && questionDraft) {
+      if (attachedFiles.length > 0) return say("Attachments can't go with a question answer here; remove them first from the palette.", true);
       const question = pendingInput.questions[questionDraft.index];
       if (!question) return;
       const answer = text ? setPendingUserInputCustomAnswer(question, questionDraft.answers[question.id], text) : questionDraft.answers[question.id];
       clearComposer();
       return advanceQuestion({ ...questionDraft, answers: { ...questionDraft.answers, ...(answer ? { [question.id]: answer } : {}) } });
     }
-    if (!text) return;
+    if (!text && attachedFiles.length === 0) return;
+    if (pendingApproval && attachedFiles.length > 0) return say("Send approval feedback without attachments or added context.", true);
     clearComposer();
+    const taken = attach.take();
+    const sendText = text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
     if (pendingApproval) {
       // As in the web composer: the message declines the request and redirects the agent.
       if (pendingApproval.supportsFeedback) return run("Declined with feedback", () => session.respond(threadId, pendingApproval.requestId, "decline", text));
-      return run("Declined and redirected", () => session.sendMessage(threadId, text, "steer", undefined, context));
+      return run("Declined and redirected", () => session.sendMessage(threadId, sendText, "steer", undefined, context, taken));
     }
     const dispatchMode = resolveComposerDispatchMode({ running: working, alternateModifier: alternate, activeTurnDefault: config.followUpBehavior });
     const pendingModel = pendingModels.get(threadId);
@@ -903,7 +946,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         return next;
       });
     }
-    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, text, dispatchMode, pendingModel, context));
+    run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, sendText, dispatchMode, pendingModel, context, taken));
   };
 
   const loadEarlier = () => {
@@ -938,6 +981,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     if (action.kind === "automation") {
       command(action.id, `Run automation: ${action.task.title}`, () => runAutomation(action.task), { keywords: ["scheduled", "task"] });
       command(`${action.id}:toggle`, `${action.task.enabled ? "Turn off" : "Turn on"} automation: ${action.task.title}`, () => toggleAutomation(action.task), { keywords: ["scheduled", "task", "enable", "disable"] });
+      command(`${action.id}:edit`, `Edit automation: ${action.task.title}`, () => automationEditing.editAutomation(action.task), { keywords: ["scheduled", "task", "editor"] });
+      command(`${action.id}:delete`, `Delete automation: ${action.task.title}`, () => automationEditing.deleteAutomation(action.task), { keywords: ["scheduled", "task", "remove"] });
     }
   }
   if (parent) command("parent", `Go to parent: ${parent.title}`, () => openThread(parent.threadId), { shortcut: "u" });
@@ -959,6 +1004,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   if (currentModel) command("model", "Change model, options or mode", openModelPicker, { shortcut: "m", keywords: ["provider", "thinking", "reasoning", "effort", "speed", "fast", "access", "approval"] });
   if (threadShell && !draft) command("terminal", "Open terminal", openTerminal, { shortcut: "ctrl+j", keywords: ["shell", "console"] });
   if (threadId || draft) command("editor", "Write the message in $EDITOR", openEditor, { shortcut: "ctrl+g", keywords: ["vim", "editor", "compose"] });
+  if (threadId || draft) commands.push(...attach.commands);
+  command("new-automation", "New automation", automationEditing.newAutomation, { keywords: ["scheduled", "task", "create", "editor"] });
+  usageInfo.credits.forEach((credit, index) => command(`reset-credit:${index}`, `Use reset credit: ${credit.label}`, () => useResetCredit(credit), { keywords: ["usage", "limit", "reset", "credit"] }));
   command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options", "notifications", "alerts"] });
   command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
 
@@ -1186,6 +1234,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         return;
       case "c":
         return startDraft();
+      case "a":
+        if (threadId || draft) attach.attachFile();
+        return;
       case "m":
         return openModelPicker();
       case ".":
@@ -1309,6 +1360,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
           <strong>tui3</strong>
         </text>
         <text fg={shell.status.type === "live" ? colors.faint : colors.warn}>{`  ${status}`}</text>
+        {usageInfo.note ? <text fg={colors.warn} wrapMode="none">{`  ${usageInfo.note}`}</text> : null}
         <box flexGrow={1} />
         <text fg={colors.faint}>ctrl+k commands</text>
       </box>
@@ -1343,6 +1395,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               rows={settingsRows}
               server={serverSettingLines(serverConfig?.config ?? null)}
               serverStatus={serverConfig?.status ?? "loading"}
+              usage={[...usageInfo.lines, ...usageSummaryLines(usage.summary), ...(usage.failed && !usage.summary ? [{ label: "Last 30 days", value: "could not read usage" }] : [])]}
               selected={settingsIndex}
               path={configPath().replace(homedir(), "~")}
               onCycle={(index) => {
@@ -1392,6 +1445,11 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             />
           ) : null}
           {menu ? <ComposerMenu items={menu.items} selected={menuSelected} empty={menu.empty} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} onPick={(index) => chooseMenuItem(menu.items[index])} /> : null}
+          {attach.line ? (
+            <box flexDirection="row" height={1} flexShrink={0} paddingLeft={2} paddingRight={2}>
+              <text fg={colors.muted} wrapMode="none">{attach.line}</text>
+            </box>
+          ) : null}
           {threadId || draft ? (
             <box
               border
@@ -1506,7 +1564,7 @@ function hints(
   if (state.diff) return "j/k scroll · esc close diff · l details";
   if (state.draft) return "i write the first message · p project · m model & mode · w worktree · esc cancel";
   const parts = state.attached ? ["j/k scroll"] : ["j/k threads", "/ filter"];
-  parts.push("i type", "c new", ". actions", "m model", "ctrl+j terminal", "l details");
+  parts.push("i type", "c new", "a attach", ". actions", "m model", "ctrl+j terminal", "l details");
   if (state.parent) parts.push("u parent");
   parts.push("ctrl+k commands", "q quit");
   if (state.question) parts.unshift("1-9 pick · x dismiss");
