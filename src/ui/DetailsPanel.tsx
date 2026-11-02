@@ -198,6 +198,7 @@ const TASK_GLYPHS = { completed: "✓", running: "◐", pending: "○" } as cons
 function StatusBlock({ details, inner }: { readonly details: ThreadDetails; readonly inner: number }) {
   const { status, context, limits } = details;
   if (!status && !context && !limits) return null;
+  const shownLimits = limits ? fittingLimits(limits, inner - "Limits   ".length - " left".length) : null;
   const filled = context?.left == null ? 0 : Math.round((context.left / 100) * BAR_CELLS);
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -216,16 +217,17 @@ function StatusBlock({ details, inner }: { readonly details: ThreadDetails; read
           )}
         </box>
       ) : null}
-      {limits ? (
+      {shownLimits ? (
         <box flexDirection="row">
           <text fg={colors.muted} flexShrink={0}>{"Limits   "}</text>
-          <box flexDirection="row" flexWrap="wrap" flexShrink={1}>
-            {limits.map((limit, index) => (
+          <box flexDirection="row" flexShrink={1}>
+            {shownLimits.map((limit, index) => (
               <box key={limit.label} flexDirection="row">
                 <text fg={colors.faint}>{`${index > 0 ? " · " : ""}${limit.label} `}</text>
                 <text fg={limit.tone === "muted" ? colors.muted : statusColor(limit.tone)}>{`${limit.left}%`}</text>
               </box>
             ))}
+            <text fg={colors.faint}> left</text>
           </box>
         </box>
       ) : null}
@@ -358,4 +360,17 @@ function countsText(insertions: number, deletions: number): string {
 /** Keeps the end of a path, where the file name is, as the web's StartTruncatedPath does. */
 function startTruncate(text: string, width: number): string {
   return text.length > width ? `…${text.slice(text.length - width + 1)}` : text;
+}
+
+/** The tightest limits first, as many as fit on the line, and always the tightest. */
+function fittingLimits<T extends { readonly label: string; readonly left: number }>(limits: readonly T[], width: number): T[] {
+  const shown: T[] = [];
+  let used = 0;
+  for (const limit of [...limits].sort((a, b) => a.left - b.left)) {
+    const cost = (shown.length > 0 ? 3 : 0) + `${limit.label} ${limit.left}%`.length;
+    if (shown.length > 0 && used + cost > width) break;
+    shown.push(limit);
+    used += cost;
+  }
+  return shown;
 }
