@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { withApproval, withQuestion } from "./fixtures.ts";
+import { omittedCommand, withApproval, withOmittedOutput, withQuestion } from "./fixtures.ts";
 import { loadLayout } from "../../src/layout.ts";
 import { fakeSession, renderApp, v2ThreadId } from "./harness.tsx";
 
@@ -240,6 +240,30 @@ describe("connection", () => {
     expect(app.calls("sendMessage")).toHaveLength(1);
     expect(app.hints()).toBe("Not sent: socket closed");
     expect(app.frame()).toContain("hello there");
+  });
+});
+
+describe("command output", () => {
+  const session = () => fakeSession({ projection: withOmittedOutput(), results: { turnItem: { ...omittedCommand, outputOmitted: false, output: "12 pass\n0 fail" } } });
+
+  test("output the server left out loads when the command opens", async () => {
+    const app = await open({ session: session() });
+    const row = app.find("bun test");
+    await app.click(row.x, row.y);
+    await app.settle(50);
+    expect(app.calls("turnItem").map((call) => call.args)).toEqual([[omittedCommand.threadId, omittedCommand.id]]);
+    expect(app.frame()).toContain("12 pass");
+  });
+
+  test("Copy output fetches it first", async () => {
+    const app = await open({ session: session() });
+    const row = app.find("bun test");
+    await app.click(row.x, row.y, 2);
+    await app.type("copy output");
+    await app.press("return");
+    await app.settle(50);
+    expect(app.calls("turnItem")).toHaveLength(1);
+    expect(app.hints()).toBe("Copied the output");
   });
 });
 

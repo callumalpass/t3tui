@@ -4,6 +4,7 @@ import {
   type OrchestrationGetFullThreadDiffInput,
   type ReviewDiffFileContentsInput,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2TurnItem,
   type TurnItemId,
   MessageId,
   ORCHESTRATION_PROTOCOL_HEADER,
@@ -362,6 +363,12 @@ export class T3Session {
 
   fullThreadDiff(input: OrchestrationGetFullThreadDiffInput) {
     return Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff](input));
+  }
+
+  /** One turn item in full: the server leaves long command output out of the thread (`outputOmitted`). */
+  async turnItem(threadId: ThreadId, itemId: TurnItemId): Promise<OrchestrationV2TurnItem | null> {
+    const result = await Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getTurnItem]({ threadId, itemId }));
+    return result.item ?? null;
   }
 
   diffFileContents(input: ReviewDiffFileContentsInput) {

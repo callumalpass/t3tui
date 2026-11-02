@@ -31,3 +31,33 @@ export function withQuestion(): OrchestrationV2ThreadProjection {
     ],
   } as unknown as OrchestrationV2ThreadProjection;
 }
+
+/** A finished command whose long output the server left out of the thread. */
+export const omittedCommand = {
+  id: "item-cmd",
+  threadId: v2Projection.thread.id,
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 0,
+  status: "completed",
+  title: null,
+  startedAt: at,
+  completedAt: at,
+  updatedAt: at,
+  type: "command_execution",
+  input: "bun test",
+  outputOmitted: true,
+  exitCode: 0,
+} as const;
+
+export function withOmittedOutput(): OrchestrationV2ThreadProjection {
+  return {
+    ...v2Projection,
+    turnItems: [omittedCommand],
+    visibleTurnItems: [{ position: 0, visibility: "local", sourceThreadId: omittedCommand.threadId, sourceItemId: omittedCommand.id, item: omittedCommand }],
+  } as unknown as OrchestrationV2ThreadProjection;
+}

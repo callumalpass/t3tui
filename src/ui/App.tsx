@@ -2,7 +2,7 @@ import type { KeyEvent, MouseEvent, ScrollBoxRenderable, Selection, TextareaRend
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
-import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -925,13 +925,21 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
     copyText(renderer, text);
     say(`Copied ${label}`);
   };
+  /** Long output stays on the server until it's asked for. */
+  const copyOmittedOutput = (source: { readonly threadId: ThreadId; readonly itemId: TurnItemId }) => () => {
+    say("Fetching the output…");
+    session.turnItem(source.threadId, source.itemId).then(
+      (item) => (item?.type === "command_execution" && item.output ? copy("the output", item.output) : say("The command left no output.")),
+      (error) => say(`Could not fetch the output: ${error instanceof Error ? error.message : String(error)}`, true),
+    );
+  };
   /** The right-click menu on a message or command, as a picker like the thread menu. */
   const openConversationMenu = (target: ConversationTarget) => {
     const items: PickerItem[] =
       target.kind === "command"
         ? [
             { id: "copy-command", title: "Copy command", run: () => copy("the command", target.command) },
-            ...(target.output ? [{ id: "copy-output", title: "Copy output", run: () => copy("the output", target.output) }] : []),
+            ...(target.output ? [{ id: "copy-output", title: "Copy output", run: () => copy("the output", target.output) }] : target.omitted && target.source ? [{ id: "copy-output", title: "Copy output", run: copyOmittedOutput(target.source) }] : []),
           ]
         : [
             { id: "copy-message", title: "Copy message", run: () => copy("the message", target.text) },

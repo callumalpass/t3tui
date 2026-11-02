@@ -1,8 +1,8 @@
 import type { MouseEvent, ScrollBoxRenderable } from "@opentui/core";
-import type { ProviderApprovalDecision, ThreadId } from "@t3tools/contracts";
+import type { ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { liveThoughtLine, workEntryDisplayIndicatesToolFailure, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
-import { memo, useState, type RefObject } from "react";
+import { memo, useEffect, useState, type RefObject } from "react";
 import { findTextSegments } from "../model/search.ts";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import type { OrchestrationV2SearchThreadResult } from "@t3tools/contracts";
@@ -19,7 +19,8 @@ import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
 /** What a right-click in the conversation was on. */
 export type ConversationTarget =
   | { readonly kind: "message"; readonly messageId: string; readonly role: "user" | "assistant" | "system"; readonly text: string }
-  | { readonly kind: "command"; readonly command: string; readonly output: string };
+  /** `omitted`: the server left the output out of the thread; `source` is where to fetch it. */
+  | { readonly kind: "command"; readonly command: string; readonly output: string; readonly omitted: boolean; readonly source: { readonly threadId: ThreadId; readonly itemId: TurnItemId } | null };
 
 export interface ConversationMouse {
   readonly respond: (decision: ProviderApprovalDecision) => void;
@@ -229,6 +230,28 @@ function UserMessage({ text, messageId, selected, onSelect, onMenu }: { readonly
   );
 }
 
+/** Output the server left out of the thread, fetched when its row opens. */
+function OmittedOutput({ session, source }: { readonly session: T3Session; readonly source: { readonly threadId: ThreadId; readonly itemId: TurnItemId } | null }) {
+  const [state, setState] = useState<{ readonly text: string } | { readonly error: string } | null>(null);
+  const threadId = source?.threadId;
+  const itemId = source?.itemId;
+  useEffect(() => {
+    if (!threadId || !itemId) return;
+    let cancelled = false;
+    session.turnItem(threadId, itemId).then(
+      (item) => !cancelled && setState({ text: item?.type === "command_execution" ? (item.output ?? "") : "" }),
+      (error) => !cancelled && setState({ error: error instanceof Error ? error.message : String(error) }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [session, threadId, itemId]);
+  if (!source) return <text fg={colors.faint}>The output wasn't sent with the thread.</text>;
+  if (!state) return <text fg={colors.faint}>Loading output…</text>;
+  if ("error" in state) return <text fg={colors.bad}>{`Could not load the output: ${state.error}`}</text>;
+  return <text fg={colors.muted}>{state.text || "No output."}</text>;
+}
+
 function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu, session, streamCommandOutput, scrollRef }: { readonly entry: WorkLogEntry; readonly expanded: boolean; readonly label: string; readonly onOpenThread: (threadId: ThreadId) => void; readonly onMenu: (target: ConversationTarget) => void; readonly session: T3Session; readonly streamCommandOutput: boolean; readonly scrollRef: RefObject<ScrollBoxRenderable | null> }) {
   const [open, setExpanded] = useState<boolean | null>(null);
   const [hover, hoverProps] = useHover();
@@ -241,9 +264,12 @@ function WorkEntry({ entry, expanded: groupExpanded, label, onOpenThread, onMenu
   const tone = failed || entry.tone === "error" ? colors.bad : child ? colors.accent : entry.tone === "thinking" ? colors.faint : colors.muted;
   const clickable = Boolean(command || child);
   const text = <text fg={clickable && hover ? colors.text : tone} selectable={!clickable}>{`${failed ? "✕" : glyphFor(entry)} ${firstLine(label)}${child ? "  ↗" : ""}`}</text>;
+  const source = projected ? { threadId: projected.sourceThreadId, itemId: projected.sourceItemId } : null;
+  const streaming = expanded && streamCommandOutput && source !== null;
   if (command) return <box flexDirection="column">
-    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu({ kind: "command", command: command.input, output: command.output ?? "" }) : isLeftClick(event) ? setExpanded(!expanded) : undefined)}><text fg={colors.faint} selectable={false}>{expanded ? "⌄ " : "› "}</text>{text}</box>
-    {expanded && streamCommandOutput && projected ? <CommandOutput session={session} threadId={projected.sourceThreadId} itemId={projected.sourceItemId} scrollRef={scrollRef} />
+    <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => (isRightClick(event) ? onMenu({ kind: "command", command: command.input, output: command.output ?? "", omitted: command.outputOmitted === true, source }) : isLeftClick(event) ? setExpanded(!expanded) : undefined)}><text fg={colors.faint} selectable={false}>{expanded ? "⌄ " : "› "}</text>{text}</box>
+    {streaming ? <CommandOutput session={session} threadId={source.threadId} itemId={source.itemId} scrollRef={scrollRef} />
+      : expanded && command.outputOmitted ? <OmittedOutput session={session} source={source} />
       : expanded ? <text fg={colors.muted}>{command.output || "No output."}</text> : null}
   </box>;
   return child ? <box {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onOpenThread(child)}>{text}</box> : text;
