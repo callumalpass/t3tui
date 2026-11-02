@@ -228,7 +228,7 @@ function automationLine(task: ScheduledTask, now: number, timestampFormat: Tui3C
     task.schedule.type === "interval"
       ? `every ${formatWorkingDurationLabel(task.schedule.everyMs)}`
       : task.schedule.type === "fixed_time"
-        ? `${task.schedule.weekdays && task.schedule.weekdays.length < 7 ? task.schedule.weekdays.map((day) => WEEKDAYS[day]).join(",") + " " : "daily "}${formatClock(task.schedule.timeOfDay, timestampFormat)}`
+        ? `${task.schedule.weekdays && task.schedule.weekdays.length < 7 ? `${task.schedule.weekdays.map((day) => WEEKDAYS[day]).join(",")} ` : "daily "}${formatClock(task.schedule.timeOfDay, timestampFormat)}`
         : "on webhook";
   if (!task.enabled) return { task, schedule, status: "off", tone: "muted" };
   if (task.lastRunStatus === "running") return { task, schedule, status: "running", tone: "info" };

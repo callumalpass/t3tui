@@ -47,8 +47,14 @@ export function useSecretRequest(input: { readonly session: T3Session; readonly 
     if (!request) return false;
     if (value === null) {
       if (!nav) return false;
-      if (event.name === "return") return setValue(""), true;
-      if (event.name === "x" && !questionPending) return answer({ type: "decline" }), true;
+      if (event.name === "return") {
+        setValue("");
+        return true;
+      }
+      if (event.name === "x" && !questionPending) {
+        answer({ type: "decline" });
+        return true;
+      }
       return false;
     }
     if (event.ctrl && event.name === "c") return false;

@@ -114,29 +114,44 @@ export function useQueue(input: {
       switch (event.name) {
         case "j":
         case "down":
-          return setFocus(Math.min(queued.length - 1, focus + 1)), true;
+          setFocus(Math.min(queued.length - 1, focus + 1));
+          return true;
         case "k":
         case "up":
-          return setFocus(Math.max(0, focus - 1)), true;
+          setFocus(Math.max(0, focus - 1));
+          return true;
         case "return":
         case "s":
-          return sendNow(message), true;
+          sendNow(message);
+          return true;
         case "e":
-          return beginEdit(message), true;
+          beginEdit(message);
+          return true;
         case "x":
         case "d":
         case "backspace":
-          return remove(message), true;
+          remove(message);
+          return true;
         case "escape":
         case "q":
-          return setFocus(null), true;
+          setFocus(null);
+          return true;
       }
       return false;
     }
-    if (mode === "nav" && event.name === "q" && event.shift && queued.length > 0) return setFocus(0), true;
+    if (mode === "nav" && event.name === "q" && event.shift && queued.length > 0) {
+      setFocus(0);
+      return true;
+    }
     // The web's alt+↑: edit the last queued message.
-    if (mode === "input" && event.meta && event.name === "up" && !editing && queued.length > 0) return beginEdit(queued[queued.length - 1]!), true;
-    if (mode === "input" && event.name === "escape" && editing) return cancelEdit(), true;
+    if (mode === "input" && event.meta && event.name === "up" && !editing && queued.length > 0) {
+      beginEdit(queued[queued.length - 1]!);
+      return true;
+    }
+    if (mode === "input" && event.name === "escape" && editing) {
+      cancelEdit();
+      return true;
+    }
     return false;
   };
 

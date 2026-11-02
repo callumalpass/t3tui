@@ -18,6 +18,7 @@ export function ring(): void {
  * either ignore it. In tmux it needs `set -g allow-passthrough on`.
  */
 export function desktopNotify(title: string, body: string): void {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are what is being stripped
   const clean = (text: string) => text.replace(/[\x00-\x1f\x7f;]/g, " ").slice(0, 200);
   const sequence = process.env.KITTY_WINDOW_ID
     ? `\x1b]99;i=tui3:d=0;${clean(title)}\x1b\\\x1b]99;i=tui3:p=body;${clean(body)}\x1b\\`

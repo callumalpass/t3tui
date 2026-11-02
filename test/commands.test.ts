@@ -78,7 +78,12 @@ describe("commands tui3 dispatches", () => {
   test("a new thread launches with a payload the server accepts", async () => {
     const session = new T3Session();
     let payload: unknown;
-    const rpc = { "orchestration.launchThread": (input: unknown) => ((payload = input), Effect.succeed({ threadId: ThreadId.make("new-1") })) };
+    const rpc = {
+      "orchestration.launchThread": (input: unknown) => {
+        payload = input;
+        return Effect.succeed({ threadId: ThreadId.make("new-1") });
+      },
+    };
     (session as unknown as { connection: unknown }).connection = { rpc };
     const id = await session.launchThread({
       projectId: ProjectId.make("p1"),
@@ -104,7 +109,12 @@ describe("commands tui3 dispatches", () => {
 
     const launching = new T3Session();
     let payload: unknown;
-    const rpc = { "orchestration.launchThread": (input: unknown) => ((payload = input), Effect.succeed({ threadId: ThreadId.make("new-2") })) };
+    const rpc = {
+      "orchestration.launchThread": (input: unknown) => {
+        payload = input;
+        return Effect.succeed({ threadId: ThreadId.make("new-2") });
+      },
+    };
     (launching as unknown as { connection: unknown }).connection = { rpc };
     await launching.launchThread({
       projectId: ProjectId.make("p1"),
