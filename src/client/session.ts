@@ -10,6 +10,9 @@ import {
   type OrchestrationV2ThreadProjection,
   type ProviderApprovalDecision,
   type RuntimeRequestId,
+  type OrchestrationV2Subagent,
+  type RunId,
+  type SecretRequestAnswerInput,
   type ThreadId,
   type DiscoveredLocalServer,
   type GitActionProgressEvent,
@@ -36,9 +39,11 @@ import {
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import { secretRequestFailureMessage } from "@t3tools/client-runtime/secret-request";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { appendFileSync } from "node:fs";
 
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -415,6 +420,69 @@ export class T3Session {
   /** Stops whatever the thread is running, the way the GUI's stop button does. */
   stopThread(threadId: ThreadId): Promise<void> {
     return this.dispatch({ type: "thread.stop", commandId: newCommandId(), threadId });
+  }
+
+  /**
+   * Ends one subagent's task, as the web's interruptThreadTurn does: an app-owned one is ended by
+   * its parent and its own thread stopped, even when the parent lost track of it.
+   */
+  async stopSubagent(agent: OrchestrationV2Subagent): Promise<void> {
+    const stop = (runId: RunId) => this.dispatch({ type: "subagent.stop", commandId: newCommandId(), threadId: agent.threadId, runId, subagentId: agent.id });
+    if (agent.origin === "app_owned" && agent.childThreadId !== null) {
+      if (agent.runId !== null) await stop(agent.runId).catch(() => {});
+      return this.stopThread(agent.childThreadId);
+    }
+    if (agent.runId != null) await stop(agent.runId);
+  }
+
+  // The queue's controls, as the web's QueuedRunsControl sends them.
+  startQueuedRun(threadId: ThreadId, runId: RunId): Promise<void> {
+    return this.dispatch({ type: "queued-run.start", commandId: newCommandId(), threadId, runId });
+  }
+
+  promoteQueuedRun(threadId: ThreadId, queuedRunId: RunId, targetRunId: RunId): Promise<void> {
+    return this.dispatch({ type: "queued-message.promote-to-steer", commandId: newCommandId(), threadId, queuedRunId, targetRunId });
+  }
+
+  cancelQueuedRun(threadId: ThreadId, runId: RunId): Promise<void> {
+    return this.dispatch({ type: "queued-run.cancel", commandId: newCommandId(), threadId, runId });
+  }
+
+  editQueuedRun(threadId: ThreadId, runId: RunId, text: string): Promise<void> {
+    return this.dispatch({ type: "queued-run.edit", commandId: newCommandId(), threadId, runId, text });
+  }
+
+  /** Releases turns held after an interrupt. */
+  resumeQueue(threadId: ThreadId): Promise<void> {
+    return this.dispatch({ type: "queue.resume", commandId: newCommandId(), threadId });
+  }
+
+  /** The web's resume: "Continue where you left off." after an interrupted run, then the held queue. */
+  async continueRun(threadId: ThreadId, runId: RunId | null, releaseQueue: boolean, modelSelection?: ModelSelection): Promise<void> {
+    if (runId !== null) {
+      const commandId = newCommandId();
+      await this.dispatch({
+        type: "message.dispatch",
+        commandId,
+        threadId,
+        messageId: MessageId.make(commandId),
+        text: "Continue where you left off.",
+        attachments: [],
+        manualContinuationOfRunId: runId,
+        ...(modelSelection ? { modelSelection } : {}),
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    if (releaseQueue) await this.resumeQueue(threadId);
+  }
+
+  /** Answers an agent's secret request; the server keeps the value, the thread only learns the outcome. */
+  async answerSecret(input: SecretRequestAnswerInput): Promise<void> {
+    const exit = await Effect.runPromiseExit(this.requireConnection().rpc[WS_METHODS.secretsAnswerRequest](input));
+    // Only the server's own messages pass through, so the typed value never shows in an error.
+    if (Exit.isFailure(exit)) throw new Error(secretRequestFailureMessage(Cause.squash(exit.cause)));
   }
 
   // The thread menu's actions, as the web's useThreadActions sends them.

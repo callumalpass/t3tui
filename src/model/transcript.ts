@@ -1,4 +1,5 @@
 import type { OrchestrationV2TurnItem, RuntimeRequestId } from "@t3tools/contracts";
+import { secretRequestDisplay } from "@t3tools/client-runtime/secret-request";
 
 /** A turn item as one line or card: the fallback for timeline event rows the web app renders specially. */
 export type Block =
@@ -76,6 +77,10 @@ export function blockFor(item: OrchestrationV2TurnItem, pending: ReadonlySet<str
       return { kind: "notice", id, text: item.summary, tone: item.outcome === "failed" ? "bad" : item.outcome === "completed" ? "good" : "muted" };
     case "compaction":
       return { kind: "notice", id, text: "context compacted", tone: "muted" };
+    case "secret_request": {
+      const display = secretRequestDisplay(item, "local");
+      return { kind: "notice", id, text: `🔒 ${item.label} · ${display.kind === "answered" ? display.label : "waiting for your answer"}`, tone: display.kind === "answered" ? "muted" : "warn" };
+    }
     case "handoff":
       return { kind: "notice", id, text: `handed off${item.toModel ? ` to ${item.toModel}` : ""}`, tone: "muted" };
     case "checkpoint":

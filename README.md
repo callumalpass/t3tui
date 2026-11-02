@@ -33,7 +33,7 @@ Any mode:
 | `pgup`/`pgdn`, `ctrl+u`/`ctrl+d` | scroll the conversation |
 | `ctrl+c` | quit |
 
-Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`); save and quit to bring it back.
+Typing: `enter` sends. While the agent is running, `enter` steers it (the message reaches it mid-run) and `alt+enter` queues the message for after the run, as in T3 Code. With an approval pending, a typed message declines it with your feedback. `shift+enter` adds a newline (it needs a terminal with the kitty keyboard protocol); so does ending the line with `\` and pressing `enter`. The box grows up to 8 lines. With the box empty after an interrupted run (or one a usage limit stopped), `enter` continues where it left off, as T3's resume button does, and releases messages held in the queue. `ctrl+g` opens the message in `$VISUAL` or `$EDITOR` (falling back to `vi`); save and quit to bring it back.
 
 As in T3 Code's message box, typing a trigger opens a list of suggestions above the box:
 
@@ -55,7 +55,9 @@ Navigation:
 | `m` | model, options (reasoning, fast mode…) and access mode |
 | `y` / `Y` / `n` | approve / always allow this session / decline the pending approval |
 | `1`–`9` | pick an option when the agent asks a question (also in an empty message box) |
-| `x` | dismiss the agent's question |
+| `x` | dismiss the agent's question, or decline its secret request |
+| `enter` | with a secret request pending: type or paste the secret into a masked field (it never goes through the message box); `enter` saves it, `esc` cancels |
+| `Q` | go through queued messages: `j`/`k` move, `enter` sends one now (starts a turn, or steers it into the running one), `e` edits it in the message box (`enter` saves, `esc` cancels), `x` removes it. `alt+↑` in the message box edits the last one |
 | `e` | expand all folded turns and work groups |
 | `o` | load earlier turns |
 | `d` | show or hide thread details |
@@ -76,7 +78,7 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `j`/`k` scroll, `esc` closes.
 - **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
 - **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
-- **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them).
+- **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them). A running subagent the web could stop gets a "Stop subagent" command in the palette.
 - **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring; start with `>` for commands only.
 - **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
 - Threads open scrolled to the bottom.
@@ -140,7 +142,7 @@ Long threads load as a bounded window of recent turns; press `o` for older ones.
 ## How it connects
 
 - It finds the local server from `~/.t3/userdata/server-runtime.json` (override with `TUI3_SERVER`).
-- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate`, `filesystem:read` (diffs), `source-control:write` (git actions), `terminal:read` and `terminal:operate` (terminals, stopping servers), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
+- On first run it mints its own bearer session with `t3 auth session issue --label tui3`, scoped to `orchestration:read`, `orchestration:operate`, `filesystem:read` (diffs), `source-control:write` (git actions), `terminal:read` and `terminal:operate` (terminals, stopping servers), `diagnostics:read` (usage limits) and `providers:manage` (spending a usage reset credit), and stores it in `~/.config/tui3/credentials.json` (mode 600). Revoke it any time with `t3 auth session revoke`. A stored credential missing any of these scopes is replaced with a new one. For a remote server, pass a token in `TUI3_TOKEN`.
 - It speaks T3 Code's own WebSocket RPC protocol, typed by upstream's `@t3tools/contracts`, and applies thread updates with upstream's own reducers. Both come from `vendor/t3code`, a submodule pinned to the server version this was built against (`v0.1.6-nightly.20261030.3917`).
 
 Set `TUI3_DEBUG=/path/to/log` to log thread subscriptions and snapshots.

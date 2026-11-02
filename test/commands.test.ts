@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { OrchestrationV2Command, OrchestrationV2ThreadLaunchInput, ProjectId, ProviderInstanceId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
+import { NodeId, OrchestrationV2Command, OrchestrationV2ThreadLaunchInput, ProjectId, ProviderInstanceId, RunId, ThreadId, RuntimeRequestId, type OrchestrationV2Subagent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -93,5 +93,37 @@ describe("commands tui3 dispatches", () => {
     expect(id as string).toBe("new-1");
     expect(Schema.is(OrchestrationV2ThreadLaunchInput)(payload)).toBe(true);
     expect(payload).toMatchObject({ initialMessage: { text: "Fix the flaky test", attachments: [] } });
+  });
+});
+
+describe("queue, resume and subagent commands", () => {
+  const runId = RunId.make("run-2");
+
+  test("queue controls dispatch as the web's QueuedRunsControl", async () => {
+    const { session, sent } = capturingSession();
+    await session.startQueuedRun(threadId, runId);
+    await session.promoteQueuedRun(threadId, runId, RunId.make("run-1"));
+    await session.cancelQueuedRun(threadId, runId);
+    await session.editQueuedRun(threadId, runId, "reworded");
+    await session.resumeQueue(threadId);
+    expect(sent.every(isCommand)).toBe(true);
+    expect(sent.map((command) => (command as { type: string }).type)).toEqual(["queued-run.start", "queued-message.promote-to-steer", "queued-run.cancel", "queued-run.edit", "queue.resume"]);
+  });
+
+  test("resuming continues the interrupted run, then releases the held queue", async () => {
+    const { session, sent } = capturingSession();
+    await session.continueRun(threadId, RunId.make("run-1"), true);
+    expect(sent.every(isCommand)).toBe(true);
+    expect(sent[0]).toMatchObject({ type: "message.dispatch", text: "Continue where you left off.", manualContinuationOfRunId: "run-1", dispatchMode: { type: "start_immediately" } });
+    expect(sent[1]).toMatchObject({ type: "queue.resume" });
+  });
+
+  test("an app-owned subagent is stopped from its parent and in its own thread", async () => {
+    const { session, sent } = capturingSession();
+    const child = ThreadId.make("child-1");
+    await session.stopSubagent({ id: NodeId.make("node-1"), threadId, runId: RunId.make("run-1"), origin: "app_owned", childThreadId: child } as OrchestrationV2Subagent);
+    expect(sent.every(isCommand)).toBe(true);
+    expect(sent[0]).toMatchObject({ type: "subagent.stop", threadId, subagentId: "node-1" });
+    expect(sent[1]).toMatchObject({ type: "thread.stop", threadId: child });
   });
 });

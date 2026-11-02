@@ -34,12 +34,17 @@ import { DraftView, type DraftLine } from "./DraftView.tsx";
 import { editInEditor } from "./editor.ts";
 import { Palette } from "./Palette.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
+import { QueuePanel } from "./QueuePanel.tsx";
+import { SecretPanel } from "./SecretPanel.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { attachTerminal } from "./terminalAttach.ts";
 import { copyText, desktopNotify, ring } from "./terminalOut.ts";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { ThreadView } from "./ThreadView.tsx";
+import { useQueue } from "./useQueue.ts";
+import { useSecretRequest } from "./useSecretRequest.ts";
+import { canStopSubagent } from "../model/subagents.ts";
 
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
@@ -328,6 +333,18 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       (error) => say(`${label} failed: ${messageOf(error)}`, true),
     );
   };
+  const queue = useQueue({
+    session,
+    threadId: draft ? undefined : threadId,
+    projection,
+    composer: () => composerRef.current,
+    openQuestionCount: current?.pending.userInputs.length ?? 0,
+    modelSelection: threadId ? pendingModels.get(threadId) : undefined,
+    run,
+    say,
+    toInput: () => setMode("input"),
+  });
+  const secret = useSecretRequest({ session, projection: draft ? null : projection });
   onAlert.current = (alert) => {
     const mode = config.notificationMode;
     if (mode === "sound" || mode === "notifications-and-sound") ring();
@@ -887,6 +904,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       clearComposer();
       return advanceQuestion({ ...questionDraft, answers: { ...questionDraft.answers, ...(answer ? { [question.id]: answer } : {}) } });
     }
+    if (queue.submit(text)) return;
     if (!text) return;
     clearComposer();
     if (pendingApproval) {
@@ -930,6 +948,10 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
   }
   if (threadId && pendingInput?.dismissible) command("dismiss", "Dismiss question", () => run("Dismissed", () => session.dismissQuestion(threadId, pendingInput.requestId)), { shortcut: "x" });
   if (threadId) command("type", "Write a message", () => setMode("input"), { shortcut: "i", keywords: ["compose", "send", "steer"] });
+  commands.push(...secret.commands, ...queue.commands);
+  for (const agent of projection?.subagents ?? []) {
+    if (threadId && canStopSubagent(agent)) command(`stop-subagent:${agent.id}`, `Stop subagent: ${agent.title ?? "subagent"}`, () => run("Stop requested", () => session.stopSubagent(agent)), { keywords: ["interrupt", "cancel", "kill"] });
+  }
   if (threadId && working) command("stop", "Stop thread", () => run("Stop requested", () => session.stopThread(threadId)), { shortcut: "S", keywords: ["interrupt", "cancel"] });
   if (details?.changes && details.changes.files.length > 0) command("diff", "View uncommitted changes", () => openDiff(null), { keywords: ["diff", "changes"] });
   for (const action of actions) {
@@ -1112,6 +1134,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
       }
       return;
     }
+    if (secret.key(key, mode === "nav", Boolean(pendingInput))) return key.preventDefault();
+    if (queue.key(key, mode === "nav" ? "nav" : mode === "input" ? "input" : "other")) return key.preventDefault();
     if (globalKey(key)) return key.preventDefault();
     const digit = /^[1-9]$/.test(key.name) && !key.ctrl && !key.meta ? Number(key.name) - 1 : -1;
     if (digit >= 0 && pendingInput && (mode === "nav" || (mode === "input" && composerEmpty))) {
@@ -1265,7 +1289,9 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
             : "Send a message to decline and redirect the agent"
           : pendingInput
             ? "Type your own answer, or leave this blank to use the selected option"
-            : working
+            : queue.placeholder
+              ? queue.placeholder
+              : working
               ? config.followUpBehavior === "queue"
                 ? "Queue a message for after this run (alt+enter to steer instead)"
                 : "Steer the agent (alt+enter to queue instead)"
@@ -1379,6 +1405,8 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
               <text fg={colors.muted}>{shell.snapshot ? "No thread selected." : "Waiting for threads…"}</text>
             </box>
           )}
+          {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} /> : null}
+          {queue.queued.length > 0 ? <QueuePanel queued={queue.queued} focus={queue.focus} editingRunId={queue.editingRunId} held={queue.queue?.held ?? false} width={width - listWidth - (detailsColumn ? DETAILS_WIDTH : 0) - 2} /> : null}
           {mode !== "confirm" && pendingInput && questionDraft ? <QuestionPanel request={pendingInput} index={questionDraft.index} draft={questionDraft.answers[pendingInput.questions[questionDraft.index]?.id ?? ""]} /> : null}
           {mode === "confirm" && confirmation ? (
             <ConfirmBar
@@ -1445,7 +1473,7 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
         ) : menuOpen ? (
           <text fg={colors.faint}>↑/↓ move · tab or enter choose · esc close</text>
         ) : (
-          <text fg={colors.faint}>{hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined })}</text>
+          <text fg={colors.faint}>{hints(mode, { draft: draft !== null, config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined, secret: secret.focused ? "focused" : secret.request ? "pending" : null, queue: queue.focused ? "focused" : queue.editing ? "editing" : queue.queued.length > 0 ? "queued" : null })}</text>
         )}
       </box>
       {mode === "palette" ? (
@@ -1485,8 +1513,22 @@ export function App(props: { readonly session: T3Session; readonly config: Tui3C
 
 function hints(
   mode: Mode,
-  state: { readonly draft: boolean; readonly config: Tui3Config; readonly approval: boolean; readonly question: boolean; readonly working: boolean; readonly attached: boolean; readonly diff: boolean; readonly parent: boolean },
+  state: {
+    readonly draft: boolean;
+    readonly config: Tui3Config;
+    readonly approval: boolean;
+    readonly question: boolean;
+    readonly working: boolean;
+    readonly attached: boolean;
+    readonly diff: boolean;
+    readonly parent: boolean;
+    readonly secret: "pending" | "focused" | null;
+    readonly queue: "queued" | "focused" | "editing" | null;
+  },
 ): string {
+  if (state.secret === "focused") return "type or paste the secret · enter save securely · esc cancel";
+  if (mode === "input" && state.queue === "editing") return "enter save the queued message · esc cancel the edit";
+  if (mode === "nav" && state.queue === "focused") return "j/k move · enter send now · e edit · x remove · esc back";
   if (mode === "filter") return "enter done · esc close";
   if (mode === "palette") return "↑/↓ move · enter run · esc close";
   if (mode === "picker") return "↑/↓ move · enter choose · esc close";
@@ -1499,6 +1541,7 @@ function hints(
     const newline = state.config.sendShortcut === "enter" ? "shift+enter or \\ newline" : "enter newline";
     const parts = [state.working ? `${send} ${state.config.followUpBehavior} · alt+enter ${other}` : `${send} send`, newline, "ctrl+g editor", "esc navigate"];
     if (state.question) parts.unshift("1-9 pick");
+    if (state.queue === "queued") parts.splice(1, 0, "alt+↑ edit queued");
     if (state.approval) parts.unshift("approval waiting: esc, then y/n");
     if (!state.attached) parts.push("ctrl+n/p thread");
     return parts.join(" · ");
@@ -1509,7 +1552,9 @@ function hints(
   parts.push("i type", "c new", ". actions", "m model", "ctrl+j terminal", "l details");
   if (state.parent) parts.push("u parent");
   parts.push("ctrl+k commands", "q quit");
+  if (state.queue === "queued") parts.unshift("Q queue");
   if (state.question) parts.unshift("1-9 pick · x dismiss");
+  if (state.secret === "pending") parts.unshift("enter answer the secret request · x decline");
   if (state.approval) parts.unshift("y approve · Y always · n decline");
   return parts.join(" · ");
 }
