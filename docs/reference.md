@@ -192,7 +192,7 @@ Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a clic
 | `diffIgnoreWhitespace` | `true`, `false` | `true` |
 | `notificationMode` | `off`, `sound` (bell), `notifications` (desktop), `notifications-and-sound` | `sound` |
 | `inAppNotificationsEnabled` | `true`, `false` | `true` |
-| `theme` | `auto` (match the terminal), `dark`, `light`; applies from the next start | `auto` |
+| `theme` | `auto` (dark or light, from the terminal's background), `dark`, `light`, or `terminal` (built from the terminal's own background, text and 16 ANSI colours); applies from the next start. Terminals that don't report their colours get `dark`. | `auto` |
 
 They have the same names as the app's settings. The app keeps its settings in the browser, so t3tui keeps its own, and turns the two alert settings on by default where the app leaves them off.
 

@@ -18,8 +18,8 @@ export interface T3tuiConfig {
   readonly notificationMode: "off" | "notifications" | "sound" | "notifications-and-sound";
   /** As the web's in-app toasts: a line at the bottom for threads you aren't looking at. */
   readonly inAppNotificationsEnabled: boolean;
-  /** auto follows the terminal's background colour. */
-  readonly theme: "auto" | "dark" | "light";
+  /** auto picks dark or light from the terminal's background; terminal builds the palette from its colours. */
+  readonly theme: "auto" | "dark" | "light" | "terminal";
 }
 
 export const DEFAULT_CONFIG: T3tuiConfig = { followUpBehavior: "steer", sendShortcut: "enter", timestampFormat: "locale", diffIgnoreWhitespace: true, notificationMode: "sound", inAppNotificationsEnabled: true, theme: "auto" };
@@ -32,7 +32,7 @@ export const CONFIG_CHOICES: { readonly [K in keyof T3tuiConfig]: readonly T3tui
   diffIgnoreWhitespace: [true, false],
   notificationMode: ["off", "sound", "notifications", "notifications-and-sound"],
   inAppNotificationsEnabled: [true, false],
-  theme: ["auto", "dark", "light"],
+  theme: ["auto", "dark", "light", "terminal"],
 };
 
 export const configPath = () => join(configDir(), "config.json");

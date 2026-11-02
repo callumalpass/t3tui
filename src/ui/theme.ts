@@ -1,4 +1,4 @@
-import { type NativeResourceOwner, SyntaxStyle, type ThemeMode } from "@opentui/core";
+import { type NativeResourceOwner, SyntaxStyle, type TerminalColors, type ThemeMode } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 
 import type { StatusTone } from "../model/threads.ts";
@@ -79,9 +79,81 @@ const LIGHT: Palette = {
 /** The palette in use. Read at render time, so applyTheme before the first frame sets it everywhere. */
 export const colors: Palette = { ...DARK };
 
-export function applyTheme(mode: ThemeMode): void {
-  Object.assign(colors, mode === "light" ? LIGHT : DARK);
+/** Sets the palette: the dark or light one, or one built with terminalPalette. */
+export function applyTheme(theme: ThemeMode | Palette): void {
+  Object.assign(colors, theme === "light" ? LIGHT : theme === "dark" ? DARK : theme);
   markdownStyles = new WeakMap();
+}
+
+/** Dark or light, by the background's luminance; null if the terminal didn't say. */
+export function themeModeOf(terminal: TerminalColors | null): ThemeMode | null {
+  const background = rgb(terminal?.defaultBackground ?? null);
+  if (!background) return null;
+  const [r, g, b] = background;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 127 ? "light" : "dark";
+}
+
+/**
+ * The terminal's own colours as a palette: panels and raised blocks a few small steps off
+ * its background, text from its foreground, status hues from its ANSI colours. Null without
+ * a background and foreground; colours it didn't report come from the dark or light palette.
+ */
+export function terminalPalette(terminal: TerminalColors | null): Palette | null {
+  const mode = themeModeOf(terminal);
+  const bg = terminal?.defaultBackground;
+  const text = terminal?.defaultForeground;
+  if (!mode || !bg || !text || !rgb(text)) return null;
+  const base = mode === "light" ? LIGHT : DARK;
+  const ansi = (index: number, fallback: string) => (rgb(terminal.palette[index] ?? null) ? terminal.palette[index]! : fallback);
+  // Lighter steps on a dark background, darker on a light one.
+  const step = (amount: number) => mix(bg, mode === "dark" ? "#ffffff" : "#000000", amount);
+  const accent = ansi(12, ansi(4, base.accent));
+  const good = ansi(2, base.good);
+  const bad = ansi(1, base.bad);
+  const cyan = ansi(6, base.info);
+  return {
+    bg,
+    panel: step(0.04),
+    element: step(0.08),
+    elementHover: step(0.12),
+    border: mix(bg, text, 0.22),
+    borderFocused: accent,
+    text,
+    muted: mix(text, bg, 0.4),
+    faint: mix(text, bg, 0.6),
+    accent,
+    user: cyan,
+    userBg: step(0.08),
+    good,
+    bad,
+    warn: ansi(3, base.warn),
+    selectedBg: mix(bg, accent, 0.22),
+    hoverBg: step(0.06),
+    buttonBg: step(0.08),
+    info: cyan,
+    input: ansi(5, base.input),
+    plan: ansi(11, ansi(3, base.plan)),
+    diffAddedBg: mix(bg, good, 0.14),
+    diffRemovedBg: mix(bg, bad, 0.14),
+    diffGutterBg: step(0.03),
+    diffAddedGutterBg: mix(bg, good, 0.26),
+    diffRemovedGutterBg: mix(bg, bad, 0.26),
+    diffAddedSign: good,
+    diffRemovedSign: bad,
+  };
+}
+
+/** A `#rrggbb` colour's channels, or null for anything else. */
+function rgb(hex: string | null): [number, number, number] | null {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? "");
+  return match ? [Number.parseInt(match[1]!, 16), Number.parseInt(match[2]!, 16), Number.parseInt(match[3]!, 16)] : null;
+}
+
+/** `amount` of the way from one colour to another. */
+function mix(from: string, to: string, amount: number): string {
+  const a = rgb(from)!;
+  const b = rgb(to)!;
+  return `#${a.map((channel, index) => Math.round(channel + (b[index]! - channel) * amount).toString(16).padStart(2, "0")).join("")}`;
 }
 
 const STATUS_COLORS: Record<StatusTone, keyof Palette> = { info: "info", muted: "muted", warn: "warn", input: "input", bad: "bad", good: "good" };
