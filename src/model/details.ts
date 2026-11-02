@@ -13,6 +13,7 @@ import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models
 import { homedir } from "node:os";
 
 import type { VcsState } from "../client/session.ts";
+import { formatClock, type Tui3Config } from "../config.ts";
 import { buildMenuItems, resolveQuickAction } from "../../vendor/t3code/apps/web/src/components/GitActionsControl.logic.ts";
 import type { StatusTone } from "./threads.ts";
 
@@ -91,6 +92,8 @@ export interface DetailsInput {
   readonly servers?: readonly DiscoveredLocalServer[];
   readonly automations?: readonly ScheduledTask[];
   readonly now?: number;
+  /** How automation times read; the system's locale by default. */
+  readonly timestampFormat?: Tui3Config["timestampFormat"];
 }
 
 export interface PullRequestLine {
@@ -171,7 +174,7 @@ export function threadDetails(input: DetailsInput): ThreadDetails {
 
   const automations = (input.automations ?? [])
     .filter((task) => task.threadId === thread.id)
-    .map((task) => automationLine(task, now));
+    .map((task) => automationLine(task, now, input.timestampFormat ?? "locale"));
 
   const background = (thread.pendingBackgroundTasks ?? [])
     .filter((task) => task.kind !== "subagent")
@@ -220,12 +223,12 @@ function gitActions(status: VcsStatusResult): NonNullable<ThreadDetails["git"]> 
   return { quick, hint: quick ? null : quickAction.hint ?? quickAction.label, menu };
 }
 
-function automationLine(task: ScheduledTask, now: number): AutomationLine {
+function automationLine(task: ScheduledTask, now: number, timestampFormat: Tui3Config["timestampFormat"]): AutomationLine {
   const schedule =
     task.schedule.type === "interval"
       ? `every ${formatWorkingDurationLabel(task.schedule.everyMs)}`
       : task.schedule.type === "fixed_time"
-        ? `${task.schedule.weekdays && task.schedule.weekdays.length < 7 ? task.schedule.weekdays.map((day) => WEEKDAYS[day]).join(",") + " " : "daily "}${task.schedule.timeOfDay}`
+        ? `${task.schedule.weekdays && task.schedule.weekdays.length < 7 ? task.schedule.weekdays.map((day) => WEEKDAYS[day]).join(",") + " " : "daily "}${formatClock(task.schedule.timeOfDay, timestampFormat)}`
         : "on webhook";
   if (!task.enabled) return { task, schedule, status: "off", tone: "muted" };
   if (task.lastRunStatus === "running") return { task, schedule, status: "running", tone: "info" };

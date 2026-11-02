@@ -19,6 +19,8 @@ import {
   type ReviewDiffPreviewSource,
   type ScheduledTask,
   type ScheduledTaskId,
+  type ServerConfig,
+  type OrchestrationV2ThreadShell,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   WS_METHODS,
@@ -78,6 +80,12 @@ export interface VcsState {
 export interface FeedState<T> {
   readonly status: "loading" | "live" | "error";
   readonly items: readonly T[];
+  readonly error?: string;
+}
+
+export interface ServerConfigState {
+  readonly status: "loading" | "live" | "error";
+  readonly config: ServerConfig | null;
   readonly error?: string;
 }
 
@@ -248,11 +256,46 @@ export class T3Session {
     );
   }
 
+  /** The server's config and settings, kept current as they change in the app. */
+  watchServerConfig(listener: Listener<ServerConfigState>): () => void {
+    return this.watchFeed<ServerConfigState>("config", { status: "loading", config: null }, listener, (update) =>
+      this.requireConnection()
+        .rpc[WS_METHODS.subscribeServerConfig]({})
+        .pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              const current = this.feeds.get("config")?.state as ServerConfigState | undefined;
+              const config = current?.config;
+              switch (event.type) {
+                case "snapshot":
+                  return update({ status: "live", config: event.config });
+                case "settingsUpdated":
+                  return config && update({ config: { ...config, settings: event.payload.settings } });
+                case "providerStatuses":
+                  return config && update({ config: { ...config, providers: event.payload.providers } });
+                case "keybindingsUpdated":
+                  return config && update({ config: { ...config, keybindings: event.payload.keybindings, issues: event.payload.issues } });
+              }
+            }),
+          ),
+        ),
+    );
+  }
+
+  /**
+   * Every thread sharing this one's root, idle subagents included: the shell leaves those out.
+   * Only for servers whose config advertises `shellThreadFamilies`.
+   */
+  async threadFamily(threadId: ThreadId): Promise<readonly OrchestrationV2ThreadShell[]> {
+    const family = await Effect.runPromise(this.requireConnection().rpc[ORCHESTRATION_V2_WS_METHODS.getThreadFamily]({ threadId }));
+    return family.threads;
+  }
+
   /** The uncommitted diff (git diff HEAD, untracked files included), for one file or the whole tree. */
-  async workingTreeDiff(cwd: string, path?: string): Promise<ReviewDiffPreviewSource | null> {
+  async workingTreeDiff(cwd: string, path?: string, ignoreWhitespace = true): Promise<ReviewDiffPreviewSource | null> {
     const rpc = this.requireConnection().rpc;
     const result = await Effect.runPromise(
-      rpc[WS_METHODS.reviewGetDiffPreview]({ cwd, ...(path ? { file: { path, previousPath: null, sourceKind: "working-tree" as const } } : {}) }),
+      rpc[WS_METHODS.reviewGetDiffPreview]({ cwd, ignoreWhitespace, ...(path ? { file: { path, previousPath: null, sourceKind: "working-tree" as const } } : {}) }),
     );
     return result.sources.find((source) => source.kind === "working-tree") ?? null;
   }

@@ -23,7 +23,7 @@ export interface StoredCredential {
 }
 
 const t3Home = () => process.env.T3CODE_HOME ?? join(homedir(), ".t3");
-const configDir = () =>
+export const configDir = () =>
   join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "tui3");
 const credentialPath = () => join(configDir(), "credentials.json");
 

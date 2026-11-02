@@ -62,11 +62,24 @@ The layout follows T3 Code's web app, and much of it uses the web app's own code
 - **Diffs:** pick `View diff` or a file under Changes to see uncommitted changes as unified diffs in place of the conversation. `j`/`k` scroll, `esc` closes.
 - **Git:** the branch section offers the web app's quick action (`Commit & push`, `Push`, `Create PR`…) and its menu. Every action asks first, says when you are on the default branch, and takes an optional commit message (blank lets T3 write one). Progress shows on the bottom line.
 - **Servers and automations:** local dev servers the thread started (stop one from the panel) and T3's scheduled tasks with their schedule and next run (run now, or turn on and off).
-- **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents have no details, because the thread list leaves them out.
+- **Subagents:** subagent work in the conversation and the lineage rows in details are links; `enter` or a click opens the child thread, and `u` goes back. Idle subagents, which the thread list leaves out, are fetched from the server when you open one (on servers that serve them).
 - **Command palette:** `ctrl+k`, as in the web app. It searches commands and threads with T3's own scoring; start with `>` for commands only.
 - **Mouse:** click a thread to open it, a collapsed section to unfold it, a details row to run it, the message box to type, or a palette row.
 - Threads open scrolled to the bottom.
 - **Read state:** opening a thread marks it read after a moment, as the web app does. Set `TUI3_NO_VISIT=1` to turn that off.
+
+## Settings
+
+Open them from the command palette (`Settings`). `j`/`k` move, `enter` or a click changes one, and changes save to `~/.config/tui3/config.json`:
+
+| Setting | Choices | Default |
+| --- | --- | --- |
+| `followUpBehavior` | `steer` or `queue`: what `enter` does while the agent runs (`alt+enter` does the other) | `steer` |
+| `sendShortcut` | `enter`, or `ctrl-enter` (then `enter` adds a line; needs the kitty keyboard protocol, and `alt+enter` also sends) | `enter` |
+| `timestampFormat` | `locale`, `12-hour`, `24-hour` | `locale` |
+| `diffIgnoreWhitespace` | `true`, `false` | `true` |
+
+These use the web app's names and defaults. The web app keeps them in each browser, so tui3 can't read yours and keeps its own. The same view shows the server's settings that matter here (model and mode for new threads, auto-settle, rate-limited threads), read-only: change those in the app.
 
 Long threads load as a bounded window of recent turns; press `o` for older ones. If the connection drops, tui3 reconnects with backoff and resubscribes.
 

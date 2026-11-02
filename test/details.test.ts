@@ -117,7 +117,7 @@ describe("threadDetails", () => {
       thread(),
       vcs({ workingTree: { files: [{ path: "src/a.ts", insertions: 3, deletions: 1 }], insertions: 3, deletions: 1 } }, { hasUpstream: true, aheadCount: 0, behindCount: 0, aheadOfDefaultCount: 0, pr: null }),
       null,
-      { servers, automations } as never,
+      { servers, automations, timestampFormat: "24-hour" } as never,
     );
     expect(details.git?.quick).toEqual({ action: "commit_push_pr", label: "Commit, push & PR", commits: true });
     expect(details.automations[0]).toMatchObject({ schedule: "Mon,Tue 09:00", status: "on" });

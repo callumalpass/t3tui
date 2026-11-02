@@ -8,12 +8,15 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
-import type { DiscoveredLocalServer, ProviderApprovalDecision, ScheduledTask, ThreadId } from "@t3tools/contracts";
+import type { DiscoveredLocalServer, OrchestrationV2ThreadShell, ProviderApprovalDecision, ScheduledTask, ThreadId } from "@t3tools/contracts";
+import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { FeedState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
+import type { FeedState, ServerConfigState, ShellState, T3Session, ThreadState, VcsState } from "../client/session.ts";
+import { configPath, cycleConfig, saveConfig, type Tui3Config } from "../config.ts";
 import { detailsActions, detailsCwd, RUNTIME_MODE_LABELS, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
 import { paletteEntries, paletteGroups, type PaletteCommand } from "../model/palette.ts";
+import { serverSettingLines, settingRows } from "../model/settings.ts";
 import { buildTimeline, type Timeline } from "../model/timeline.ts";
 import { threadRows, type Section } from "../model/threads.ts";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
@@ -21,15 +24,17 @@ import { DetailsPanel } from "./DetailsPanel.tsx";
 import { DiffView, type DiffState } from "./DiffView.tsx";
 import { Palette } from "./Palette.tsx";
 import { QuestionPanel } from "./QuestionPanel.tsx";
+import { SettingsView } from "./SettingsView.tsx";
 import { colors } from "./theme.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { ThreadView } from "./ThreadView.tsx";
 
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
- * "details": j/k move through the details panel. The rest are overlays with their own input.
+ * "details": j/k move through the details panel. "settings": j/k move through settings.
+ * The rest are overlays with their own input.
  */
-type Mode = "input" | "nav" | "filter" | "details" | "palette" | "confirm";
+type Mode = "input" | "nav" | "filter" | "details" | "palette" | "confirm" | "settings";
 
 /** Holding j/k skims past threads; only subscribe to one you stop on. */
 const SUBSCRIBE_DELAY_MS = 120;
@@ -44,18 +49,26 @@ const DETAILS_WIDTH = 38;
 /** Below this, the details panel takes the conversation's place instead of a column beside it. */
 const MIN_CONVERSATION_WIDTH = 70;
 
-const COMPOSER_KEYS = [
-  { name: "return", action: "submit" },
-  { name: "return", shift: true, action: "newline" },
-  { name: "j", ctrl: true, action: "newline" },
-] as const;
+const COMPOSER_KEYS = {
+  enter: [
+    { name: "return", action: "submit" },
+    { name: "return", shift: true, action: "newline" },
+    { name: "j", ctrl: true, action: "newline" },
+  ],
+  "ctrl-enter": [
+    { name: "return", action: "newline" },
+    { name: "return", ctrl: true, action: "submit" },
+    { name: "return", shift: true, action: "newline" },
+    { name: "j", ctrl: true, action: "newline" },
+  ],
+} as const;
 
 interface QuestionDraft {
   readonly index: number;
   readonly answers: Record<string, PendingUserInputDraftAnswer>;
 }
 
-export function App(props: { readonly session: T3Session; readonly attachThreadId?: ThreadId }) {
+export function App(props: { readonly session: T3Session; readonly config: Tui3Config; readonly attachThreadId?: ThreadId }) {
   const { session, attachThreadId } = props;
   const attached = attachThreadId !== undefined;
   const renderer = useRenderer();
@@ -71,6 +84,11 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const [detailsPref, setDetailsPref] = useState<boolean | null>(null);
   const [detailsSelected, setDetailsSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
+  const [config, setConfig] = useState(props.config);
+  const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
+  const [serverConfig, setServerConfig] = useState<ServerConfigState | null>(null);
+  /** Idle subagents the shell leaves out, fetched when you open one. */
+  const [familyShells, setFamilyShells] = useState<ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>>(new Map());
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [confirmMessage, setConfirmMessage] = useState("");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -104,7 +122,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const threadId = selectedId ?? rows[0]?.thread.id;
   const selectedIndex = rows.findIndex((row) => row.thread.id === threadId);
   const threadRow = allRows.find((row) => row.thread.id === threadId);
-  const threadShell = threadRow?.thread ?? shell.snapshot?.threads.find((thread) => thread.id === threadId);
+  const threadShell = threadRow?.thread ?? shell.snapshot?.threads.find((thread) => thread.id === threadId) ?? (threadId ? familyShells.get(threadId) : undefined);
   // Pin the initial selection to a thread, or it would follow whatever sorts first.
   useEffect(() => {
     if (selectedId === undefined && rows[0]) setSelectedId(rows[0].thread.id);
@@ -113,8 +131,9 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const openThread = useCallback((id: ThreadId) => {
     setSelectedId(id);
     setDiff(null);
+    setSettingsIndex(null);
     setDetailsSelected(null);
-    setMode((current) => (current === "details" ? "nav" : current));
+    setMode((current) => (current === "details" || current === "settings" ? "nav" : current));
   }, []);
 
   const [watchedId, setWatchedId] = useState(threadId);
@@ -165,7 +184,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const title = threadShell?.title ?? appThread?.title ?? "Thread";
   const parentId = (threadShell?.lineage ?? appThread?.lineage)?.parentThreadId ?? null;
   const parent = parentId
-    ? { threadId: parentId, title: shell.snapshot?.threads.find((other) => other.id === parentId)?.title ?? "Parent thread" }
+    ? { threadId: parentId, title: (shell.snapshot?.threads.find((other) => other.id === parentId) ?? familyShells.get(parentId))?.title ?? "Parent thread" }
     : undefined;
 
   const move = (delta: number) => {
@@ -181,6 +200,28 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const project = threadShell ? shell.snapshot?.projects.find((candidate) => candidate.id === threadShell.projectId) : undefined;
   const vcsCwd = threadShell ? detailsCwd(threadShell, project) : null;
   const live = shell.status.type === "live";
+  useEffect(() => (live ? session.watchServerConfig(setServerConfig) : undefined), [session, live]);
+  // An idle subagent isn't in the shell; its family (root, forks, all subagents) is, on servers that serve it.
+  const supportsFamilies = serverConfig?.config?.shellThreadFamilies === true;
+  const unlisted = threadId !== undefined && !threadShell;
+  useEffect(() => {
+    if (!unlisted || !threadId || !supportsFamilies || !live) return;
+    let cancelled = false;
+    session.threadFamily(threadId).then(
+      (threads) => {
+        if (cancelled) return;
+        setFamilyShells((previous) => {
+          const next = new Map(previous);
+          for (const member of threads) next.set(member.id, member);
+          return next;
+        });
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [session, unlisted, threadId, supportsFamilies, live]);
   const [vcs, setVcs] = useState<{ cwd: string; state: VcsState } | null>(null);
   useEffect(() => {
     if (!showDetails || !vcsCwd || !live) return;
@@ -198,6 +239,13 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     };
   }, [session, live]);
   const vcsState = vcs?.cwd === vcsCwd ? vcs.state : null;
+  // Fetched family members count as shell threads, so lineage can name idle subagents.
+  const detailsSnapshot = useMemo(() => {
+    const snapshot = shell.snapshot;
+    if (!snapshot || familyShells.size === 0) return snapshot;
+    const listed = new Set(snapshot.threads.map((member) => member.id));
+    return { ...snapshot, threads: [...snapshot.threads, ...[...familyShells.values()].filter((member) => !listed.has(member.id))] };
+  }, [shell.snapshot, familyShells]);
   const details = useMemo(
     () =>
       threadShell
@@ -205,14 +253,15 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
             thread: threadShell,
             project,
             vcs: vcsState,
-            snapshot: shell.snapshot,
+            snapshot: detailsSnapshot,
             subagents: projection?.subagents ?? [],
             servers: servers?.items ?? [],
             automations: automations?.items ?? [],
             now,
+            timestampFormat: config.timestampFormat,
           })
         : null,
-    [threadShell, project, vcsState, shell.snapshot, projection?.subagents, servers, automations, now],
+    [threadShell, project, vcsState, detailsSnapshot, projection?.subagents, servers, automations, now, config.timestampFormat],
   );
   const actions = useMemo(() => (details ? detailsActions(details) : []), [details]);
 
@@ -246,7 +295,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     if (!vcsCwd) return;
     const cwd = vcsCwd;
     setDiff({ cwd, path, status: "loading" });
-    session.workingTreeDiff(cwd, path ?? undefined).then(
+    session.workingTreeDiff(cwd, path ?? undefined, config.diffIgnoreWhitespace).then(
       (source) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "ready", patch: source?.diff ?? "", truncated: source?.truncated ?? false } : value)),
       (error) => setDiff((value) => (value?.cwd === cwd && value.path === path ? { cwd, path, status: "error", error: messageOf(error) } : value)),
     );
@@ -325,6 +374,25 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     setMode("details");
   };
 
+  const settingsRows = settingRows(config);
+  const cycleSetting = (index: number) => {
+    const row = settingsRows[index];
+    if (!row) return;
+    setSettingsIndex(index);
+    const next = cycleConfig(config, row.key);
+    setConfig(next);
+    saveConfig(next).catch((error) => say(`Could not save settings: ${messageOf(error)}`, true));
+  };
+  const openSettings = () => {
+    setDiff(null);
+    setSettingsIndex(0);
+    setMode("settings");
+  };
+  const closeSettings = () => {
+    setSettingsIndex(null);
+    setMode("nav");
+  };
+
   const clearComposer = () => {
     composerRef.current?.setText("");
     if (threadId) drafts.current.delete(threadId);
@@ -366,7 +434,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     const composer = composerRef.current;
     const raw = composer?.plainText ?? "";
     // A trailing backslash continues onto a new line, for terminals that can't send shift+enter.
-    if (!alternate && composer && raw.endsWith("\\")) {
+    if (!alternate && config.sendShortcut === "enter" && composer && raw.endsWith("\\")) {
       composer.setText(raw.slice(0, -1));
       composer.gotoBufferEnd();
       composer.newLine();
@@ -388,7 +456,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
       if (pendingApproval.supportsFeedback) return run("Declined with feedback", () => session.respond(threadId, pendingApproval.requestId, "decline", text));
       return run("Declined and redirected", () => session.sendMessage(threadId, text, "steer"));
     }
-    const dispatchMode = resolveComposerDispatchMode({ running: working, alternateModifier: alternate });
+    const dispatchMode = resolveComposerDispatchMode({ running: working, alternateModifier: alternate, activeTurnDefault: config.followUpBehavior });
     run(dispatchMode === "queue" ? "Queued" : dispatchMode === "steer" ? "Steered" : "Sent", () => session.sendMessage(threadId, text, dispatchMode));
   };
 
@@ -435,6 +503,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
     command("filter", "Filter threads", () => setMode("filter"), { shortcut: "/", keywords: ["search"] });
     command("settled", showFolded ? "Hide settled threads" : "Show settled threads", () => setShowFolded(!showFolded), { shortcut: "z", keywords: ["snoozed", "archive"] });
   }
+  command("settings", "Settings", openSettings, { keywords: ["preferences", "config", "options"] });
   command("quit", "Quit tui3", quit, { shortcut: "q", keywords: ["exit"] });
 
   const commandKey = commands.map((candidate) => `${candidate.id}:${candidate.title}`).join("|");
@@ -507,6 +576,27 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
       return;
     }
     const scroll = scrollRef.current;
+    if (mode === "settings") {
+      const index = settingsIndex ?? 0;
+      switch (key.name) {
+        case "j":
+        case "down":
+          return setSettingsIndex(Math.min(settingsRows.length - 1, index + 1));
+        case "k":
+        case "up":
+          return setSettingsIndex(Math.max(0, index - 1));
+        case "return":
+        case "space":
+          cycleSetting(index);
+          return key.preventDefault();
+        case "escape":
+        case "q":
+        case "h":
+        case "left":
+          return closeSettings();
+      }
+      return;
+    }
     if (mode === "details") {
       switch (key.name) {
         case "j":
@@ -611,7 +701,9 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
         : pendingInput
           ? "Type your own answer, or leave this blank to use the selected option"
           : working
-            ? "Steer the agent (alt+enter to queue instead)"
+            ? config.followUpBehavior === "queue"
+              ? "Queue a message for after this run (alt+enter to steer instead)"
+              : "Steer the agent (alt+enter to queue instead)"
             : "Ask anything";
   const footer = threadShell
     ? [
@@ -625,8 +717,8 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
   const detailsPanel = (inPlace: boolean) => (
     <DetailsPanel
       details={details}
-      // Idle subagents are left out of the shell, which is where details come from.
-      {...(threadId && !threadShell ? { empty: "No details for idle subagent threads. u goes to the parent." } : {})}
+      // Idle subagents are left out of the shell, which is where details come from; newer servers serve them on request.
+      {...(threadId && !threadShell ? { empty: supportsFamilies ? "Loading details…" : "No details for idle subagent threads on this server. u goes to the parent." } : {})}
       width={inPlace ? width - listWidth : DETAILS_WIDTH}
       loading={vcsState?.status !== "live"}
       inPlace={inPlace}
@@ -667,7 +759,19 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
           />
         )}
         <box flexDirection="column" flexGrow={1} minHeight={0}>
-          {diff ? (
+          {settingsIndex !== null ? (
+            <SettingsView
+              rows={settingsRows}
+              server={serverSettingLines(serverConfig?.config ?? null)}
+              serverStatus={serverConfig?.status ?? "loading"}
+              selected={settingsIndex}
+              path={configPath().replace(homedir(), "~")}
+              onCycle={(index) => {
+                setMode("settings");
+                cycleSetting(index);
+              }}
+            />
+          ) : diff ? (
             <DiffView diff={diff} scrollRef={scrollRef} />
           ) : threadId && detailsInPlace ? (
             <box flexGrow={1} minHeight={0} flexDirection="column">
@@ -728,7 +832,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
                 placeholderColor={colors.faint}
                 textColor={colors.text}
                 wrapMode="word"
-                keyBindings={[...COMPOSER_KEYS]}
+                keyBindings={[...COMPOSER_KEYS[config.sendShortcut]]}
                 onSubmit={() => submit()}
                 onContentChange={() => {
                   const composer = composerRef.current;
@@ -755,7 +859,7 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
         {flash ? (
           <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text>
         ) : (
-          <text fg={colors.faint}>{hints(mode, { approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined })}</text>
+          <text fg={colors.faint}>{hints(mode, { config, approval: Boolean(pendingApproval), question: Boolean(pendingInput), working, attached, diff: diff !== null, parent: parent !== undefined })}</text>
         )}
       </box>
       {mode === "palette" ? (
@@ -779,14 +883,18 @@ export function App(props: { readonly session: T3Session; readonly attachThreadI
 
 function hints(
   mode: Mode,
-  state: { readonly approval: boolean; readonly question: boolean; readonly working: boolean; readonly attached: boolean; readonly diff: boolean; readonly parent: boolean },
+  state: { readonly config: Tui3Config; readonly approval: boolean; readonly question: boolean; readonly working: boolean; readonly attached: boolean; readonly diff: boolean; readonly parent: boolean },
 ): string {
   if (mode === "filter") return "enter done · esc close";
   if (mode === "palette") return "↑/↓ move · enter run · esc close";
   if (mode === "confirm") return "enter confirm · esc cancel";
   if (mode === "details") return "j/k move · enter open · t toggle automation · esc back";
+  if (mode === "settings") return "j/k move · enter change · esc close";
   if (mode === "input") {
-    const parts = [state.working ? "enter steer · alt+enter queue" : "enter send", "shift+enter or \\ newline", "esc navigate"];
+    const send = state.config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
+    const other = state.config.followUpBehavior === "steer" ? "queue" : "steer";
+    const newline = state.config.sendShortcut === "enter" ? "shift+enter or \\ newline" : "enter newline";
+    const parts = [state.working ? `${send} ${state.config.followUpBehavior} · alt+enter ${other}` : `${send} send`, newline, "esc navigate"];
     if (state.question) parts.unshift("1-9 pick");
     if (state.approval) parts.unshift("approval waiting: esc, then y/n");
     if (!state.attached) parts.push("ctrl+n/p thread");
