@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
 
-import { MAX_DETAIL_FILES, type DetailsAction, type ThreadDetails } from "../model/details.ts";
+import { MAX_DETAIL_FILES, type ChangedFile, type DetailsAction, type DetailsFold, type LineageLine, type ThreadDetails } from "../model/details.ts";
 import { ClickRow } from "./Button.tsx";
 import { truncate } from "./text.ts";
 import { colors, statusColor } from "./theme.ts";
 
 /** Rows stay readable when the panel takes the conversation's place on a narrow terminal. */
 const IN_PLACE_MAX_WIDTH = 64;
+/** Cells in the context bar. */
+const BAR_CELLS = 10;
 
 /**
- * The web's thread details card as a right-hand column: workspace, branch and PR, git actions,
- * changes, lineage, servers, automations, background work, goal. Lines that do something are
+ * The web's thread details card as a right-hand column, what changes first: run state,
+ * context and limits, the agent's tasks, changes, branch, subagents, servers, background
+ * work, goal, automations, then where and how the thread runs. Lines that do something are
  * selectable with the keyboard and clickable.
  */
 export function DetailsPanel(props: {
@@ -20,6 +23,7 @@ export function DetailsPanel(props: {
   readonly inPlace?: boolean;
   /** The selected line's action id, while the panel has focus. */
   readonly selected: string | null;
+  readonly unfolded: ReadonlySet<DetailsFold>;
   readonly onActivate: (id: string) => void;
   /** Shown when there are no details, which defaults to no thread being selected. */
   readonly empty?: string;
@@ -41,7 +45,11 @@ export function DetailsPanel(props: {
       backgroundColor={colors.panel}
     >
       <scrollbox flexGrow={1} minHeight={0} paddingLeft={1} paddingRight={1}>
-        {!details ? <text fg={colors.faint}>{props.empty ?? "No thread selected."}</text> : <Sections details={details} inner={inner} loading={props.loading} selected={props.selected} onActivate={props.onActivate} />}
+        {!details ? (
+          <text fg={colors.faint}>{props.empty ?? "No thread selected."}</text>
+        ) : (
+          <Sections details={details} inner={inner} loading={props.loading} unfolded={props.unfolded} selected={props.selected} onActivate={props.onActivate} />
+        )}
       </scrollbox>
     </box>
   );
@@ -52,49 +60,50 @@ interface LineProps {
   readonly onActivate: (id: string) => void;
 }
 
-function Sections({ details, inner, loading, selected, onActivate }: { readonly details: ThreadDetails; readonly inner: number; readonly loading: boolean } & LineProps) {
-  const { workspace, branch, changes, git } = details;
+function Sections({ details, inner, loading, unfolded, selected, onActivate }: { readonly details: ThreadDetails; readonly inner: number; readonly loading: boolean; readonly unfolded: ReadonlySet<DetailsFold> } & LineProps) {
+  const { branch, changes, git, tasks } = details;
   const files = changes?.files ?? [];
   const line = { selected, onActivate };
-  return (
+  const gitActions = git ? (
     <>
-      <Section title="Workspace" first>
-        <text fg={colors.muted}>{startTruncate(workspace.path, inner)}</text>
-        {workspace.worktree ? <text fg={colors.faint}>worktree</text> : null}
-        <text fg={colors.muted}>{truncate(workspace.model, inner)}</text>
-        {workspace.mode ? <text fg={colors.muted}>{truncate(workspace.mode, inner)}</text> : null}
-      </Section>
+      {files.length > 0 || git.quick ? (
+        <box flexDirection="row" marginLeft={-1}>
+          {files.length > 0 ? <Action id="diff:*" {...line} text="▸ View diff" /> : null}
+          {files.length > 0 && git.quick ? <text> </text> : null}
+          {git.quick ? <Action id={`git:quick:${git.quick.action}`} {...line} text={`▸ ${git.quick.label}`} /> : null}
+        </box>
+      ) : null}
+      {git.menu.map((item) => <Selectable key={item.action} id={`git:${item.action}`} {...line} color={colors.muted} text={`  ${item.label}`} inner={inner} />)}
+    </>
+  ) : files.length > 0 ? (
+    <box flexDirection="row" marginLeft={-1}>
+      <Action id="diff:*" {...line} text="▸ View diff" />
+    </box>
+  ) : null;
+  const visibleTasks = tasks ? (tasks.window && !unfolded.has("tasks") ? tasks.steps.slice(tasks.window.start, tasks.window.end) : tasks.steps) : [];
+  const finished = details.lineage.filter((entry) => entry.finished);
+  const lineageTitle = details.subagents.total > 0 ? "Subagents" : "Lineage";
+  return (
+    <box flexDirection="column" rowGap={1} flexShrink={0}>
+      <StatusBlock details={details} inner={inner} />
 
-      {branch ? (
-        <Section title="Branch">
-          <box flexDirection="row">
-            <text fg={colors.muted}>{truncate(branch.name, inner - (branch.upstream?.length ?? 0) - 1)}</text>
-            <box flexGrow={1} />
-            <text fg={colors.faint}>{branch.upstream ?? ""}</text>
-          </box>
-          {branch.pullRequest ? (
-            <>
-              <box flexDirection="row">
-                <text fg={colors.muted}>{`PR #${branch.pullRequest.number}  `}</text>
-                <text fg={statusColor(branch.pullRequest.tone)}>{branch.pullRequest.state}</text>
-                <box flexGrow={1} />
-                {branch.pullRequest.checks ? <text fg={statusColor(branch.pullRequest.checks.tone)}>{branch.pullRequest.checks.text}</text> : null}
-              </box>
-              {branch.pullRequest.title ? <text fg={colors.muted}>{truncate(branch.pullRequest.title, inner)}</text> : null}
-            </>
-          ) : null}
-          {git?.quick ? <Selectable id={`git:quick:${git.quick.action}`} {...line} color={colors.accent} text={`▸ ${git.quick.label}`} inner={inner} /> : null}
-          {git?.menu.map((item) => <Selectable key={item.action} id={`git:${item.action}`} {...line} color={colors.muted} text={`  ${item.label}`} inner={inner} />)}
-          {git && !git.quick && git.hint ? <text fg={colors.faint}>{truncate(git.hint, inner)}</text> : null}
+      {tasks ? (
+        <Section title="Tasks" right={<text fg={colors.faint}>{`${tasks.done}/${tasks.total}`}</text>}>
+          {visibleTasks.map((step) => (
+            <box key={step.id} flexDirection="row">
+              <text fg={step.status === "completed" ? colors.faint : step.status === "running" ? colors.info : colors.muted} flexShrink={0}>{`${TASK_GLYPHS[step.status]} `}</text>
+              <text fg={step.status === "completed" ? colors.faint : step.status === "running" ? colors.text : colors.muted}>{truncate(step.text, inner - 2)}</text>
+            </box>
+          ))}
+          {tasks.window ? <Selectable id="fold:tasks" {...line} color={colors.faint} text={unfolded.has("tasks") ? "‹ fewer" : `› ${tasks.total - (tasks.window.end - tasks.window.start)} more`} inner={inner} /> : null}
         </Section>
       ) : null}
 
       {changes ? (
         <Section title="Changes" right={<Counts insertions={changes.insertions} deletions={changes.deletions} />}>
-          {files.length > 0 ? <Selectable id="diff:*" {...line} color={colors.accent} text="▸ View diff" inner={inner} /> : null}
           {files.slice(0, MAX_DETAIL_FILES).map((file) => (
             <Selectable key={file.path} id={`diff:${file.path}`} {...line} inner={inner}>
-              <FileLine path={file.path} insertions={file.insertions} deletions={file.deletions} inner={inner} />
+              <FileLine file={file} inner={inner} />
             </Selectable>
           ))}
           {files.length > MAX_DETAIL_FILES ? <text fg={colors.faint}>{`… ${files.length - MAX_DETAIL_FILES} more files (in the full diff)`}</text> : null}
@@ -106,23 +115,38 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
               <Counts insertions={changes.branchTotal.insertions} deletions={changes.branchTotal.deletions} />
             </box>
           ) : null}
+          {gitActions}
         </Section>
       ) : loading ? (
         <Section title="Changes">
           <text fg={colors.faint}>Loading…</text>
         </Section>
       ) : null}
-      {details.vcsNote ? <text fg={colors.faint} marginTop={1}>{details.vcsNote}</text> : null}
+      {details.vcsNote ? <text fg={colors.faint}>{details.vcsNote}</text> : null}
+
+      {branch ? (
+        <box flexDirection="column" flexShrink={0}>
+          <BranchLine branch={branch} inner={inner} />
+          {branch.pullRequest?.title && branch.pullRequest.title.length <= inner ? <text fg={colors.faint}>{branch.pullRequest.title}</text> : null}
+          {changes ? null : gitActions}
+        </box>
+      ) : null}
 
       {details.lineage.length > 0 ? (
-        <Section title="Lineage">
-          {details.lineage.map((entry) =>
-            entry.threadId ? (
-              <Selectable key={entry.threadId} id={`thread:${entry.threadId}`} {...line} color={colors.muted} text={`${entry.glyph} ${entry.text}`} inner={inner} />
-            ) : (
-              <text key={entry.text} fg={colors.muted}>{truncate(`${entry.glyph} ${entry.text}`, inner)}</text>
-            ),
-          )}
+        <Section
+          title={lineageTitle}
+          right={
+            details.subagents.total > 0 ? (
+              <box flexDirection="row">
+                <text fg={colors.faint}>{`${details.subagents.total}`}</text>
+                {details.subagents.running > 0 ? <text fg={colors.info}>{` · ${details.subagents.running} running`}</text> : null}
+              </box>
+            ) : undefined
+          }
+        >
+          {details.lineage.filter((entry) => !entry.finished).map((entry) => <LineageRow key={entry.threadId ?? entry.text} entry={entry} inner={inner} {...line} />)}
+          {finished.length > 0 ? <Selectable id="fold:subagents" {...line} color={colors.faint} text={`${unfolded.has("subagents") ? "⌄" : "›"} ${finished.length} finished`} inner={inner} /> : null}
+          {unfolded.has("subagents") ? finished.map((entry) => <LineageRow key={entry.threadId ?? entry.text} entry={entry} inner={inner} {...line} />) : null}
         </Section>
       ) : null}
 
@@ -130,23 +154,6 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
         <Section title="Servers">
           {details.servers.map(({ server, label }) => (
             <Selectable key={server.port} id={`server:${server.port}`} {...line} color={colors.info} text={`● ${label}`} inner={inner} />
-          ))}
-        </Section>
-      ) : null}
-
-      {details.automations.length > 0 ? (
-        <Section title="Automations">
-          {details.automations.map((automation) => (
-            <Selectable key={automation.task.id} id={`automation:${automation.task.id}`} {...line} inner={inner}>
-              <box flexDirection="column">
-                <text fg={colors.muted}>{truncate(automation.task.title, inner)}</text>
-                <box flexDirection="row">
-                  <text fg={colors.faint}>{truncate(automation.schedule, inner - automation.status.length - 1)}</text>
-                  <box flexGrow={1} />
-                  <text fg={statusColor(automation.tone)}>{automation.status}</text>
-                </box>
-              </box>
-            </Selectable>
           ))}
         </Section>
       ) : null}
@@ -165,7 +172,118 @@ function Sections({ details, inner, loading, selected, onActivate }: { readonly 
           <text fg={statusColor(details.goal.tone)}>{details.goal.status}</text>
         </Section>
       ) : null}
-    </>
+
+      {details.automations.length > 0 ? (
+        <Section title="Automations">
+          {details.automations.map((automation) => (
+            <Selectable key={automation.task.id} id={`automation:${automation.task.id}`} {...line} inner={inner}>
+              <box flexDirection="row">
+                <text fg={colors.muted}>{truncate(automation.task.title, inner - automation.when.length - 1)}</text>
+                <box flexGrow={1} />
+                <text fg={automation.tone === "muted" ? colors.faint : statusColor(automation.tone)}>{automation.when}</text>
+              </box>
+            </Selectable>
+          ))}
+        </Section>
+      ) : null}
+
+      <Footer workspace={details.workspace} inner={inner} />
+    </box>
+  );
+}
+
+const TASK_GLYPHS = { completed: "✓", running: "◐", pending: "○" } as const;
+
+/** Run state, context window and limits: what the thread is doing and how much room it has. */
+function StatusBlock({ details, inner }: { readonly details: ThreadDetails; readonly inner: number }) {
+  const { status, context, limits } = details;
+  if (!status && !context && !limits) return null;
+  const filled = context?.left == null ? 0 : Math.round((context.left / 100) * BAR_CELLS);
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      {status ? <text fg={statusColor(status.tone)}>{truncate(status.text, inner)}</text> : null}
+      {context ? (
+        <box flexDirection="row">
+          <text fg={colors.muted}>{"Context  "}</text>
+          {context.left === null ? (
+            <text fg={colors.faint}>{`${context.used} used`}</text>
+          ) : (
+            <>
+              <text fg={colors.muted}>{"█".repeat(filled)}</text>
+              <text fg={colors.faint}>{"░".repeat(BAR_CELLS - filled)}</text>
+              <text fg={context.left <= 10 ? colors.bad : context.left <= 25 ? colors.warn : colors.muted}>{`  ${context.left}% left`}</text>
+            </>
+          )}
+        </box>
+      ) : null}
+      {limits ? (
+        <box flexDirection="row">
+          <text fg={colors.muted} flexShrink={0}>{"Limits   "}</text>
+          <box flexDirection="row" flexWrap="wrap" flexShrink={1}>
+            {limits.map((limit, index) => (
+              <box key={limit.label} flexDirection="row">
+                <text fg={colors.faint}>{`${index > 0 ? " · " : ""}${limit.label} `}</text>
+                <text fg={limit.tone === "muted" ? colors.muted : statusColor(limit.tone)}>{`${limit.left}%`}</text>
+              </box>
+            ))}
+          </box>
+        </box>
+      ) : null}
+    </box>
+  );
+}
+
+/** `main ↑2 · PR #1371 merged      ✓ checks` */
+function BranchLine({ branch, inner }: { readonly branch: NonNullable<ThreadDetails["branch"]>; readonly inner: number }) {
+  const pr = branch.pullRequest;
+  const prText = pr ? ` · PR #${pr.number} ${pr.state}` : "";
+  const checks = pr?.checks?.text ?? "";
+  const upstream = branch.upstream ? ` ${branch.upstream}` : "";
+  const name = truncate(branch.name, Math.max(6, inner - upstream.length - prText.length - (checks ? checks.length + 1 : 0)));
+  return (
+    <box flexDirection="row">
+      <text fg={colors.muted}>{name}</text>
+      {upstream ? <text fg={colors.faint}>{upstream}</text> : null}
+      {pr ? (
+        <>
+          <text fg={colors.faint}>{` · PR #${pr.number} `}</text>
+          <text fg={statusColor(pr.tone)}>{pr.state}</text>
+        </>
+      ) : null}
+      <box flexGrow={1} />
+      {pr?.checks ? <text fg={statusColor(pr.checks.tone)}>{pr.checks.text}</text> : null}
+    </box>
+  );
+}
+
+function LineageRow({ entry, inner, ...line }: { readonly entry: LineageLine; readonly inner: number } & LineProps) {
+  const content = (
+    <box flexDirection="row">
+      <text fg={statusColor(entry.tone)} flexShrink={0}>{`${entry.glyph} `}</text>
+      <text fg={line.selected === `thread:${entry.threadId}` ? colors.text : colors.muted}>{truncate(entry.text, inner - 2)}</text>
+    </box>
+  );
+  return entry.threadId ? (
+    <Selectable id={`thread:${entry.threadId}`} {...line} inner={inner}>
+      {content}
+    </Selectable>
+  ) : (
+    content
+  );
+}
+
+/** Where and how the thread runs, quiet at the bottom: one line, or two when it doesn't fit. */
+function Footer({ workspace, inner }: { readonly workspace: ThreadDetails["workspace"]; readonly inner: number }) {
+  const where = `${workspace.path}${workspace.worktree ? " · worktree" : ""}`;
+  const how = [workspace.model, workspace.mode].filter(Boolean).join(" · ");
+  const one = `${where} · ${how}`;
+  return one.length <= inner ? (
+    <text fg={colors.faint}>{one}</text>
+  ) : (
+    <box flexDirection="column" flexShrink={0}>
+      <text fg={colors.faint}>{startTruncate(where, inner)}</text>
+      <text fg={colors.faint}>{truncate(how, inner)}</text>
+    </box>
   );
 }
 
@@ -184,9 +302,20 @@ function Selectable(props: LineProps & { readonly id: DetailsAction["id"]; reado
   );
 }
 
-function Section(props: { readonly title: string; readonly right?: ReactNode; readonly first?: boolean; readonly children: ReactNode }) {
+/** A selectable label that shares its line with another, as `▸ View diff  ▸ Commit`. */
+function Action(props: LineProps & { readonly id: DetailsAction["id"]; readonly text: string }) {
+  const active = props.selected === props.id;
   return (
-    <box flexDirection="column" marginTop={props.first ? 0 : 1} flexShrink={0}>
+    <ClickRow flexDirection="row" flexShrink={0} paddingRight={1} selected={active} onPress={() => props.onActivate(props.id)}>
+      <text fg={colors.accent} selectable={false}>{active ? "▌" : " "}</text>
+      <text fg={active ? colors.text : colors.accent}>{props.text}</text>
+    </ClickRow>
+  );
+}
+
+function Section(props: { readonly title: string; readonly right?: ReactNode; readonly children: ReactNode }) {
+  return (
+    <box flexDirection="column" flexShrink={0}>
       <box flexDirection="row">
         <text fg={colors.text}>
           <strong>{props.title}</strong>
@@ -199,13 +328,15 @@ function Section(props: { readonly title: string; readonly right?: ReactNode; re
   );
 }
 
-function FileLine(props: { readonly path: string; readonly insertions: number; readonly deletions: number; readonly inner: number }) {
-  const counts = countsText(props.insertions, props.deletions);
+/** `M src/a.ts   +3 −1`, git status style; `? docs/   new` for untracked paths, which have no counts. */
+function FileLine({ file, inner }: { readonly file: ChangedFile; readonly inner: number }) {
+  const right = file.status === "?" ? "new" : countsText(file.insertions, file.deletions);
   return (
     <box flexDirection="row">
-      <text fg={colors.muted}>{startTruncate(props.path, Math.max(4, props.inner - counts.length - 1))}</text>
+      <text fg={colors.muted} flexShrink={0}>{`${file.status} `}</text>
+      <text fg={colors.muted}>{startTruncate(file.path, Math.max(4, inner - right.length - 3))}</text>
       <box flexGrow={1} />
-      <Counts insertions={props.insertions} deletions={props.deletions} />
+      {file.status === "?" ? <text fg={colors.faint}>new</text> : <Counts insertions={file.insertions} deletions={file.deletions} />}
     </box>
   );
 }

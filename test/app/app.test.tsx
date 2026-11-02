@@ -53,11 +53,11 @@ describe("modes and hints", () => {
 
   test("d toggles the details column", async () => {
     const app = await open();
-    expect(app.frame()).not.toContain("Workspace");
+    expect(app.frame()).not.toContain("/workspace/project ·");
     await app.press("d");
-    expect(app.frame()).toContain("Workspace");
+    expect(app.frame()).toContain("/workspace/project ·");
     await app.press("d");
-    expect(app.frame()).not.toContain("Workspace");
+    expect(app.frame()).not.toContain("/workspace/project ·");
   });
 });
 

@@ -1,5 +1,5 @@
-import type { ProviderConsumeResetCreditInput, ServerConfig, ServerProviderResetCredits, UsageSummary } from "@t3tools/contracts";
-import { collectLimitAccounts, collectLimitNotices, formatDuration, remainingPercent, type LimitPresentations } from "@t3tools/shared/usageLimits";
+import type { ProviderConsumeResetCreditInput, ProviderInstanceId, ServerConfig, ServerProviderResetCredits, UsageSummary } from "@t3tools/contracts";
+import { collectLimitAccounts, collectLimitNotices, collectProviderUsageLimits, formatDuration, limitsNotice, remainingPercent, type LimitPresentations } from "@t3tools/shared/usageLimits";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 
 /** At or above this much of a window used, the status line calls the limit near. */
@@ -42,6 +42,29 @@ export function usageLimits(config: ServerConfig | null, now = Date.now()): Usag
   }
   for (const notice of collectLimitNotices(presentations)) lines.push({ label: "Limits", value: notice });
   return { lines, note: note?.text ?? null, credits };
+}
+
+export interface LimitWindowLine {
+  readonly label: string;
+  /** Percent of the window left. */
+  readonly left: number;
+  /** Near or at the limit, as the status line reads it. */
+  readonly tone: "muted" | "warn" | "bad";
+}
+
+/**
+ * One provider instance's limit windows, picked as the web's thread details pick them; null
+ * when the provider reports none, or reports them unavailable.
+ */
+export function providerLimits(config: ServerConfig | null, instanceId: ProviderInstanceId, now = Date.now()): readonly LimitWindowLine[] | null {
+  if (!config) return null;
+  const report = collectProviderUsageLimits(instanceId, config.providers, config.usageLimitSources ?? [], now);
+  const limits = report?.accounts.find((entry) => entry.instanceId === instanceId)?.limits ?? config.providers.find((provider) => provider.instanceId === instanceId)?.usageLimits;
+  if (!limits || limitsNotice(limits) || limits.windows.length === 0) return null;
+  return limits.windows.map((window) => {
+    const left = remainingPercent(window);
+    return { label: window.label, left, tone: left === 0 ? "bad" : window.usedPercent >= NEAR_LIMIT_USED_PERCENT ? "warn" : "muted" };
+  });
 }
 
 /** The web's banked-credits wording: a count and when the next one expires. */

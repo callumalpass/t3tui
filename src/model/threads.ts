@@ -59,8 +59,14 @@ export function needsAttention(row: Pick<ThreadRow, "status" | "unread">): boole
   return row.status === "approval" || row.status === "input" || row.status === "request" || row.status === "failed" || row.status === "limited" || row.unread;
 }
 
+/** A thread's row status, for one that isn't listed (or that you have outside a list). */
+export function threadState(thread: OrchestrationV2ThreadShell): Pick<ThreadRow, "shell" | "status" | "unread"> {
+  const shell = presentThreadShell(LOCAL_ENVIRONMENT, thread);
+  return { shell, status: resolveStatus(shell), unread: hasUnseenCompletion(shell) };
+}
+
 /** The sidebar's top-right status word, or null to show the time instead. */
-export function statusLabel(row: ThreadRow, now = Date.now()): { readonly text: string; readonly tone: StatusTone } | null {
+export function statusLabel(row: Pick<ThreadRow, "shell" | "status" | "unread">, now = Date.now()): { readonly text: string; readonly tone: StatusTone } | null {
   switch (row.status) {
     case "working": {
       const label = row.shell.goal?.status === "active" ? "Goal" : "Working";

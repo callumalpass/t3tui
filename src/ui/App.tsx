@@ -6,7 +6,7 @@ import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, Tu
 import { homedir } from "node:os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { ChatAttachment, OrchestrationMessageContext, OrchestrationV2Subagent } from "@t3tools/contracts";
+import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
 import type { ServerConfigState, ShellState, T3Session, ThreadState } from "../client/session.ts";
 import { createAlerts, type Alert } from "../model/alerts.ts";
 import { modelSummary } from "../model/models.ts";
@@ -80,7 +80,6 @@ const MAX_COMPOSER_LINES = 8;
 /** Sections folded to a count unless you filter or press z, like the web sidebar's. */
 const FOLDED_SECTIONS: readonly Section[] = ["snoozed", "settled"];
 const DETAILS_WIDTH = 38;
-const NO_SUBAGENTS: readonly OrchestrationV2Subagent[] = [];
 /** Below this, the details panel takes the conversation's place instead of a column beside it. */
 const MIN_CONVERSATION_WIDTH = 70;
 
@@ -431,7 +430,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     thread: threadShell,
     project,
     snapshot: detailsSnapshot,
-    subagents: projection?.subagents ?? NO_SUBAGENTS,
+    projection: projection ?? null,
+    serverConfig: serverConfig?.config ?? null,
     now,
     config,
     diff,
@@ -1019,6 +1019,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       {...(threadId && !threadShell ? { empty: supportsFamilies ? "Loading details…" : "No details for idle subagent threads on this server. u goes to the parent." } : {})}
       width={inPlace ? width - listWidth : DETAILS_WIDTH}
       loading={panel.loading}
+      unfolded={panel.unfolded}
       inPlace={inPlace}
       selected={mode === "details" || (mode === "confirm" && returnMode.current === "details") ? panel.selected : null}
       onActivate={panel.activateById}

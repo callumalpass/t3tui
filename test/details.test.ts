@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import type { OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadProjection, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
 import type { VcsState } from "../src/client/session.ts";
-import { detailsActions, detailsCwd, threadDetails } from "../src/model/details.ts";
+import { detailsActions, detailsCwd, shortTime, threadDetails } from "../src/model/details.ts";
+import { v2Projection, v2ThreadShell } from "../vendor/t3code/packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
 
 const project = { id: "p1", title: "tasknotes", workspaceRoot: "/repo/tasknotes" } as unknown as OrchestrationProjectShell;
 const thread = (extra: Record<string, unknown> = {}) =>
   ({
+    ...v2ThreadShell,
     id: "t1",
     title: "Fix sync",
     projectId: "p1",
@@ -64,7 +66,7 @@ describe("threadDetails", () => {
       ),
       null,
     );
-    expect(details.branch).toEqual({ name: "feat/sync", upstream: "↑2 ↓0", pullRequest: { number: 41, title: "Fix sync", state: "open", tone: "good", checks: null } });
+    expect(details.branch).toEqual({ name: "feat/sync", upstream: "↑2", pullRequest: { number: 41, title: "Fix sync", state: "open", tone: "good", checks: null } });
     expect(details.changes?.files).toHaveLength(1);
     expect(details.changes?.branchTotal).toEqual({ baseRef: "main", insertions: 40, deletions: 2 });
   });
@@ -97,11 +99,12 @@ describe("threadDetails", () => {
       vcs({}),
       snapshot,
     );
-    expect(details.lineage.map((entry) => [entry.text, entry.threadId])).toEqual([
-      ['forked from "Plan sync"', "parent"],
-      ['fork "Try another way"', "fork"],
-      ["1 subagent running", undefined],
+    expect(details.lineage.map((entry) => [entry.glyph, entry.text, entry.threadId])).toEqual([
+      ["↰", "forked from Plan sync", "parent"],
+      ["↳", "fork Try another way", "fork"],
+      ["◐", "1 subagent running", undefined],
     ]);
+    expect(details.subagents).toEqual({ total: 1, running: 1 });
     expect(details.background).toEqual([{ glyph: "◐", text: "dev server :5173" }]);
     expect(details.goal).toEqual({ objective: "Ship sync", status: "active · 1m", tone: "info" });
   });
@@ -120,7 +123,86 @@ describe("threadDetails", () => {
       { servers, automations, timestampFormat: "24-hour" } as never,
     );
     expect(details.git?.quick).toEqual({ action: "commit_push_pr", label: "Commit, push & PR", commits: true });
-    expect(details.automations[0]).toMatchObject({ schedule: "Mon,Tue 09:00", status: "on" });
-    expect(detailsActions(details).map((action) => action.id)).toEqual(["git:quick:commit_push_pr", "git:commit", "diff:*", "diff:src/a.ts", "server:5173", "automation:a1"]);
+    expect(details.automations[0]).toMatchObject({ when: "Mon,Tue 09:00", tone: "muted" });
+    expect(detailsActions(details).map((action) => action.id)).toEqual(["diff:src/a.ts", "diff:*", "git:quick:commit_push_pr", "git:commit", "server:5173", "automation:a1"]);
+  });
+
+  test("hides ahead/behind when both are zero", () => {
+    const details = detailsOf(thread(), vcs({}, { hasUpstream: true, aheadCount: 0, behindCount: 0, pr: null }), null);
+    expect(details.branch?.upstream).toBeNull();
+    expect(detailsOf(thread(), vcs({}, { hasUpstream: true, aheadCount: 0, behindCount: 3, pr: null }), null).branch?.upstream).toBe("↓3");
+  });
+
+  test("marks paths without counts as untracked", () => {
+    const files = [
+      { path: "README.md", insertions: 29, deletions: 167 },
+      { path: "docs/", insertions: 0, deletions: 0 },
+      { path: "scripts/demo-capture.tsx", insertions: 0, deletions: 0 },
+    ];
+    const details = detailsOf(thread(), vcs({ workingTree: { files, insertions: 29, deletions: 167 } }), null);
+    expect(details.changes?.files.map((file) => [file.status, file.path])).toEqual([
+      ["M", "README.md"],
+      ["?", "docs/"],
+      ["?", "scripts/demo-capture.tsx"],
+    ]);
+  });
+
+  test("shows the run state, the context window left and the provider's limits", () => {
+    const projection = { ...v2Projection, providerTurns: [{ tokenUsage: { usedTokens: 62_000, maxTokens: 100_000, updatedAt: "2026-06-20T00:00:00.000Z" } }] } as unknown as OrchestrationV2ThreadProjection;
+    const serverConfig = {
+      providers: [{ instanceId: "codex", driver: "codex", enabled: true, usageLimits: { checkedAt: "2026-06-20T00:00:00.000Z", windows: [{ id: "5h", kind: "session", label: "5h", usedPercent: 39 }, { id: "week", kind: "weekly", label: "week", usedPercent: 95 }] } }],
+    };
+    const details = detailsOf(thread({ status: "running", activeRunId: "run-1", latestRunId: "run-1" }), null, null, { projection, serverConfig } as never);
+    expect(details.context).toEqual({ left: 38, used: "62k" });
+    expect(details.limits).toEqual([
+      { label: "5h", left: 61, tone: "muted" },
+      { label: "week", left: 5, tone: "warn" },
+    ]);
+    // Without usage reports there's nothing to show.
+    const quiet = detailsOf(thread(), null, null, { projection: v2Projection });
+    expect(quiet.context).toBeNull();
+    expect(quiet.limits).toBeNull();
+    expect(quiet.status).toBeNull();
+  });
+
+  test("shows the latest to-do list, folded around the step under way", () => {
+    const steps = (running: number) => Array.from({ length: 9 }, (_, index) => ({ id: `s${index}`, text: `Step ${index}`, status: index < running ? "completed" : index === running ? "running" : "pending" }));
+    const projection = {
+      ...v2Projection,
+      turnItems: [
+        { id: "old", type: "todo_list", planId: "p", steps: steps(0) },
+        { id: "new", type: "todo_list", planId: "p", steps: steps(6) },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const tasks = detailsOf(thread(), null, null, { projection }).tasks;
+    expect(tasks).toMatchObject({ done: 6, total: 9, window: { start: 4, end: 9 } });
+    expect(detailsActions(detailsOf(thread(), null, null, { projection }))[0]?.id).toBe("fold:tasks");
+    expect(detailsOf(thread(), null, null, { projection: v2Projection }).tasks).toBeNull();
+  });
+
+  test("lists running and failed subagents, folding finished ones", () => {
+    const child = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ ...v2ThreadShell, id, title, lineage: { rootThreadId: "t1", parentThreadId: "t1", relationshipToParent: "subagent" }, ...extra });
+    const snapshot = { threads: [child("a", "Staging soak", { activeRunId: "run-a" }), child("b", "Fix webhook"), child("c", "Write docs")] } as unknown as OrchestrationV2ShellSnapshot;
+    const projection = { ...v2Projection, subagents: [{ childThreadId: "b", title: "Fix webhook", status: "failed" }, { childThreadId: "c", title: "Write docs", status: "completed" }] } as unknown as OrchestrationV2ThreadProjection;
+    const details = detailsOf(thread(), null, snapshot, { projection });
+    expect(details.lineage.map((entry) => [entry.glyph, entry.text, entry.finished ?? false])).toEqual([
+      ["◐", "Staging soak", false],
+      ["✕", "Fix webhook", false],
+      ["✓", "Write docs", true],
+    ]);
+    expect(details.subagents).toEqual({ total: 3, running: 1 });
+    expect(detailsActions(details).map((action) => action.id)).toEqual(["thread:a", "thread:b", "fold:subagents"]);
+    expect(detailsActions(details, new Set(["subagents"])).map((action) => action.id)).toEqual(["thread:a", "thread:b", "fold:subagents", "thread:c"]);
+  });
+
+  test("shows an automation's next run as a short time", () => {
+    const now = new Date(2026, 10, 3, 12, 0).getTime();
+    const at = (days: number, hours: number) => new Date(2026, 10, 3 + days, hours, 0).getTime();
+    expect(shortTime(at(0, 21), now, "24-hour")).toBe("today 21:00");
+    expect(shortTime(at(1, 9), now, "24-hour")).toBe("tomorrow 09:00");
+    // 3 November 2026 is a Tuesday.
+    expect(shortTime(at(6, 7), now, "24-hour")).toBe("Mon 07:00");
+    const automations = [{ id: "a1", title: "Weekly report", enabled: true, schedule: { type: "fixed_time", timeOfDay: "07:00", weekdays: [1] }, threadId: "t1", nextRunAt: new Date(at(6, 7)).toISOString(), lastRunStatus: "succeeded" }];
+    expect(detailsOf(thread(), null, null, { automations, now, timestampFormat: "24-hour" } as never).automations[0]).toMatchObject({ when: "Mon 07:00", tone: "muted" });
   });
 });

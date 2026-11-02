@@ -1,9 +1,9 @@
-import type { DiscoveredLocalServer, OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2Subagent, OrchestrationV2ThreadShell, ScheduledTask, ThreadId } from "@t3tools/contracts";
+import type { DiscoveredLocalServer, OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadProjection, OrchestrationV2ThreadShell, ScheduledTask, ServerConfig, ThreadId } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 
 import type { FeedState, T3Session, VcsState } from "../client/session.ts";
 import type { T3tuiConfig } from "../config.ts";
-import { detailsActions, detailsCwd, threadDetails, type DetailsAction, type GitAction } from "../model/details.ts";
+import { detailsActions, detailsCwd, threadDetails, type DetailsAction, type DetailsFold, type GitAction } from "../model/details.ts";
 import { keys, type Binding } from "../model/keymap.ts";
 import type { Automations } from "./useAutomations.ts";
 import type { Confirmation } from "./ConfirmBar.tsx";
@@ -25,7 +25,9 @@ export function useDetails(deps: {
   readonly project: OrchestrationProjectShell | undefined;
   /** The shell, with fetched subagent families, so lineage can name idle subagents. */
   readonly snapshot: OrchestrationV2ShellSnapshot | null;
-  readonly subagents: readonly OrchestrationV2Subagent[];
+  /** The open thread's projection, once loaded: its to-do list, context window and subagents. */
+  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly serverConfig: ServerConfig | null;
   readonly now: number;
   readonly config: T3tuiConfig;
   readonly diff: DiffState | null;
@@ -44,6 +46,7 @@ export function useDetails(deps: {
   /** null follows the terminal width; d sets it for the rest of the session. */
   const [pref, setPref] = useState<boolean | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<DetailsFold>>(() => new Set());
   const show = pref ?? deps.width >= AUTO_WIDTH;
   const cwd = thread ? detailsCwd(thread, project) : null;
 
@@ -64,8 +67,11 @@ export function useDetails(deps: {
     };
   }, [session, live]);
   const vcsState = vcs?.cwd === cwd ? vcs.state : null;
-  // Another thread starts with nothing selected.
-  useEffect(() => setSelected(null), [thread?.id]);
+  // Another thread starts with nothing selected, and folded.
+  useEffect(() => {
+    setSelected(null);
+    setUnfolded(new Set());
+  }, [thread?.id]);
 
   const details = useMemo(
     () =>
@@ -75,16 +81,23 @@ export function useDetails(deps: {
             project,
             vcs: vcsState,
             snapshot: deps.snapshot,
-            subagents: deps.subagents,
+            projection: deps.projection,
+            serverConfig: deps.serverConfig,
             servers: servers?.items ?? [],
             automations: automations?.items ?? [],
             now: deps.now,
             timestampFormat: config.timestampFormat,
           })
         : null,
-    [thread, project, vcsState, deps.snapshot, deps.subagents, servers, automations, deps.now, config.timestampFormat],
+    [thread, project, vcsState, deps.snapshot, deps.projection, deps.serverConfig, servers, automations, deps.now, config.timestampFormat],
   );
-  const actions = useMemo(() => (details ? detailsActions(details) : []), [details]);
+  const actions = useMemo(() => (details ? detailsActions(details, unfolded) : []), [details, unfolded]);
+  const toggleFold = (fold: DetailsFold) =>
+    setUnfolded((current) => {
+      const next = new Set(current);
+      if (!next.delete(fold)) next.add(fold);
+      return next;
+    });
 
   /** The folder's uncommitted changes, or one file's. */
   const openDiff = (path: string | null) => {
@@ -139,6 +152,8 @@ export function useDetails(deps: {
   const activate = (action: DetailsAction) => {
     setSelected(action.id);
     switch (action.kind) {
+      case "fold":
+        return toggleFold(action.fold);
       case "diff":
         return openDiff(action.path);
       case "git":
@@ -155,7 +170,7 @@ export function useDetails(deps: {
   const activateById = (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
     if (!action) return;
-    if (action.kind !== "thread") deps.focus(true);
+    if (action.kind !== "thread" && action.kind !== "fold") deps.focus(true);
     activate(action);
   };
   const move = (delta: number) => {
@@ -218,7 +233,7 @@ export function useDetails(deps: {
     { keys: ["h", "←"], run: leave },
   );
 
-  return { show, setPref, cwd, details, loading: vcsState?.status !== "live", selected, activateById, leave, keys: { focus: focusKey, toggle: toggleKey, commands, focused } };
+  return { show, setPref, cwd, details, loading: vcsState?.status !== "live", selected, unfolded, activateById, leave, keys: { focus: focusKey, toggle: toggleKey, commands, focused } };
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
