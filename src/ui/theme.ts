@@ -85,8 +85,8 @@ export function getMarkdownStyle(): SyntaxStyle {
   markdownStyle ??= SyntaxStyle.fromStyles({
     default: { fg: colors.text },
     "markup.heading": { fg: colors.text, bold: true },
-    "markup.strong": { bold: true },
-    "markup.italic": { italic: true },
+    "markup.strong": { fg: colors.text, bold: true },
+    "markup.italic": { fg: colors.text, italic: true },
     "markup.strikethrough": { dim: true },
     // The renderer appends " (url)" after a link's text even with conceal on, and offers
     // no way to hide it; keep the text as the link and the rest as quiet as it can be.
