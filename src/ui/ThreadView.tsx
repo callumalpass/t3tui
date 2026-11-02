@@ -17,7 +17,7 @@ import { BAR } from "./edges.ts";
 import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
-import { firstLine } from "./text.ts";
+import { firstLine, truncate } from "./text.ts";
 import { colors, getMarkdownStyle, toneColor } from "./theme.ts";
 
 /** What a right-click in the conversation was on. */
@@ -36,6 +36,9 @@ export interface ConversationMouse {
   /** A click on a changed file: that turn's diff. */
   readonly openTurnDiff: (checkpointTurnCount: number) => void;
 }
+
+/** Prose stops at this width on wide terminals, left-aligned. */
+const CONTENT_WIDTH = 100;
 
 /** The conversation, row for row as the web app derives it (MessagesTimeline.logic). */
 export function ThreadView(props: {
@@ -71,7 +74,7 @@ export function ThreadView(props: {
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom">
         {/* Prose stops at reading width on wide terminals; the composer below stays full width. */}
-        <box flexDirection="column" maxWidth={100}>
+        <box flexDirection="column" maxWidth={CONTENT_WIDTH}>
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
         {history?.hasMore || history?.error ? <LoadEarlier history={history} onLoad={props.mouse.loadEarlier} /> : null}
         {timeline?.rows.filter((row) => !isPendingApprovalRow(row, pendingIds)).map((row) => (
@@ -342,10 +345,12 @@ function OmittedOutput({ session, source }: { readonly session: T3Session; reado
 
 /** One work/tool line, everywhere the same: glyph, label, result details right-aligned. */
 function WorkLine(props: { readonly glyph: string; readonly glyphColor: string; readonly label: string; readonly labelColor: string; readonly detail?: string; readonly selectable?: boolean }) {
+  // The label gives up whatever the right-hand details take, within the reading width.
+  const label = truncate(props.label, CONTENT_WIDTH - 2 - (props.detail ? props.detail.length + 2 : 0));
   return (
     <box flexDirection="row" width="100%">
       <text fg={props.glyphColor} flexShrink={0} selectable={false}>{`${props.glyph} `}</text>
-      <text fg={props.labelColor} flexShrink={1} wrapMode="none" selectable={props.selectable ?? false}>{props.label}</text>
+      <text fg={props.labelColor} flexShrink={1} wrapMode="none" selectable={props.selectable ?? false}>{label}</text>
       {props.detail ? (
         <>
           <box flexGrow={1} />
