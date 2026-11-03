@@ -170,6 +170,7 @@ function attachServer(session: T3Session, target: TerminalTarget, term: Embedded
  * stops listening for SIGWINCH and so never sees the pane change size.
  */
 function withoutInBandResize(data: Uint8Array): Uint8Array {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: this matches an escape sequence
   return Buffer.from(Buffer.from(data).toString("latin1").replace(/\x1b\[\?2048;\d\$y/g, "\x1b[?2048;0$y"), "latin1");
 }
 
