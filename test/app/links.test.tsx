@@ -70,11 +70,11 @@ describe("links and paths in replies", () => {
     const app = await open({ width: 200, session: fakeSession({ snapshot, projection: withReply("I changed `src/a.ts:3` and left src/missing.ts alone.", false) }) });
     const missing = app.find("missing.ts");
     await app.click(missing.x, missing.y);
-    expect(app.frame()).not.toContain("Editing");
+    expect(app.frame()).not.toContain("Details  ");
     const path = app.find("a.ts:3");
     await app.click(path.x, path.y);
-    expect(app.frame()).toContain("Details  Editor");
-    expect(app.frame()).toContain("Editing src/a.ts ");
+    expect(app.frame()).toContain("Details  src/a.ts ✕");
+    expect(app.hints()).toStartWith("keys: a.ts");
   });
 
   test("a drag over a link selects it rather than opening it", async () => {

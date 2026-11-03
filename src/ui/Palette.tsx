@@ -8,7 +8,8 @@ import { colors } from "./theme.ts";
 
 /**
  * The web's command palette (mod+K) as an overlay: a search box over grouped commands and
- * threads. Arrows or ctrl+n/p move, enter runs, a click runs, esc closes.
+ * threads. Arrows or ctrl+n/p move, enter runs, a click runs, esc closes. It sits on a solid
+ * backdrop over the whole conversation area (`left`, `width`, `height`), centred in it.
  */
 export function Palette(props: {
   readonly query: string;
@@ -16,6 +17,7 @@ export function Palette(props: {
   readonly placeholder?: string;
   readonly groups: readonly PaletteGroup[];
   readonly selected: number;
+  readonly left: number;
   readonly width: number;
   readonly height: number;
   readonly onQuery: (query: string) => void;
@@ -25,7 +27,7 @@ export function Palette(props: {
   readonly onMove: (step: -1 | 1) => void;
 }) {
   const width = Math.min(80, props.width - 4);
-  const listHeight = Math.max(4, Math.min(props.height - 8, 22));
+  const listHeight = Math.max(4, Math.min(props.height - 6, 22));
   // Rows are entries plus a header per group; keep the selection in view.
   const rows: ({ kind: "header"; label: string; key: string } | { kind: "entry"; entry: PaletteEntry; index: number })[] = [];
   let index = 0;
@@ -38,22 +40,24 @@ export function Palette(props: {
   const start = Math.max(0, Math.min(selectedRow - Math.floor(listHeight / 2), rows.length - listHeight));
   const inner = width - 3;
   return (
-    <box position="absolute" top={2} left={Math.floor((props.width - width) / 2)} width={width} zIndex={10} flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1} backgroundColor={colors.panel}>
-      <box border={["left"]} customBorderChars={BAR} borderColor={colors.accent} backgroundColor={colors.element} height={1} flexDirection="row" flexShrink={0}>
-        <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.element} focusedBackgroundColor={colors.element} />
-      </box>
-      {props.status ? <text fg={colors.muted}>{props.status}</text> : null}
-      <box flexDirection="column" height={listHeight} marginTop={1} onMouseScroll={(event: MouseEvent) => { const step = wheelStep(event); if (step) props.onMove(step); }}>
-        {rows.length === 0 ? <text fg={colors.muted}>No matches</text> : null}
-        {rows.slice(start, start + listHeight).map((row) =>
-          row.kind === "header" ? (
-            <text key={row.key} fg={colors.faint}>
-              <strong>{row.label}</strong>
-            </text>
-          ) : (
-            <Row key={entryKey(row.entry)} entry={row.entry} selected={row.index === props.selected} inner={inner} onPick={() => props.onPick(row.index)} />
-          ),
-        )}
+    <box position="absolute" top={1} left={props.left} width={props.width} height={props.height} zIndex={10} flexDirection="column" alignItems="center" paddingTop={1} backgroundColor={colors.panel}>
+      <box width={width} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <box border={["left"]} customBorderChars={BAR} borderColor={colors.accent} backgroundColor={colors.element} height={1} flexDirection="row" flexShrink={0}>
+          <input focused flexGrow={1} placeholder={props.placeholder ?? "Search commands and threads (> for commands only)"} value={props.query} onInput={props.onQuery} onSubmit={props.onSubmit} backgroundColor={colors.element} focusedBackgroundColor={colors.element} />
+        </box>
+        {props.status ? <text fg={colors.muted}>{props.status}</text> : null}
+        <box flexDirection="column" height={listHeight} marginTop={1} onMouseScroll={(event: MouseEvent) => { const step = wheelStep(event); if (step) props.onMove(step); }}>
+          {rows.length === 0 ? <text fg={colors.muted}>No matches</text> : null}
+          {rows.slice(start, start + listHeight).map((row) =>
+            row.kind === "header" ? (
+              <text key={row.key} fg={colors.faint}>
+                <strong>{row.label}</strong>
+              </text>
+            ) : (
+              <Row key={entryKey(row.entry)} entry={row.entry} selected={row.index === props.selected} inner={inner} onPick={() => props.onPick(row.index)} />
+            ),
+          )}
+        </box>
       </box>
     </box>
   );

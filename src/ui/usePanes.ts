@@ -1,22 +1,43 @@
 import type { ThreadId } from "@t3tools/contracts";
+import { basename } from "node:path";
 import { useEffect, useRef, useState } from "react";
 
 import { keys, type Binding } from "../model/keymap.ts";
+import { nvimModified, nvimQuit } from "./editor.ts";
 import type { PaneProgram } from "./TerminalPane.tsx";
 import type { TerminalTarget } from "./terminalAttach.ts";
 
 export type Placement = "bottom" | "side";
-export type ColumnTab = "details" | "editor" | "terminal";
-/** The pane that takes the keys in "pane" mode. */
-export type PaneFocus = "terminal" | "editor" | "message";
+/** The panes that take the keys, in the order focus moves through them after the conversation. */
+export type PaneFocus = "message" | "drawer" | "column";
+const PANE_ORDER: readonly PaneFocus[] = ["message", "drawer", "column"];
+/** How long ctrl+\ waits for the key after it. */
+const PREFIX_MS = 2000;
+const DETAILS = "details";
+/** The column's tab for the shown terminal, in side placement. */
+const TERMINAL = "terminal";
 type LocalProgram = Extract<PaneProgram, { kind: "local" }>;
 
-const COLUMN_TAB_LABELS: Record<ColumnTab, string> = { details: "Details", editor: "Editor", terminal: "Terminal" };
+/** A program run here in $EDITOR, with Neovim's socket when it serves one. */
+export interface EditorProgram {
+  readonly program: LocalProgram;
+  readonly socket: string | null;
+}
+/** A file in $EDITOR, in a tab of the column: the path its tab shows, relative to the workspace. */
+export interface EditorTab extends EditorProgram {
+  readonly path: string;
+}
+export interface ColumnTab {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "details" | "editor" | "terminal";
+}
 
 /**
- * The panes around the conversation: each thread's terminals (in the drawer below it, or the
- * right-hand column's Terminal tab), a file in $EDITOR in the column's Editor tab, and the
- * message in $EDITOR in the composer's place. Which one has the keys, and the keys between them.
+ * The panes around the conversation: each thread's terminals (in the drawer below it, or as
+ * tabs of the right-hand column), files in $EDITOR in the column's tabs, and the message in
+ * $EDITOR in the composer's place. Which one has the keys, and the ctrl+\ prefix that moves
+ * them, picks tabs, closes and zooms.
  */
 export function usePanes(deps: {
   readonly threadId: ThreadId | undefined;
@@ -30,6 +51,12 @@ export function usePanes(deps: {
   /** Whether a pane has the keys, and giving them to one or back to the conversation. */
   readonly focused: boolean;
   readonly focus: (focused: boolean) => void;
+  /** Whether the details panel has the keys: the column counts as focused for tabs and zoom. */
+  readonly detailsFocused: boolean;
+  /** Finds or starts a terminal for the thread, a new one, and closing one (after asking). */
+  readonly openTerminal: () => void;
+  readonly newTerminal: () => void;
+  readonly closeTerminal: (target: TerminalTarget) => void;
   readonly say: (text: string, bad?: boolean) => void;
 }) {
   const { threadId, placement, column, focused, say } = deps;
@@ -37,40 +64,89 @@ export function usePanes(deps: {
   const [drawers, setDrawers] = useState<ReadonlyMap<ThreadId, { readonly target: TerminalTarget; readonly open: boolean }>>(new Map());
   /** Terminals that closed or exited here, until the server's list catches up. */
   const [ended, setEnded] = useState<ReadonlySet<string>>(new Set());
-  const [editor, setEditor] = useState<LocalProgram | null>(null);
-  const [message, setMessage] = useState<LocalProgram | null>(null);
-  const [tab, setTab] = useState<ColumnTab>("details");
-  const [target, setTarget] = useState<PaneFocus>("terminal");
+  /** Terminals this run has shown, which the strip under the message box names while the drawer is hidden. */
+  const [seen, setSeen] = useState<ReadonlySet<string>>(new Set());
+  const [editors, setEditors] = useState<readonly EditorTab[]>([]);
+  const [message, setMessage] = useState<EditorProgram | null>(null);
+  const [tab, setTab] = useState<string>(DETAILS);
+  const [target, setTarget] = useState<PaneFocus>("drawer");
+  const [prefix, setPrefix] = useState(false);
+  const [zoomed, setZoomed] = useState<PaneFocus | null>(null);
+  /** Editors with unsaved changes, checked as the column hides (they can't change while it's hidden). */
+  const [modified, setModified] = useState<ReadonlySet<string>>(new Set());
+  const prefixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The column's setting before a tab opened it, to go back to once that tab closes. */
   const restore = useRef<{ readonly pref: boolean | null } | null>(null);
+  /** The program tab the column showed last, for focusing the column from Details. */
+  const lastProgramTab = useRef<string | null>(null);
 
-  const endedKey = (terminal: TerminalTarget) => `${terminal.threadId}:${terminal.terminalId}`;
+  const key = (terminal: TerminalTarget) => `${terminal.threadId}:${terminal.terminalId}`;
   const drawer = threadId ? drawers.get(threadId) : undefined;
-  const listed = deps.terminals.filter((terminal) => !ended.has(endedKey(terminal)));
+  const listed = deps.terminals.filter((terminal) => !ended.has(key(terminal)));
   // A terminal just opened shows before the server lists it.
-  const tabs = drawer && !ended.has(endedKey(drawer.target)) && !listed.some((terminal) => terminal.terminalId === drawer.target.terminalId) ? [...listed, drawer.target] : listed;
+  const tabs = drawer && !ended.has(key(drawer.target)) && !listed.some((terminal) => terminal.terminalId === drawer.target.terminalId) ? [...listed, drawer.target] : listed;
   const terminal = drawer?.open ? drawer.target : null;
+  /** The terminal ctrl+j shows, and the palette's close and clear act on. */
+  const activeTerminal = (drawer && tabs.some((candidate) => candidate.terminalId === drawer.target.terminalId) ? drawer.target : tabs[0]) ?? null;
   const side = placement === "side";
 
-  const columnTabs: ColumnTab[] = ["details", ...(editor ? ["editor" as const] : []), ...(side && terminal ? ["terminal" as const] : [])];
-  const columnTab = columnTabs.includes(tab) ? tab : "details";
+  const terminalTabId = (terminalId: string) => `${TERMINAL}:${terminalId}`;
+  const columnTabs: ColumnTab[] = [
+    { id: DETAILS, label: "Details", kind: "details" },
+    ...editors.map((editor): ColumnTab => ({ id: editor.program.id, label: editor.path, kind: "editor" })),
+    ...(side && terminal ? tabs.map((candidate): ColumnTab => ({ id: terminalTabId(candidate.terminalId), label: candidate.label, kind: "terminal" })) : []),
+  ];
+  const columnTab = tab === TERMINAL && side && terminal ? terminalTabId(terminal.terminalId) : editors.some((editor) => editor.program.id === tab) ? tab : DETAILS;
+  const activeColumnTab = columnTabs.find((candidate) => candidate.id === columnTab)!;
+  const programTabs = columnTabs.filter((candidate) => candidate.kind !== "details");
   const shown: Record<PaneFocus, boolean> = {
-    terminal: terminal !== null && (!side || (column && columnTab === "terminal")),
-    editor: column && columnTab === "editor",
     message: message !== null,
+    drawer: terminal !== null && !side,
+    column: column && columnTab !== DETAILS,
   };
+  /** What focus can move to: open panes, and the column while it holds a program, even hidden. */
+  const open: Record<PaneFocus, boolean> = { ...shown, column: programTabs.length > 0 };
+  const available = PANE_ORDER.filter((pane) => open[pane]);
   const focusedPane = focused && shown[target] ? target : null;
-  // A pane that went away, or out of sight, gives the keys back.
+  const zoomShown = zoomed !== null && (zoomed === "column" ? column : shown[zoomed]);
+  // A pane that went away, or out of sight, gives the keys back, and its zoom.
   useEffect(() => {
     if (focused && !shown[target]) deps.focus(false);
+    if (zoomed && !zoomShown) setZoomed(null);
   });
+  useEffect(() => () => void (prefixTimer.current && clearTimeout(prefixTimer.current)), []);
+  // The ● for unsaved changes while the column is hidden: Neovim says; other editors can't.
+  const sockets = editors.flatMap((editor) => (editor.socket ? [`${editor.program.id}\n${editor.socket}`] : [])).join("\n");
+  useEffect(() => {
+    if (column || !sockets) {
+      setModified(new Set());
+      return;
+    }
+    let current = true;
+    const checks = editors.flatMap((editor) => (editor.socket ? [nvimModified(editor.socket).then((changed) => (changed ? [editor.program.id] : []))] : []));
+    void Promise.all(checks).then((ids) => current && setModified(new Set(ids.flat())));
+    return () => {
+      current = false;
+    };
+  }, [column, sockets]);
 
-  const enter = (pane: PaneFocus) => {
+  /** Gives a pane the keys; the column on `tab`, or the program tab it showed last. */
+  const enter = (pane: PaneFocus, tab?: string) => {
+    if (pane === "column" && tab) showColumnTab(tab);
+    else if (pane === "column" && columnTab === DETAILS) {
+      const next = programTabs.find((candidate) => candidate.id === lastProgramTab.current || (lastProgramTab.current === TERMINAL && candidate.kind === "terminal")) ?? programTabs[0];
+      if (next) showColumnTab(next.id);
+    } else if (pane === "column") showColumnTab(columnTab);
     setTarget(pane);
     deps.focus(true);
   };
-  const showTab = (next: ColumnTab) => {
+  /** Shows a column tab, showing the column for it if it was hidden. */
+  const showColumnTab = (id: string) => {
+    const terminalTab = tabs.find((candidate) => terminalTabId(candidate.terminalId) === id);
+    if (terminalTab) setDrawer(terminalTab.threadId, { target: terminalTab, open: true });
+    const next = terminalTab ? TERMINAL : id;
     setTab(next);
+    if (next !== DETAILS) lastProgramTab.current = next;
     if (column) return;
     restore.current ??= { pref: deps.columnPref };
     deps.setColumnPref(true);
@@ -83,35 +159,40 @@ export function usePanes(deps: {
   };
   const setDrawer = (id: ThreadId, value: { readonly target: TerminalTarget; readonly open: boolean }) => setDrawers((previous) => new Map(previous).set(id, value));
 
-  /** Shows a terminal, as a tab of the drawer or of the column, and gives it the keys. */
-  const openTerminal = (next: TerminalTarget) => {
+  /** Shows a terminal, as a tab of the drawer or of the column; `focus` gives it the keys. */
+  const showTerminal = (next: TerminalTarget, focus: boolean) => {
     setEnded((previous) => {
       const rest = new Set(previous);
-      rest.delete(endedKey(next));
+      rest.delete(key(next));
       return rest;
     });
+    setSeen((previous) => (previous.has(key(next)) ? previous : new Set(previous).add(key(next))));
     setDrawer(next.threadId, { target: next, open: true });
-    if (side) showTab("terminal");
-    enter("terminal");
+    if (side) showColumnTab(TERMINAL);
+    if (!focus) return;
+    setTarget(side ? "column" : "drawer");
+    deps.focus(true);
   };
+  const openTerminal = (next: TerminalTarget) => showTerminal(next, true);
   const hideTerminal = () => {
     if (!threadId || !drawer) return;
     setDrawer(threadId, { ...drawer, open: false });
-    if (side) tabGone(editor !== null);
+    if (side) tabGone(editors.length > 0);
   };
-  /** ctrl+j: hides the terminal when it shows, or shows the last one, or `open` finds one. */
-  const toggleTerminal = (open: () => void) => {
-    if (shown.terminal) return hideTerminal();
-    if (drawer && tabs.some((candidate) => candidate.terminalId === drawer.target.terminalId)) return openTerminal(drawer.target);
-    open();
+  const terminalShown = terminal !== null && (!side || (column && activeColumnTab.kind === "terminal"));
+  /** ctrl+j: hides the terminal when it shows, or shows the last one, or finds one. */
+  const toggleTerminal = () => {
+    if (terminalShown) return hideTerminal();
+    if (activeTerminal) return openTerminal(activeTerminal);
+    deps.openTerminal();
   };
   const selectTab = (index: number) => {
     const next = tabs[index];
-    if (next) setDrawer(next.threadId, { target: next, open: true });
+    if (next) showTerminal(next, false);
   };
   /** A terminal closed or exited: its tab goes, the next one shows, and the last takes the drawer with it. */
   const terminalEnded = (gone: TerminalTarget, note?: string) => {
-    setEnded((previous) => new Set(previous).add(endedKey(gone)));
+    setEnded((previous) => new Set(previous).add(key(gone)));
     const next = tabs.find((candidate) => candidate.terminalId !== gone.terminalId);
     if (next) setDrawer(gone.threadId, { target: next, open: drawers.get(gone.threadId)?.open ?? true });
     else {
@@ -120,67 +201,167 @@ export function usePanes(deps: {
         rest.delete(gone.threadId);
         return rest;
       });
-      if (side && gone.threadId === threadId) tabGone(editor !== null);
+      if (side && gone.threadId === threadId) tabGone(editors.length > 0);
     }
     if (note) say(note);
   };
 
-  /** A file in $EDITOR, in the column's Editor tab. An editor may hold unsaved work, so it isn't replaced. */
-  const openEditor = (program: LocalProgram) => {
-    if (editor && editor.id !== program.id) return say("The editor is still open; ctrl+\\ there and quit it first.", true);
-    setEditor(program);
-    showTab("editor");
-    enter("editor");
+  /** A file in $EDITOR, in a tab of its own in the column, with the keys. */
+  const openEditor = (editor: EditorTab) => {
+    setEditors((previous) => (previous.some((candidate) => candidate.program.id === editor.program.id) ? previous : [...previous, editor]));
+    showColumnTab(editor.program.id);
+    setTarget("column");
+    deps.focus(true);
   };
-  const editorClosed = (note?: string) => {
-    setEditor(null);
-    tabGone(side && terminal !== null);
+  /** Another file went to an editor already running (Neovim's socket): its tab names it and takes the keys. */
+  const editorOpened = (id: string, path: string) => {
+    setEditors((previous) => previous.map((editor) => (editor.program.id === id ? { ...editor, path } : editor)));
+    showColumnTab(id);
+    setTarget("column");
+    deps.focus(true);
+  };
+  const editorClosed = (id: string, note?: string) => {
+    setEditors((previous) => previous.filter((editor) => editor.program.id !== id));
+    tabGone(editors.length > 1 || (side && terminal !== null));
     if (note) say(note);
   };
   /** The message in $EDITOR, in the composer's place. */
-  const openMessage = (program: LocalProgram) => {
-    setMessage(program);
-    enter("message");
+  const openMessage = (next: EditorProgram) => {
+    setMessage(next);
+    setTarget("message");
+    deps.focus(true);
   };
 
-  // ctrl+\ goes back to the pane that last had the keys, or the first that shows.
-  const next = ([target, "message", "editor", "terminal"] as const).find((pane) => shown[pane]);
-  const paneKey: Binding | null = next
-    ? { keys: ["ctrl+\\"], run: () => (focused ? deps.focus(false) : enter(next)), hint: focused ? "leave pane" : "pane", command: { id: "pane-focus", title: focused ? "Leave the pane" : "Focus the pane", keywords: ["terminal", "editor"] } }
-    : null;
-  /** alt+1…9 pick the terminal tab, while the terminal shows. */
-  const tabKeys: Binding[] = shown.terminal ? tabs.slice(0, 9).map((_, index) => ({ keys: [`alt+${index + 1}`], run: () => selectTab(index) })) : [];
-  const cycle = (step: 1 | -1) => setTab(columnTabs[(columnTabs.indexOf(columnTab) + step + columnTabs.length) % columnTabs.length]!);
-  /** { and } step through the column's tabs; [ and ] step through turns. */
-  const columnKeys: Binding[] =
-    column && columnTabs.length > 1
-      ? [
-          { keys: ["}"], run: () => cycle(1), command: { id: "column-next", title: "Next tab in the right column", keywords: ["details", "editor", "terminal"] } },
-          { keys: ["{"], run: () => cycle(-1), command: { id: "column-previous", title: "Previous tab in the right column", keywords: ["details", "editor", "terminal"] } },
-        ]
-      : [];
-  /** While a pane has the keys, all it keeps are these. */
-  const focusedKeys = keys(paneKey, focusedPane === "terminal" && tabKeys);
+  /** Asks an editor to quit: Neovim through its socket, where it asks about unsaved changes itself. Others would lose them, so no. */
+  const quitEditor = (editor: EditorProgram, name: string, pane: PaneFocus) => {
+    if (!editor.socket) return say(`Quit ${name} from inside it; closing it here could lose unsaved changes.`, true);
+    enter(pane);
+    void nvimQuit(editor.socket).then((sent) => sent === null && say(`Could not reach the editor for ${name}.`, true));
+  };
+  /** Closes a tab: a terminal after asking, an editor by asking it to quit. Details stays. */
+  const closeTab = (id: string) => {
+    const terminalTab = tabs.find((candidate) => candidate.terminalId === id || terminalTabId(candidate.terminalId) === id);
+    if (terminalTab) return deps.closeTerminal(terminalTab);
+    const editor = editors.find((candidate) => candidate.program.id === id);
+    if (editor) quitEditor(editor, basename(editor.path), "column");
+  };
+  const closeFocused = () => {
+    if (focusedPane === "drawer" && terminal) return closeTab(terminal.terminalId);
+    if (focusedPane === "column") return closeTab(columnTab);
+    if (focusedPane === "message" && message) return quitEditor(message, "the message", "message");
+    say(deps.detailsFocused ? "Details stays; d hides the column." : "No pane has the keys; ctrl+\\ tab moves them to one.", true);
+  };
+
+  /** The pane ctrl+\ ctrl+\ goes back to: the one that last had the keys, or the first that's open. */
+  const last = ([target, ...PANE_ORDER] as const).find((pane) => open[pane]) ?? null;
+  const toggle = () => {
+    if (focused) return deps.focus(false);
+    if (last) return enter(last);
+    say("No pane is open; ctrl+j opens a terminal.");
+  };
+  /** Steps focus through the conversation and the open panes, in order. */
+  const step = (by: 1 | -1) => {
+    const ring: (PaneFocus | null)[] = [null, ...available];
+    const next = ring[(ring.indexOf(focusedPane) + by + ring.length) % ring.length] ?? null;
+    if (next) enter(next);
+    else deps.focus(false);
+  };
+  const focusDrawer = () => {
+    if (terminal) return side ? enter("column") : enter("drawer");
+    toggleTerminal();
+  };
+  const focusColumn = () => (open.column ? enter("column") : say("Nothing runs in the column; o on a changed file opens one.", true));
+  /** 1…9: a tab of the focused strip, the column's or else the drawer's. */
+  const pickTab = (index: number) => {
+    if (focusedPane !== "column" && !deps.detailsFocused) return selectTab(index);
+    const next = columnTabs[index];
+    if (next?.kind === "details") showColumnTab(next.id);
+    else if (next) enter("column", next.id);
+  };
+  const toggleZoom = () => {
+    if (zoomed) return setZoomed(null);
+    const pane = focusedPane ?? (deps.detailsFocused ? "column" : last);
+    if (!pane) return say("No pane is open to zoom.", true);
+    if (!focusedPane && !deps.detailsFocused) enter(pane);
+    setZoomed(pane);
+  };
+
+  const startPrefix = () => {
+    if (prefixTimer.current) clearTimeout(prefixTimer.current);
+    prefixTimer.current = setTimeout(() => setPrefix(false), PREFIX_MS);
+    setPrefix(true);
+  };
+  const endPrefix = () => {
+    if (prefixTimer.current) clearTimeout(prefixTimer.current);
+    prefixTimer.current = null;
+    setPrefix(false);
+  };
+  /** ctrl+\ takes the next key, wherever the keys are. */
+  const prefixKey: Binding = { keys: ["ctrl+\\"], run: startPrefix, hint: "panes" };
+  /** The keys after ctrl+\: any other key just cancels it. */
+  const prefixKeys: Binding[] = keys(
+    { keys: [], label: "ctrl+\\", hint: "…" },
+    { keys: ["ctrl+\\"], run: toggle },
+    { keys: ["tab"], run: () => step(1), hint: "next" },
+    { keys: ["shift+tab"], run: () => step(-1) },
+    { keys: ["j"], run: focusDrawer, hint: "drawer" },
+    { keys: ["l"], run: focusColumn, hint: "column" },
+    { keys: ["k", "h"], run: () => deps.focus(false) },
+    { keys: [], label: "1-9", hint: "tab" },
+    Array.from({ length: 9 }, (_, index): Binding => ({ keys: [`${index + 1}`], run: () => pickTab(index) })),
+    { keys: ["x"], run: closeFocused, hint: "close" },
+    { keys: ["z"], run: toggleZoom, hint: zoomed ? "unzoom" : "zoom" },
+    { keys: ["n"], run: deps.newTerminal, hint: "new" },
+    { keys: ["esc"], run: () => {}, hint: "cancel" },
+  );
+  /** Where the keys are, by name. */
+  const focusedName = focusedPane === "message" ? "message" : focusedPane === "drawer" ? terminal?.label : focusedPane === "column" ? (activeColumnTab.kind === "editor" ? basename(activeColumnTab.label) : activeColumnTab.label) : undefined;
+  /** The hint bar while a pane has the keys. */
+  const focusedKeys: Binding[] = focusedName
+    ? [
+        { keys: [], label: "keys:", hint: focusedName },
+        { keys: [], label: "ctrl+\\ ctrl+\\", run: toggle, hint: "leave" },
+        { keys: [], label: "ctrl+\\", run: startPrefix, hint: "panes" },
+      ]
+    : [];
+  /** Palette commands for what the prefix does. */
+  const commands: Binding[] = keys(
+    available.length > 0 && { keys: [], label: "ctrl+\\ tab", run: () => step(1), command: { id: "pane-next", title: "Pane: next", keywords: ["focus", "terminal", "editor", "switch"] } },
+    (available.length > 0 || deps.detailsFocused) && { keys: [], label: "ctrl+\\ z", run: toggleZoom, command: { id: "pane-zoom", title: zoomed ? "Pane: unzoom" : "Pane: zoom", keywords: ["maximize", "fullscreen", "fill"] } },
+  );
 
   return {
     terminal,
     tabs,
-    editor,
+    activeTerminal,
+    /** Terminals this run showed that still run, while the terminal is hidden. */
+    running: terminal ? [] : tabs.filter((candidate) => seen.has(key(candidate))),
+    editors,
+    modified,
     message,
-    columnTabs: columnTabs.map((id) => ({ id, label: COLUMN_TAB_LABELS[id] })),
+    columnTabs,
     columnTab,
-    setColumnTab: setTab,
+    showColumnTab,
     focusedPane,
+    /** Whether a terminal has the keys, in the drawer or the column. */
+    terminalFocused: focusedPane === "drawer" || (focusedPane === "column" && activeColumnTab.kind === "terminal"),
+    zoomed: zoomShown ? zoomed : null,
+    prefix,
+    endPrefix,
     enter,
     openTerminal,
     hideTerminal,
     toggleTerminal,
     selectTab,
     terminalEnded,
+    closeTab,
     openEditor,
+    editorOpened,
     editorClosed,
     openMessage,
     messageClosed: () => setMessage(null),
-    keys: { pane: paneKey, tabs: tabKeys, column: columnKeys, focused: focusedKeys },
+    keys: { prefix: prefixKey, afterPrefix: prefixKeys, focused: focusedKeys, commands },
+    /** Whether ctrl+\ has a pane to go to, for the hint. */
+    any: available.length > 0,
   };
 }

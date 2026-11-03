@@ -31,14 +31,15 @@ interface Link {
 /**
  * A terminal filling its box: the drawer, a tab of the right-hand column or the composer's
  * place. Keys go to its program while it has focus, its size follows the box, and it closes
- * when the program exits. Key it by the program's id.
+ * when the program exits. Its left edge and header light up while it has the keys. Key it by
+ * the program's id.
  */
 export function TerminalPane(props: {
   readonly program: PaneProgram;
   readonly session: T3Session;
   readonly focused: boolean;
-  /** The row above the terminal: its title, or the drawer's tabs. */
-  readonly header: ReactNode;
+  /** The row above the terminal: its title, or the drawer's tabs; none under the column's own tabs. */
+  readonly header?: ReactNode;
   readonly onFocus: () => void;
   readonly onClose: (message?: string) => void;
 }) {
@@ -76,13 +77,14 @@ export function TerminalPane(props: {
       backgroundColor={colors.panel}
       border={["left"]}
       customBorderChars={BAR}
-      borderColor={focused ? colors.accent : colors.panel}
+      borderColor={focused ? colors.accent : colors.faint}
       onMouseDown={onFocus}
     >
-      <box flexDirection="row" height={1} flexShrink={0} paddingLeft={1} paddingRight={1}>
-        {props.header}
-        <text fg={colors.faint} wrapMode="none" flexShrink={0}>{focused ? "ctrl+\\ leave" : "ctrl+\\ focus"}</text>
-      </box>
+      {props.header ? (
+        <box flexDirection="row" height={1} flexShrink={0} paddingLeft={1} paddingRight={1} backgroundColor={focused ? colors.element : colors.panel}>
+          {props.header}
+        </box>
+      ) : null}
       <embeddedTerminal
         ref={terminal}
         flexGrow={1}

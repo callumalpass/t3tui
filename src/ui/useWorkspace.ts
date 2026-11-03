@@ -114,13 +114,18 @@ export function useWorkspace(input: {
       groups: [{ label: "Terminals", items: threadTerminals.map((terminal) => ({ id: `terminal:full:${terminal.terminalId}`, title: label(terminal), run: () => enterTerminal(terminal, true) })) }],
     });
   };
-  const terminalMutation = (terminal: TerminalSummary, action: "close" | "clear") => {
+  /** Closing ends the shell and deletes its history, so it asks first. */
+  const closeTerminal = (terminal: Pick<TerminalSummary, "terminalId" | "label">) => {
     if (!thread) return;
-    if (action === "close") {
-      run("Terminal closed", () => session.closeTerminal(thread.id, terminal.terminalId));
-      return;
-    }
-    run("Terminal cleared", () => session.clearTerminal(thread.id, terminal.terminalId));
+    confirm({
+      title: `Close ${resolveTerminalSessionLabel(terminal.terminalId, terminal)}?`,
+      detail: "Ends its shell and deletes its history.",
+      confirmLabel: "close",
+      run: () => run("Terminal closed", () => session.closeTerminal(thread.id, terminal.terminalId)),
+    });
+  };
+  const clearTerminal = (terminal: Pick<TerminalSummary, "terminalId">) => {
+    if (thread) run("Terminal cleared", () => session.clearTerminal(thread.id, terminal.terminalId));
   };
 
   const terminalItems = (action: "close" | "clear"): PickerItem[] => {
@@ -128,7 +133,7 @@ export function useWorkspace(input: {
     return threadTerminals.map((terminal) => ({
       id: `terminal:${action}:${terminal.terminalId}`,
       title: `${verb} › ${label(terminal)}`,
-      run: () => terminalMutation(terminal, action),
+      run: () => (action === "close" ? closeTerminal(terminal) : clearTerminal(terminal)),
     }));
   };
   // Close/clear appear as one sub-picker each, plus search-only rows so typing finds them.
@@ -290,11 +295,9 @@ export function useWorkspace(input: {
     });
   };
   const commands: Command[] = thread && !input.draft ? [
-    { id: "terminal", title: "Open terminal", shortcut: "ctrl+j", keywords: ["shell", "console"], run: openTerminal },
-    { id: "terminal-picker", title: "Terminals…", shortcut: "T", keywords: ["shell", "close", "clear", "attach"], run: terminalPicker },
-    { id: "terminal-new", title: "New terminal", keywords: ["shell", "open"], run: () => newTerminal() },
-    { id: "terminal-full-screen", title: "Attach terminal full screen", keywords: ["shell", "console", "attach"], run: attachFullScreen },
-    ...terminalItems("close"), ...terminalItems("clear"),
+    { id: "terminal-picker", title: "Terminal: pick…", shortcut: "T", keywords: ["shell", "close", "clear", "attach"], run: terminalPicker },
+    { id: "terminal-new", title: "Terminal: new", keywords: ["shell", "open"], run: () => newTerminal() },
+    { id: "terminal-full-screen", title: "Terminal: attach full screen", keywords: ["shell", "console", "attach"], run: attachFullScreen },
     { id: "branches", title: "Branches and worktrees…", shortcut: "b", keywords: ["git", "switch", "ref", "create", "remove", "pull"], run: branchPicker },
     { id: "workspace-editor", title: input.diff ? "Open diff file in editor" : "Open workspace in editor", shortcut: "E", keywords: ["folder", "code", "vscode", "cursor"], run: openInEditor },
     ...(setup?.threadId === thread.id && setup.phase === "running" ? [{ id: "setup-cancel", title: "Cancel worktree setup…", keywords: ["preparation", "stop"], run: cancelSetup }] : []),
@@ -325,6 +328,8 @@ export function useWorkspace(input: {
     key,
     openTerminal,
     newTerminal: () => newTerminal(),
+    closeTerminal,
+    clearTerminal,
     tabs,
     note,
     setupFailed: setup?.phase === "failed" || setupError !== null,

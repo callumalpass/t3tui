@@ -3,6 +3,7 @@ import type { BoxProps as OpenTuiBoxProps } from "@opentui/react";
 import { useState, type ReactNode } from "react";
 
 import { BAR, NO_BORDER } from "./edges.ts";
+import { truncate } from "./text.ts";
 import { colors } from "./theme.ts";
 
 /** Hover state for a clickable box. Moving between a box and its own text sends out then over, so it settles on the right value. */
@@ -100,36 +101,92 @@ export function ResizeHandle(props: { readonly active: boolean; readonly horizon
   );
 }
 
+type TabItem = {
+  readonly id: string;
+  readonly label: string;
+  readonly closable?: boolean;
+  /** The label cut to a width, when cutting its end isn't the way (a path keeps its file name). */
+  readonly shorten?: (width: number) => string;
+};
+
+/** The fewest columns a label is cut to. */
+const MIN_TAB_LABEL = 4;
+
 /**
- * A one-line strip of tabs: the active one in the accent on a raised block, the rest muted.
- * A click switches; anything after the tabs (a `+`, a key hint) goes in `children`.
+ * A one-line strip of tabs. In a focused pane the active one is in the accent; otherwise the
+ * strip goes quiet. A click switches; with `onClose`, the active tab has a ✕ and a middle-click
+ * closes any tab. Long labels are cut to fit `width`. Anything after the tabs
+ * (a `+ new`) goes in `children`, outside `width`.
  */
-export function Tabs(props: { readonly tabs: readonly { readonly id: string; readonly label: string }[]; readonly active: string | null; readonly onPick: (id: string) => void; readonly children?: ReactNode }) {
+export function Tabs(props: {
+  readonly tabs: readonly TabItem[];
+  readonly active: string | null;
+  readonly focused: boolean;
+  readonly width: number;
+  readonly onPick: (id: string) => void;
+  readonly onClose?: (id: string) => void;
+  readonly children?: ReactNode;
+}) {
+  const { onClose } = props;
+  const closable = (tab: TabItem) => onClose !== undefined && tab.closable !== false;
+  const labels = fitLabels(props.tabs, props.width - props.tabs.reduce((sum, tab) => sum + 2 + (tab.id === props.active && closable(tab) ? 2 : 0), 0));
   return (
     <box flexDirection="row" height={1} flexShrink={0} flexGrow={1} overflow="hidden">
-      {props.tabs.map((tab) => (
-        <Tab key={tab.id} label={tab.label} active={tab.id === props.active} onPress={() => props.onPick(tab.id)} />
+      {props.tabs.map((tab, index) => (
+        <Tab
+          key={tab.id}
+          label={labels[index]!}
+          active={tab.id === props.active}
+          focused={props.focused}
+          onPress={() => props.onPick(tab.id)}
+          {...(onClose && closable(tab) ? { onClose: () => onClose(tab.id) } : {})}
+        />
       ))}
       {props.children}
     </box>
   );
 }
 
-export function Tab(props: { readonly label: string; readonly active?: boolean; readonly onPress: () => void }) {
+/** The tabs' labels cut to fit `room` in all: each to the same widest width that fits, but no narrower than a few columns. */
+function fitLabels(tabs: readonly TabItem[], room: number): string[] {
+  const widths = tabs.map((tab) => Bun.stringWidth(tab.label));
+  let cap = Math.max(0, ...widths);
+  while (cap > MIN_TAB_LABEL && widths.reduce((sum, width) => sum + Math.min(width, cap), 0) > room) cap--;
+  return tabs.map((tab, index) => (widths[index]! <= cap ? tab.label : (tab.shorten?.(cap) ?? truncate(tab.label, cap))));
+}
+
+export function Tab(props: { readonly label: string; readonly active?: boolean; readonly focused?: boolean; readonly onPress: () => void; readonly onClose?: (() => void) | undefined }) {
   const [hover, hoverProps] = useHover();
+  const { active, focused, onClose } = props;
+  const color = hover ? colors.text : active ? (focused ? colors.accent : colors.muted) : focused ? colors.muted : colors.faint;
   return (
     <box
+      flexDirection="row"
       flexShrink={0}
       paddingLeft={1}
       paddingRight={1}
-      backgroundColor={props.active ? colors.element : hover ? colors.hoverBg : "transparent"}
+      backgroundColor={active ? colors.element : hover ? colors.hoverBg : "transparent"}
       {...hoverProps}
       onMouseDown={(event: MouseEvent) => {
         event.stopPropagation();
         if (isLeftClick(event)) props.onPress();
+        else if (event.button === 1) onClose?.();
       }}
     >
-      <text fg={props.active ? colors.accent : hover ? colors.text : colors.muted} wrapMode="none" selectable={false}>{props.label}</text>
+      <text fg={color} wrapMode="none" selectable={false}>{props.label}</text>
+      {active && onClose ? (
+        <text
+          fg={focused ? colors.muted : colors.faint}
+          wrapMode="none"
+          selectable={false}
+          onMouseDown={(event: MouseEvent) => {
+            event.stopPropagation();
+            if (isLeftClick(event)) onClose();
+          }}
+        >
+          {" ✕"}
+        </text>
+      ) : null}
     </box>
   );
 }

@@ -36,7 +36,7 @@ import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
 import { useQuestion } from "./useQuestion.ts";
 import { useThreadMenu } from "./useThreadMenu.ts";
-import { editorCommand, scratchFile } from "./editor.ts";
+import { editorCommand, editorIsNvim, nvimOpen, nvimSocket, scratchFile } from "./editor.ts";
 import { TerminalPane } from "./TerminalPane.tsx";
 import { usePanes, type Placement } from "./usePanes.ts";
 import { Palette } from "./Palette.tsx";
@@ -58,10 +58,10 @@ import { BAR, NO_BORDER } from "./edges.ts";
 import { ThreadList } from "./ThreadList.tsx";
 import { useTurns } from "./useTurns.ts";
 import { ThreadView, type ConversationMouse, type ConversationTarget } from "./ThreadView.tsx";
-import { Button, ResizeHandle, Tab, Tabs } from "./Button.tsx";
+import { Button, isLeftClick, ResizeHandle, Tab, Tabs, useHover } from "./Button.tsx";
 import { HintBar } from "./HintBar.tsx";
 import { bindingFor, commandsFor, fromCommand, hinted, hintsFor, keys, type Binding } from "../model/keymap.ts";
-import { firstLine, truncate } from "./text.ts";
+import { firstLine, truncate, truncatePath, truncateNumbered } from "./text.ts";
 import { useEvent } from "./useEvent.ts";
 import { useQueue } from "./useQueue.ts";
 import { useSecretRequest } from "./useSecretRequest.ts";
@@ -78,7 +78,7 @@ import { useUsageSummary } from "./useUsage.ts";
 /**
  * "input": typing goes to the composer. "nav": single keys move, scroll, approve.
  * "details": j/k move through the details panel. "settings": j/k move through settings.
- * "pane": every key but ctrl+\ goes to the program in the terminal pane.
+ * "pane": every key but ctrl+\ (the panes' prefix) goes to the program in the focused pane.
  * The rest are overlays with their own input.
  */
 type Mode = "input" | "nav" | "filter" | "details" | "palette" | "picker" | "confirm" | "settings" | "find" | "pull-request" | "pane";
@@ -100,6 +100,8 @@ const MIN_DRAWER_ROWS = 6;
 const MIN_CONVERSATION_ROWS = 10;
 /** The drawer's default share of the conversation's height, and the message editor's of the window's. */
 const DRAWER_SHARE = 0.4;
+/** The `+ new` after a strip of terminal tabs. */
+const NEW_TAB_WIDTH = 7;
 /** The conversation this wide or wider shows diffs side by side. */
 const SPLIT_DIFF_WIDTH = 140;
 
@@ -570,7 +572,11 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     columnPref: detailsPref,
     setColumnPref: setDetailsPrefState,
     focused: mode === "pane",
-    focus: (focused) => setMode((current) => (focused ? "pane" : current === "pane" ? "nav" : current)),
+    focus: (focused) => setMode((current) => (focused ? "pane" : current === "pane" || current === "details" ? "nav" : current)),
+    detailsFocused: mode === "details",
+    openTerminal: workspace.openTerminal,
+    newTerminal: workspace.newTerminal,
+    closeTerminal: workspace.closeTerminal,
     say,
   });
   const movePlacement = () => {
@@ -579,7 +585,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     saveLayoutNow({ terminalPlacement: next });
   };
   useEffect(() => {
-    if (mode === "details") panes.setColumnTab("details");
+    if (mode === "details") panes.showColumnTab("details");
   }, [mode]);
 
   /** The composer's text in $EDITOR, in the composer's place; what's saved comes back when it exits. */
@@ -589,25 +595,48 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     if (panes.message) return panes.enter("message");
     const key = composerKey;
     const file = scratchFile(composerText(composer));
+    const socket = editorIsNvim() ? nvimSocket() : null;
     panes.openMessage({
-      kind: "local",
-      id: `message:${file.path}`,
-      title: "Message · save and quit to bring it back",
-      command: editorCommand(file.path),
-      onExit: (code) => {
-        const edited = code === 0 ? file.read() : null;
-        file.remove();
-        if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
-        putMessage(key, edited);
-        setMode((current) => (current === "pane" ? "input" : current));
+      socket: socket?.path ?? null,
+      program: {
+        kind: "local",
+        id: `message:${file.path}`,
+        title: "Message · save and quit to bring it back",
+        command: editorCommand(file.path, socket?.path),
+        onExit: (code) => {
+          socket?.remove();
+          const edited = code === 0 ? file.read() : null;
+          file.remove();
+          if (edited === null) return say("The editor exited with an error; the message is unchanged.", true);
+          putMessage(key, edited);
+          setMode((current) => (current === "pane" ? "input" : current));
+        },
       },
     });
   };
-  /** A workspace file in $EDITOR, in the column's Editor tab, when the workspace is on this machine. */
+  /**
+   * A workspace file in $EDITOR, in a tab of the column, when the workspace is on this machine.
+   * Neovim takes further files in the instance already running, through its socket.
+   */
   const editFile = (path: string, cwd: string | null) => {
     const file = cwd ? resolvePathLinkTarget(path, cwd) : path;
     if (!existsSync(file)) return say(`${path} isn't on this machine.`, true);
-    panes.openEditor({ kind: "local", id: `edit:${file}`, title: `Editing ${path}`, command: editorCommand(file), cwd: cwd ?? undefined, onExit: () => {} });
+    const open = panes.editors.find((editor) => editor.program.id === `edit:${file}`);
+    if (open) return panes.editorOpened(open.program.id, open.path);
+    const server = panes.editors.find((editor) => editor.socket);
+    if (server?.socket) {
+      void nvimOpen(server.socket, file).then((output) => (output === null ? startEditor(file, path, cwd) : panes.editorOpened(server.program.id, path)));
+      return;
+    }
+    startEditor(file, path, cwd);
+  };
+  const startEditor = (file: string, path: string, cwd: string | null) => {
+    const socket = editorIsNvim() ? nvimSocket() : null;
+    panes.openEditor({
+      path,
+      socket: socket?.path ?? null,
+      program: { kind: "local", id: `edit:${file}`, title: path, command: editorCommand(file, socket?.path), cwd: cwd ?? undefined, onExit: () => socket?.remove() },
+    });
   };
 
   /** A click on a link opens it in the browser; on a path to a workspace file, in the column's editor. A drag doesn't. */
@@ -831,20 +860,23 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   // Keys that work wherever there's no line input to type into.
   const quitKey: Binding = { keys: ["ctrl+c"], run: quit };
   const paletteKey: Binding = { keys: ["ctrl+k"], run: openPalette };
-  const terminalKey: Binding = { keys: ["ctrl+j"], run: () => panes.toggleTerminal(workspace.openTerminal) };
-  const paneKey = panes.keys.pane;
+  const terminalKey: Binding = {
+    keys: ["ctrl+j"],
+    run: panes.toggleTerminal,
+    ...(threadId && !draft ? { command: { id: "terminal", title: panes.terminal ? "Terminal: hide" : "Terminal: open", keywords: ["shell", "console", "drawer"] } } : {}),
+  };
+  const prefixKey = panes.keys.prefix;
   const editorKey: Binding | null = hasComposer ? { keys: ["ctrl+g"], run: openEditor, command: { id: "editor", title: "Write the message in $EDITOR", keywords: ["vim", "editor", "compose"] } } : null;
   const nextThreadKey: Binding = { keys: ["ctrl+n", "alt+↓"], label: "ctrl+n/p", run: () => move(1) };
   const previousThreadKey: Binding = { keys: ["ctrl+p", "alt+↑"], run: () => move(-1) };
   // Anywhere with a text field, ctrl+u and ctrl+d edit (delete to line start, delete forward); page up/down still scroll.
   const lineInput = mode === "filter" || mode === "input" || mode === "find" || mode === "palette" || mode === "picker" || mode === "confirm";
   const globalKeys = keys(
-    paneKey,
+    prefixKey,
     quitKey,
     paletteKey,
     terminalKey,
     editorKey,
-    panes.keys.tabs,
     { keys: lineInput ? ["pagedown"] : ["pagedown", "ctrl+d"], run: () => scrollPage(1) },
     { keys: lineInput ? ["pageup"] : ["pageup", "ctrl+u"], run: () => scrollPage(-1) },
     !attached && nextThreadKey,
@@ -896,10 +928,6 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     hinted(paletteKey, "commands"),
     { keys: ["q"], run: quit, hint: "quit", command: { id: "quit", title: "Quit t3tui", keywords: ["exit"] } },
     panel.keys.toggle,
-    panes.keys.column.map((binding) => ({ ...binding, run: () => {
-      if (mode === "details") panel.leave();
-      binding.run?.();
-    } })),
     { keys: ["e"], run: () => setExpandAll((value) => !value), command: { id: "expand", title: expandAll ? "Collapse work" : "Expand all work", keywords: ["fold", "tool calls"] } },
     thread?.history.hasMore && { keys: ["o"], run: loadEarlier, command: { id: "earlier", title: "Load earlier turns", keywords: ["history", "older"] } },
     !attached && { keys: ["z"], run: () => setShowFolded((value) => !value), command: { id: "settled", title: showFolded ? "Hide settled threads" : "Show settled threads", keywords: ["snoozed", "archive"] } },
@@ -911,7 +939,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   );
   // A diff and a draft name their own few keys; everything else names the lot.
   const navHints = keys(
-    paneKey,
+    panes.any && prefixKey,
     diff
       ? [scrollDiffDown, closeDiff, detailsKey]
       : draft
@@ -922,8 +950,12 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   // Commands only the palette runs.
   const paletteOnly = keys(
     editorKey,
-    panes.terminal && { keys: [], run: panes.hideTerminal, command: { id: "pane-close", title: "Hide the terminal", keywords: ["detach", "drawer", "close"] } },
-    threadId && !draft && { keys: [], run: movePlacement, command: { id: "terminal-placement", title: placement === "bottom" ? "Move terminal to the side" : "Move terminal below", keywords: ["drawer", "column", "right", "bottom", "layout"] } },
+    panes.keys.commands,
+    threadId && !draft && { keys: [], run: movePlacement, command: { id: "terminal-placement", title: placement === "bottom" ? "Pane: move terminal to the side" : "Pane: move terminal below", keywords: ["drawer", "column", "right", "bottom", "layout"] } },
+    threadId && !draft && panes.activeTerminal && [
+      { keys: [], run: () => workspace.closeTerminal(panes.activeTerminal!), command: { id: "terminal-close", title: `Terminal: close ${panes.activeTerminal.label}`, keywords: ["shell", "end", "kill"] } },
+      { keys: [], run: () => workspace.clearTerminal(panes.activeTerminal!), command: { id: "terminal-clear", title: `Terminal: clear ${panes.activeTerminal.label}`, keywords: ["shell", "scrollback"] } },
+    ],
     { keys: [], run: () => setSplitDiffPref(!splitDiff), command: { id: "split-diff", title: "Toggle split diff", keywords: ["side by side", "unified", "diff view"] } },
     queue.keys.input,
     queue.keys.palette,
@@ -935,7 +967,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     pullRequests.commands.map((command): Binding => ({ ...fromCommand(command), keys: [], ...(command.shortcut ? { label: command.shortcut } : {}) })),
     { keys: [], run: openSettings, command: { id: "settings", title: "Settings", keywords: ["preferences", "config", "options", "notifications", "alerts"] } },
   );
-  const commands = commandsFor(keys(paneKey, navKeys, paletteOnly));
+  const commands = commandsFor(keys(navKeys, paletteOnly));
 
   // The composer. Enter and newlines are the textarea's own; their hints only explain.
   const sendKey = config.sendShortcut === "enter" ? "enter" : "ctrl+enter";
@@ -1010,10 +1042,12 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         return { layers: [confirmKeys], hints: confirmKeys };
       }
     }
-    // In the drawer, ctrl+j hides it again, as it leaves a terminal attached full screen.
-    if (mode === "pane" && paneKey) return { layers: [keys(panes.keys.focused, panes.focusedPane === "terminal" && terminalKey)], hints: [paneKey] };
+    // After ctrl+\, the next key is the prefix's; handleKey takes it.
+    if (panes.prefix) return { layers: [], hints: panes.keys.afterPrefix };
+    // In a terminal, ctrl+j hides it again, as it leaves a terminal attached full screen.
+    if (mode === "pane") return { layers: [keys(prefixKey, panes.terminalFocused && terminalKey)], hints: panes.keys.focused };
     // The secret field takes every key while it's focused.
-    if (secret.focused) return { layers: [secret.bindings, [quitKey]], hints: secret.bindings };
+    if (secret.focused) return { layers: [secret.bindings, [prefixKey, quitKey]], hints: secret.bindings };
     switch (mode) {
       case "input":
         if (menu) return { layers: [menuKeys, inputKeys, globalKeys], hints: menuKeys };
@@ -1038,6 +1072,12 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const handleKey = (key: KeyEvent) => {
     // A key ends a mouse selection; it was copied when the drag ended.
     if (renderer.hasSelection) renderer.clearSelection();
+    // Any key ends the prefix: its own keys run, the rest only cancel it, and none reach a program.
+    if (panes.prefix) {
+      panes.endPrefix();
+      bindingFor(panes.keys.afterPrefix, key)?.run?.();
+      return key.preventDefault();
+    }
     for (const layer of keymap.layers) {
       const binding = bindingFor(layer, key);
       if (binding?.run) {
@@ -1127,18 +1167,21 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   // The right-hand column, with its tabs, goes beside the conversation, or in its place when there's no room.
   // It stays in the tree while it holds a program, hidden or not, so the program keeps running.
   const columnInPlace = detailsWidth > detailsRoom;
-  const columnMounted = panel.show || panes.editor !== null || (placement === "side" && panes.terminal !== null);
+  const columnMounted = panel.show || panes.editors.length > 0 || (placement === "side" && panes.terminal !== null);
+  // A zoomed pane fills the conversation's area: the column over it, the drawer or message editor in its place.
+  const zoom = panes.zoomed;
+  const columnFills = columnInPlace || zoom === "column";
   // In the conversation's place, Details gives way to a diff, settings and the like, as the conversation does.
   const detailsGivesWay = settingsIndex !== null || (mode === "pull-request" && pullRequests.view !== null) || diff !== null || draft !== null || mode === "find" || !threadId;
   const columnVisible = panel.show && !(columnInPlace && panes.columnTab === "details" && detailsGivesWay);
-  const rightColumn = columnVisible && !columnInPlace;
+  const rightColumn = columnVisible && !columnFills;
   // The drawer leaves the conversation some rows, or takes its place when it can't.
   const drawer = placement === "bottom" ? panes.terminal : null;
   // The edge above it takes a row too.
   const drawerRoom = areaHeight - MIN_CONVERSATION_ROWS - 1;
-  const drawerInPlace = drawer !== null && drawerRoom < MIN_DRAWER_ROWS;
+  const drawerInPlace = drawer !== null && (drawerRoom < MIN_DRAWER_ROWS || zoom === "drawer");
   const drawerHeight = Math.max(MIN_DRAWER_ROWS, Math.min(drawerRoom, drawerHeightPref ?? Math.round(areaHeight * DRAWER_SHARE)));
-  const conversationHidden = (columnVisible && columnInPlace) || drawerInPlace;
+  const conversationHidden = (columnVisible && columnFills) || drawerInPlace || zoom === "message";
   const conversationWidth = width - (showList ? listWidth + 1 : 0) - (rightColumn ? detailsWidth + 1 : 0);
   const splitDiff = splitDiffPref ?? conversationWidth >= SPLIT_DIFF_WIDTH;
   // The block's height: a row of padding on top, the text, then the model line inside it.
@@ -1172,24 +1215,41 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     const mode = runtimeMode === "full-access" ? "" : (RUNTIME_MODE_LABELS[runtimeMode] ?? runtimeMode);
     return { name, rest: [...options, mode].filter(Boolean).join(" · ") };
   })();
-  const composerBarColor = mode === "input" ? colors.accent : colors.border;
-  // The thread's terminal, in the drawer or the column, with a tab for each of its terminals.
+  // While a pane has the keys, the message box's bar steps back with the rest of the conversation.
+  const composerBarColor = mode === "input" ? colors.accent : mode === "pane" ? colors.faint : colors.border;
+  // The thread's terminal: in the drawer, with a tab for each of its terminals, or under the column's own tabs.
   const terminalTarget = panes.terminal;
   const terminalPane = terminalTarget ? (
     <TerminalPane
       key={`${terminalTarget.threadId}:${terminalTarget.terminalId}`}
       program={{ kind: "server", id: terminalTarget.terminalId, target: terminalTarget }}
       session={session}
-      focused={panes.focusedPane === "terminal"}
-      header={
-        <Tabs tabs={panes.tabs.map((tab) => ({ id: tab.terminalId, label: tab.label }))} active={terminalTarget.terminalId} onPick={(id) => panes.selectTab(panes.tabs.findIndex((tab) => tab.terminalId === id))}>
-          <Tab label="+" onPress={workspace.newTerminal} />
-        </Tabs>
-      }
-      onFocus={() => panes.enter("terminal")}
+      focused={panes.focusedPane === (placement === "side" ? "column" : "drawer")}
+      {...(placement === "side"
+        ? {}
+        : {
+            header: (
+              <Tabs tabs={panes.tabs.map((tab) => ({ id: tab.terminalId, label: tab.label, shorten: (room: number) => truncateNumbered(tab.label, room) }))} active={terminalTarget.terminalId} focused={panes.focusedPane === "drawer"} width={conversationWidth - 3 - NEW_TAB_WIDTH} onPick={(id) => panes.openTerminal(panes.tabs.find((tab) => tab.terminalId === id)!)} onClose={panes.closeTab}>
+                <Tab label="+ new" onPress={workspace.newTerminal} />
+              </Tabs>
+            ),
+          })}
+      onFocus={() => panes.enter(placement === "side" ? "column" : "drawer")}
       onClose={(note) => panes.terminalEnded(terminalTarget, note)}
     />
   ) : null;
+  const columnWidth = columnFills ? width - listWidth : detailsWidth;
+  // While the column is hidden, the editors in it are named under the message box, or in the header.
+  const awayEditor = !panel.show && panes.editors.length > 0 ? (panes.editors.find((editor) => editor.program.id === panes.columnTab) ?? panes.editors.at(-1)!) : null;
+  const awayNote = awayEditor ? (
+    <StripLink
+      label={`Editor: ${truncatePath(awayEditor.path, 32)}${panes.editors.length > 1 ? ` +${panes.editors.length - 1}` : ""}${panes.editors.some((editor) => panes.modified.has(editor.program.id)) ? " ●" : ""} · d`}
+      onPress={() => panel.setPref(true)}
+    />
+  ) : null;
+  const runningStrip = threadId && !draft && panes.running.length > 0;
+  /** The palette and pickers cover the conversation's area, between the list and the column. */
+  const paletteArea = { left: showList ? listWidth + 1 : 0, width: conversationWidth, height: height - 2 };
   const detailsPanel = (inPlace: boolean) => (
     <DetailsPanel
       details={panel.details}
@@ -1245,6 +1305,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         {shell.status.type !== "live" ? <text fg={colors.warn} wrapMode="none" onMouseDown={() => session.retryNow()}>{`  ${status}`}</text> : null}
         {usageInfo.note ? <text fg={colors.warn} wrapMode="none">{`  ${usageInfo.note}`}</text> : null}
         <box flexGrow={1} />
+        {runningStrip ? null : awayNote}
+        {awayNote && !runningStrip ? <text fg={colors.faint}>{"  "}</text> : null}
         <Button label="ctrl+k" shortcut="commands" plain onPress={openPalette} />
       </box>
       <box flexDirection="row" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
@@ -1280,8 +1342,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               saveLayoutNow({ listWidth: null });
             }} />}
         <box flexDirection="column" flexGrow={1} minHeight={0} onSizeChange={function (this: { height: number }) { setColumnHeight(this.height); }}>
-          <box flexDirection="column" flexGrow={1} minHeight={0} visible={!drawerInPlace}>
-          <box flexDirection="column" flexGrow={1} minHeight={0} visible={!drawerInPlace} onMouseDown={focusConversation} onSizeChange={function (this: { height: number }) { setContentHeight(this.height); }}>
+          <box flexDirection="column" flexGrow={1} minHeight={0} visible={!drawerInPlace && zoom !== "message"}>
+          <box flexDirection="column" flexGrow={1} minHeight={0} visible={!drawerInPlace && zoom !== "message"} onMouseDown={focusConversation} onSizeChange={function (this: { height: number }) { setContentHeight(this.height); }}>
           {conversationHidden ? null : settingsIndex !== null ? (
             <SettingsView
               rows={settingsRows}
@@ -1328,7 +1390,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           )}
           </box>
           </box>
-          <box flexDirection="column" flexShrink={0} onSizeChange={function (this: { height: number }) { setBelowHeight(this.height); }}>
+          <box flexDirection="column" visible={zoom !== "drawer"} {...(zoom === "message" ? { flexGrow: 1, minHeight: 0 } : { flexShrink: 0 })} onSizeChange={function (this: { height: number }) { setBelowHeight(this.height); }}>
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
@@ -1365,13 +1427,13 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           ) : null}
           {working && threadId && !draft && !pendingApproval ? <LiveStatus label={liveLabel} tool={liveTool} /> : null}
           {panes.message ? (
-            <box flexDirection="column" flexShrink={0} marginTop={1} height={Math.max(MIN_DRAWER_ROWS, Math.round((height - 2) * DRAWER_SHARE))}>
+            <box flexDirection="column" marginTop={1} {...(zoom === "message" ? { flexGrow: 1, minHeight: 0 } : { flexShrink: 0, height: Math.max(MIN_DRAWER_ROWS, Math.round((height - 2) * DRAWER_SHARE)) })}>
               <TerminalPane
-                key={panes.message.id}
-                program={panes.message}
+                key={panes.message.program.id}
+                program={panes.message.program}
                 session={session}
                 focused={panes.focusedPane === "message"}
-                header={<text fg={panes.focusedPane === "message" ? colors.text : colors.muted} wrapMode="none" flexGrow={1}>{panes.message.title}</text>}
+                header={<text fg={panes.focusedPane === "message" ? colors.text : colors.muted} wrapMode="none" flexGrow={1}>{panes.message.program.title}</text>}
                 onFocus={() => panes.enter("message")}
                 onClose={panes.messageClosed}
               />
@@ -1459,6 +1521,21 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               </box>
             </box>
           ) : null}
+          {runningStrip ? (
+            <box flexDirection="row" height={1} flexShrink={0} paddingLeft={2} paddingRight={1} backgroundColor={colors.panel}>
+              <text fg={colors.faint} flexShrink={0} selectable={false}>{"▸ "}</text>
+              {panes.running.map((target, index) => (
+                <box key={target.terminalId} flexDirection="row" flexShrink={0}>
+                  {index > 0 ? <text fg={colors.faint} selectable={false}>{" · "}</text> : null}
+                  <StripLink label={target.label} onPress={() => panes.openTerminal(target)} />
+                </box>
+              ))}
+              <text fg={colors.faint} flexShrink={0} selectable={false}>{"   "}</text>
+              <StripLink label="ctrl+j" color={colors.faint} onPress={panes.toggleTerminal} />
+              <box flexGrow={1} />
+              {awayNote}
+            </box>
+          ) : null}
           </box>
           {drawer ? (
             <>
@@ -1496,30 +1573,37 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             minHeight={0}
             overflow="hidden"
             backgroundColor={columnInPlace ? colors.bg : colors.panel}
-            {...(columnInPlace ? { position: "absolute", left: showList ? listWidth + 1 : 0, right: 0, top: 0, height: contentHeight } : { width: detailsWidth, flexShrink: 0 })}
+            {...(columnFills ? { position: "absolute", left: showList ? listWidth + 1 : 0, right: 0, top: 0, height: zoom === "column" ? columnHeight : contentHeight } : { width: detailsWidth, flexShrink: 0 })}
           >
             {panes.columnTabs.length > 1 ? (
-              <box flexDirection="row" height={1} flexShrink={0} paddingLeft={1} paddingRight={1} backgroundColor={colors.panel}>
-                <Tabs tabs={panes.columnTabs} active={panes.columnTab} onPick={(id) => panes.setColumnTab(id as typeof panes.columnTab)} />
-                <text fg={colors.faint} wrapMode="none" flexShrink={0}>{"{ }"}</text>
+              <box flexDirection="row" height={1} flexShrink={0} paddingLeft={1} paddingRight={1} backgroundColor={panes.focusedPane === "column" ? colors.element : colors.panel}>
+                <Tabs
+                  tabs={panes.columnTabs.map((tab) => ({ id: tab.id, label: tab.label, closable: tab.kind !== "details", shorten: (room: number) => (tab.kind === "editor" ? truncatePath(tab.label, room) : truncateNumbered(tab.label, room)) }))}
+                  active={panes.columnTab}
+                  focused={panes.focusedPane === "column"}
+                  width={columnWidth - 2 - (placement === "side" && panes.terminal ? NEW_TAB_WIDTH : 0)}
+                  onPick={(id) => (id === "details" ? panes.showColumnTab(id) : panes.enter("column", id))}
+                  onClose={panes.closeTab}
+                >
+                  {placement === "side" && panes.terminal ? <Tab label="+ new" onPress={workspace.newTerminal} /> : null}
+                </Tabs>
               </box>
             ) : null}
-            {panes.columnTab === "details" ? detailsPanel(columnInPlace) : null}
-            {panes.editor ? (
-              <box flexDirection="column" flexGrow={1} minHeight={0} visible={panes.columnTab === "editor"}>
+            {panes.columnTab === "details" ? detailsPanel(columnFills) : null}
+            {panes.editors.map((editor) => (
+              <box key={editor.program.id} flexDirection="column" flexGrow={1} minHeight={0} visible={panes.columnTab === editor.program.id}>
                 <TerminalPane
-                  key={panes.editor.id}
-                  program={panes.editor}
+                  program={editor.program}
                   session={session}
-                  focused={panes.focusedPane === "editor"}
-                  header={<text fg={panes.focusedPane === "editor" ? colors.text : colors.muted} wrapMode="none" flexGrow={1}>{truncate(panes.editor.title, Math.max(8, (columnInPlace ? width - listWidth : detailsWidth) - 17))}</text>}
-                  onFocus={() => panes.enter("editor")}
-                  onClose={panes.editorClosed}
+                  focused={panes.focusedPane === "column" && panes.columnTab === editor.program.id}
+                  header={<text fg={panes.focusedPane === "column" ? colors.text : colors.muted} wrapMode="none" flexGrow={1}>{truncatePath(editor.path, Math.max(8, columnWidth - 6))}</text>}
+                  onFocus={() => panes.enter("column", editor.program.id)}
+                  onClose={(note) => panes.editorClosed(editor.program.id, note)}
                 />
               </box>
-            ) : null}
+            ))}
             {placement === "side" && panes.terminal ? (
-              <box flexDirection="column" flexGrow={1} minHeight={0} visible={panes.columnTab === "terminal"}>
+              <box flexDirection="column" flexGrow={1} minHeight={0} visible={panes.columnTab.startsWith("terminal:")}>
                 {terminalPane}
               </box>
             ) : null}
@@ -1527,16 +1611,15 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
         ) : null}
       </box>
       <box flexDirection="row" paddingLeft={2} height={1} flexShrink={0}>
-        {flash ? <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text> : <HintBar hints={hintsFor(keymap.hints)} width={width - 2} />}
+        {flash && !panes.prefix ? <text fg={flash.bad ? colors.bad : colors.good}>{flash.text}</text> : <HintBar hints={hintsFor(keymap.hints)} width={width - 2} />}
       </box>
       {mode === "palette" ? (
         <Palette
+          {...paletteArea}
           query={paletteQuery}
           status={paletteSearch.error ?? (paletteSearch.pending ? "Searching messages…" : null)}
           groups={groups}
           selected={Math.min(paletteIndex, Math.max(0, entries.length - 1))}
-          width={width}
-          height={height}
           onQuery={(value) => {
             setPaletteQuery(value);
             setPaletteIndex(0);
@@ -1548,12 +1631,11 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       ) : null}
       {mode === "picker" && picker ? (
         <Palette
+          {...paletteArea}
           query={pickerQuery}
           placeholder={picker.placeholder}
           groups={pickerView}
           selected={Math.min(pickerIndex, Math.max(0, pickerEntries.length - 1))}
-          width={width}
-          height={height}
           onQuery={(value) => {
             setPickerQuery(value);
             setPickerIndex(0);
@@ -1596,4 +1678,17 @@ function connectionLabel(shell: ShellState, now: number): string {
   if (status.type === "connecting") return "connecting…";
   const wait = status.retryAt === null ? 0 : Math.max(0, Math.ceil((status.retryAt - now) / 1000));
   return `couldn't connect, ${wait > 0 ? `retrying in ${wait}s` : "retrying…"} · ${truncate(firstLine(status.message), 60)}`;
+}
+
+/** A name in the strip under the message box; a click does what it names. */
+function StripLink(props: { readonly label: string; readonly color?: string; readonly onPress: () => void }) {
+  const [hover, hoverProps] = useHover();
+  return (
+    <box flexShrink={0} {...hoverProps} onMouseDown={(event: MouseEvent) => {
+      event.stopPropagation();
+      if (isLeftClick(event)) props.onPress();
+    }}>
+      <text fg={hover ? colors.text : (props.color ?? colors.muted)} wrapMode="none" selectable={false}>{props.label}</text>
+    </box>
+  );
 }
