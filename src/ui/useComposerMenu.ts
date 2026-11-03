@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import type { T3Session } from "../client/session.ts";
 import { composerItemEnd, composerTrigger, cursorAtIndex, indexAtCursor, messageContext, PATH_SEARCH_LIMIT, pathItems, skillItems, slashItems, threadItems, type ComposerItem } from "../model/composerMenu.ts";
 import { keys, type Binding } from "../model/keymap.ts";
-import { markChip } from "./useComposerChips.ts";
+import { insertChip, markChip } from "./useComposerChips.ts";
 import { useComposerPullRequests } from "./usePullRequests.ts";
 
 /**
@@ -117,6 +117,15 @@ export function useComposerMenu(deps: {
     deps.onChosen(item);
   };
 
+  /** A file or folder mentioned from outside the menu (the Files tab): its chip at the cursor, as choosing it here puts it. */
+  const mention = (entry: ProjectEntry): boolean => {
+    const composer = composerRef.current;
+    const [item] = pathItems([entry]);
+    if (!composer || !item?.chip) return false;
+    insertChip(composer, item.chip, { sent: (item.replacement ?? "").trimEnd() });
+    sync();
+    return true;
+  };
   /** The mentions still in this text, as the message's context. */
   const context = (text: string): OrchestrationMessageContext | undefined => messageContext(text, mentions.current.get(composerKey) ?? new Map());
   /** The message went: its mentions go with it. */
@@ -143,5 +152,5 @@ export function useComposerMenu(deps: {
       )
     : [];
 
-  return { menu, selected, sync, pick: (at: number) => menu && choose(menu.items[at]), context, forget, remember, bindings };
+  return { menu, selected, sync, mention, pick: (at: number) => menu && choose(menu.items[at]), context, forget, remember, bindings };
 }

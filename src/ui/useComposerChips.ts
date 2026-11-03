@@ -20,7 +20,7 @@ export function markChip(composer: TextareaRenderable, start: number, end: numbe
 }
 
 /** Inserts `label` at the cursor as a chip, apart from the words either side. */
-function insertChip(composer: TextareaRenderable, label: string, data: ChipData): void {
+export function insertChip(composer: TextareaRenderable, label: string, data: ChipData): void {
   const before = composer.plainText[indexAtOffset(composer.plainText, composer.cursorOffset) - 1];
   if (before && !/\s/.test(before)) composer.insertText(" ");
   const start = composer.cursorOffset;

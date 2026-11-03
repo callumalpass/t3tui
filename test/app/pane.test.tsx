@@ -300,18 +300,18 @@ describe("terminal drawer", () => {
   });
 
   test("Pane: move terminal to the side puts each terminal in the right column's one strip of tabs, and stays", async () => {
-    const app = await open({ width: 200, layout: { ...DEFAULT_LAYOUT, detailsWidth: 46 }, session: withTerminals() });
+    const app = await open({ width: 200, layout: { ...DEFAULT_LAYOUT, detailsWidth: 54 }, session: withTerminals() });
     await app.press("k", { ctrl: true });
     await app.type("move terminal to the side");
     await app.press("return");
     expect((await loadLayout()).terminalPlacement).toBe("side");
     await app.press("j", { ctrl: true });
-    expect(app.frame()).toContain("Details  Terminal 1 ✕  Terminal 2  + new");
+    expect(app.frame()).toContain("Details  Files  Terminal 1 ✕  Terminal 2  + new");
     expect(app.frame().match(/Terminal 2/g)).toHaveLength(1);
-    expect(app.find("Details  Terminal 1").x).toBeGreaterThan(200 - 46 - 1);
+    expect(app.find("Details  Files  Terminal 1").x).toBeGreaterThan(200 - 54 - 1);
     expect(app.frame()).toContain("user@host");
     expect(app.hints()).toBe(keysOn("Terminal 1"));
-    // The prefix's 1…9 count the column's tabs; Details gives the keys back.
+    // The prefix's 1…9 count the column's tabs (Details, Files, then the rest); Details gives the keys back.
     await prefix(app, "1");
     expect(app.frame()).not.toContain("user@host");
     expect(app.frame()).toContain("/workspace/project");
@@ -319,7 +319,7 @@ describe("terminal drawer", () => {
     await prefix(app, "l");
     expect(app.frame()).toContain("user@host");
     expect(app.hints()).toBe(keysOn("Terminal 1"));
-    await prefix(app, "3");
+    await prefix(app, "4");
     expect(attached(app).at(-1)).toBe("term-2");
     expect(app.hints()).toBe(keysOn("Terminal 2"));
     await app.press("j", { ctrl: true });
@@ -453,17 +453,17 @@ describe("editing a changed file", () => {
     const app = await open({ width: 200, session: fakeSession({ vcs, snapshot }) });
     await app.press("l");
     await app.press("o");
-    expect(app.frame()).toContain("Details  README.md ✕");
-    expect(app.find("Details  README.md").x).toBeGreaterThan(200 - 38 - 1);
+    expect(app.frame()).toContain("Details  Files  README.md ✕");
+    expect(app.find("Details  Files  README.md").x).toBeGreaterThan(200 - 38 - 1);
     expect(app.hints()).toBe(keysOn("README.md"));
     // Back to Details and to the editor again, with it still running.
     await prefix(app, "1");
     expect(app.frame()).toContain("Changes");
-    const tab = app.find("Details  README.md");
-    await app.click(tab.x + "Details  ".length, tab.y);
+    const tab = app.find("Details  Files  README.md");
+    await app.click(tab.x + "Details  Files  ".length, tab.y);
     expect(app.hints()).toBe(keysOn("README.md"));
-    await waitFor(() => !app.frame().includes("Details  README.md"));
-    expect(app.frame()).not.toContain("Details  README.md");
+    await waitFor(() => !app.frame().includes("Details  Files  README.md"));
+    expect(app.frame()).not.toContain("Details  Files  README.md");
     expect(app.frame()).toContain("Changes");
   });
 
@@ -473,27 +473,27 @@ describe("editing a changed file", () => {
     const app = await open({ width: 200, session: fakeSession({ vcs: twoFiles, snapshot }) });
     await editBoth(app);
     // The column's default width cuts them; wider, they fit.
-    expect(app.frame()).toContain("Details  README.md  …nalPane.tsx ✕");
-    await app.mockMouse.drag(200 - 39, 10, 200 - 60, 10);
+    expect(app.frame()).toContain("Details  Files  …DME.md  …ne.tsx ✕");
+    await app.mockMouse.drag(200 - 39, 10, 200 - 68, 10);
     await app.settle(100);
-    expect(app.frame()).toContain("Details  README.md  src/ui/deep/TerminalPane.tsx ✕");
+    expect(app.frame()).toContain("Details  Files  README.md  src/ui/deep/TerminalPane.tsx ✕");
     expect(app.frame()).toContain("src/ui/deep/TerminalPane.tsx");
     expect(app.hints()).toBe(keysOn("TerminalPane.tsx"));
-    await prefix(app, "2");
+    await prefix(app, "3");
     expect(app.hints()).toBe(keysOn("README.md"));
     // An editor that can't be asked to quit isn't closed under you.
     await prefix(app, "x");
     expect(app.hints()).toStartWith("Quit README.md from inside it");
-    expect(app.frame()).toContain("Details  README.md ✕");
+    expect(app.frame()).toContain("Details  Files  README.md ✕");
   });
 
   test("Neovim takes further files in the instance already running, through its socket, and the prefix's x asks it to quit", async () => {
     const { root, snapshot } = workspace();
     const log = fakeNvim();
-    const app = await open({ width: 200, session: fakeSession({ vcs: twoFiles, snapshot }) });
+    const app = await open({ width: 200, layout: { ...DEFAULT_LAYOUT, detailsWidth: 46 }, session: fakeSession({ vcs: twoFiles, snapshot }) });
     await editBoth(app);
     await waitFor(() => log().some((line) => line.includes("--remote-expr")));
-    expect(app.frame()).toContain("Details  src/…/TerminalPane.tsx ✕");
+    expect(app.frame()).toContain("Details  Files  src/…/TerminalPane.tsx ✕");
     expect(app.frame()).not.toContain("README.md ✕");
     expect(app.hints()).toBe(keysOn("TerminalPane.tsx"));
     const [listen, remote] = log();
@@ -517,7 +517,7 @@ describe("editing a changed file", () => {
     expect(app.frame().split("\n")[0]).toContain("Editor: README.md ● · d");
     const note = app.find("Editor: README.md");
     await app.click(note.x, note.y);
-    expect(app.frame()).toContain("Details  README.md ✕");
+    expect(app.frame()).toContain("Details  Files  README.md ✕");
   });
 
   test("on a narrow window the column, editor and all, takes the conversation's place", async () => {

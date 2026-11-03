@@ -83,6 +83,7 @@ export const colors: Palette = { ...DARK };
 export function applyTheme(theme: ThemeMode | Palette): void {
   Object.assign(colors, theme === "light" ? LIGHT : theme === "dark" ? DARK : theme);
   markdownStyles = new WeakMap();
+  codeStyles = new WeakMap();
 }
 
 /** Dark or light, by the background's luminance; null if the terminal didn't say. */
@@ -190,5 +191,32 @@ export function useMarkdownStyle(): SyntaxStyle {
     "extmark.chip": { fg: colors.accent, bg: colors.element },
   }, owner);
   markdownStyles.set(owner, style);
+  return style;
+}
+
+let codeStyles = new WeakMap<NativeResourceOwner, SyntaxStyle>();
+
+/** Source files in the preview tab: the palette's few hues on the tree-sitter scopes that matter. */
+export function useCodeStyle(): SyntaxStyle {
+  const owner = useRenderer().nativeScene;
+  let style = codeStyles.get(owner);
+  if (style) return style;
+  style = SyntaxStyle.fromStyles({
+    default: { fg: colors.text },
+    keyword: { fg: colors.input },
+    string: { fg: colors.good },
+    comment: { fg: colors.faint, italic: true },
+    number: { fg: colors.plan },
+    boolean: { fg: colors.plan },
+    constant: { fg: colors.plan },
+    function: { fg: colors.accent },
+    type: { fg: colors.info },
+    constructor: { fg: colors.info },
+    operator: { fg: colors.muted },
+    punctuation: { fg: colors.muted },
+    "markup.heading": { fg: colors.text, bold: true },
+    "markup.raw": { fg: colors.plan },
+  }, owner);
+  codeStyles.set(owner, style);
   return style;
 }
