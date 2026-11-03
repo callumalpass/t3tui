@@ -18,11 +18,17 @@ You need a T3 Code server running on the same machine (or a token for a remote o
 curl -fsSL https://raw.githubusercontent.com/callumalpass/t3tui/main/install.sh | sh
 ```
 
-That puts a single `t3tui` binary in `~/.local/bin` (set `T3TUI_INSTALL_DIR` to change it). It needs nothing else installed, not even Bun. `t3tui upgrade` replaces it with the latest release, and `t3tui version` says which you have. Each release notes the T3 Code version it was built against.
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/callumalpass/t3tui/main/install.ps1 | iex
+```
+
+That puts a single `t3tui` binary in `~/.local/bin`, or `%LOCALAPPDATA%\Programs\t3tui` on Windows, which it adds to your PATH (set `T3TUI_INSTALL_DIR` to change it). It needs nothing else installed, not even Bun. `t3tui upgrade` replaces it with the latest release, and `t3tui version` says which you have. Each release notes the T3 Code version it was built against.
 
 ### Build from source
 
-On other systems (Windows, or Linux with musl), or to run unreleased changes, you need [Bun](https://bun.sh) 1.3.14 or later:
+On other systems (such as Linux with musl), or to run unreleased changes, you need [Bun](https://bun.sh) 1.3.14 or later:
 
 ```sh
 git clone --recurse-submodules https://github.com/callumalpass/t3tui.git && cd t3tui
@@ -38,7 +44,7 @@ After pulling changes, run `bun run build` (or `bun install`) to rebuild.
 t3tui                 # dashboard: threads on the left, the selected thread on the right
 t3tui attach <thread> # one thread, full screen (id, short id from `t3tui list`, or title text)
 t3tui list [--json]   # print threads and exit
-t3tui tmux [--watch]  # mirror active threads into a tmux session, one window each
+t3tui tmux [--watch]  # mirror active threads into a tmux session, one window each (not on Windows)
 ```
 
 The message box is always at the bottom. t3tui has two modes: **typing**, where keys go to the message box, and **navigation**, where single keys act. `esc` switches to navigation; `i`, `enter` or `tab` switch back.

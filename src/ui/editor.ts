@@ -2,27 +2,45 @@ import type { CliRenderer } from "@opentui/core";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
-const editorSetting = () => process.env.VISUAL || process.env.EDITOR || "vi";
+const WINDOWS = process.platform === "win32";
+const editorSetting = () => process.env.VISUAL || process.env.EDITOR || (WINDOWS ? "notepad" : "vi");
 const shell = () => process.env.SHELL || "sh";
 /** The editor's program, without its arguments. */
-const editorProgram = () => editorSetting().trim().split(/\s+/)[0] ?? "vi";
+const editorProgram = () => (WINDOWS ? windowsWords(editorSetting())[0] : editorSetting().trim().split(/\s+/)[0]) ?? "vi";
 
 /**
- * $VISUAL or $EDITOR (falling back to vi) on `file`, through the shell so EDITOR="code --wait" works.
+ * $VISUAL or $EDITOR (falling back to vi, or notepad on Windows) on `file`, through the shell so EDITOR="code --wait" works.
  * With `listen`, Neovim serves that socket, so more files can go to it (see nvimRemote).
  */
 export function editorCommand(file: string, listen?: string): string[] {
   const editor = editorSetting();
+  if (WINDOWS) return [...windowsCommand(editor), ...(listen ? ["--listen", listen] : []), file];
   return listen ? [shell(), "-c", `${editor} --listen "$2" "$1"`, "sh", file, listen] : [shell(), "-c", `${editor} "$1"`, "sh", file];
 }
 
-/** Whether the editor is Neovim, which can take more files and be asked to quit through a socket. */
-export const editorIsNvim = () => basename(editorProgram()) === "nvim";
+/** Splits a command line on spaces outside double quotes: `"C:\Program Files\Neovim\bin\nvim.exe" -p`. */
+export function windowsWords(command: string): string[] {
+  return [...command.matchAll(/"([^"]*)"|(\S+)/g)].map((match) => match[1] ?? match[2]!);
+}
 
-/** A socket for a Neovim started here, in a temp folder of its own (`remove` cleans up). Kept short: sockets have a length limit. */
+/** A command to run with no shell. Windows has no sh, and a .cmd like VS Code's `code` only runs through cmd. */
+export function windowsCommand(command: string, which: (program: string) => string | null = Bun.which): string[] {
+  const [program = "", ...args] = windowsWords(command);
+  const found = which(program) ?? program;
+  return [...(/\.(?:cmd|bat)$/i.test(found) ? ["cmd.exe", "/c"] : []), found, ...args];
+}
+
+/** Whether this program, by name or path, is Neovim. */
+export const isNvim = (program: string) => /^nvim(?:\.exe)?$/i.test(program.split(/[\\/]/).pop() ?? "");
+
+/** Whether the editor is Neovim, which can take more files and be asked to quit through a socket. */
+export const editorIsNvim = () => isNvim(editorProgram());
+
+/** A socket for a Neovim started here, in a temp folder of its own (`remove` cleans up); on Windows, a named pipe. Kept short: sockets have a length limit. */
 export function nvimSocket(): { readonly path: string; readonly remove: () => void } {
+  if (WINDOWS) return { path: `\\\\.\\pipe\\t3tui-nvim-${crypto.randomUUID()}`, remove: () => {} };
   const dir = mkdtempSync(join(tmpdir(), "t3tui-nvim-"));
   return { path: join(dir, "nvim.sock"), remove: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -33,7 +51,8 @@ export function nvimSocket(): { readonly path: string; readonly remove: () => vo
  * never fall back to editing in a Neovim of their own.
  */
 export async function nvimRemote(socket: string, args: readonly string[]): Promise<string | null> {
-  const child = Bun.spawn([shell(), "-c", `${editorProgram()} --server "$@"`, "sh", socket, ...args], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const command = WINDOWS ? [...windowsCommand(`"${editorProgram()}"`), "--server", socket, ...args] : [shell(), "-c", `${editorProgram()} --server "$@"`, "sh", socket, ...args];
+  const child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
   return code === 0 ? output : null;
 }

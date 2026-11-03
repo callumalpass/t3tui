@@ -13,7 +13,7 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { formatWorkingDurationLabel, type ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
-import { homedir } from "node:os";
+import { tildify } from "./paths.ts";
 
 import type { VcsState } from "../client/session.ts";
 import { formatClock, type T3tuiConfig } from "../config.ts";
@@ -379,10 +379,6 @@ function prState(state: string, draft: boolean): { state: string; tone: StatusTo
   return { state, tone: "muted" };
 }
 
-function tildify(path: string): string {
-  const home = homedir();
-  return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
-}
 
 const LIVE_SUBAGENT: ReadonlySet<string> = new Set(["pending", "running", "waiting"]);
 type SubagentStatus = "running" | "failed" | "done";

@@ -1,5 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { homedir } from "node:os";
+import { tildify } from "./paths.ts";
 
 import type { ChangedFile } from "./details.ts";
 
@@ -72,11 +72,10 @@ const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(["png", "jpg", "jpeg", "gi
 
 /** `~/…/project`: the root with the home folder shortened, cut from the middle to `width`. */
 export function rootLabel(root: string, width: number): string {
-  const home = homedir();
-  const path = root === home || root.startsWith(`${home}/`) ? `~${root.slice(home.length)}` : root;
+  const path = tildify(root);
   if (path.length <= width) return path;
   const name = nameOf(path);
-  const head = path.startsWith("~/") ? "~/…/" : "…/";
+  const head = path.startsWith("~/") || path.startsWith("~\\") ? "~/…/" : "…/";
   return head.length + name.length <= width ? `${head}${name}` : `…${name.slice(Math.max(0, name.length - width + 1))}`;
 }
 
@@ -85,4 +84,4 @@ export function sizeLabel(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+const nameOf = (path: string) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);

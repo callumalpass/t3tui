@@ -117,3 +117,15 @@ describe("pasted paths", () => {
     expect(pastedImagePath("", null)).toBeNull();
   });
 });
+
+test("a dropped Windows file keeps its backslashes", () => {
+  expect(pastedImagePath('"C:\\Users\\me\\shot.png"', null)).toBe("C:\\Users\\me\\shot.png");
+  expect(pastedImagePath("file:///C:/Users/me/my%20shot.png", null)).toBe("C:/Users/me/my shot.png");
+  expect(pastedImagePath("C:\\Users\\me\\notes.txt", null)).toBeNull();
+});
+
+test("on Windows, the clipboard's image comes through PowerShell as base64", () => {
+  const [tool] = clipboardImageCommands("win32");
+  expect(tool?.read("image/png")[0]).toBe("powershell.exe");
+  expect(tool?.decode?.(new TextEncoder().encode("iVBORw==\r\n"))).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+});
