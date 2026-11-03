@@ -149,7 +149,7 @@ export function rowTime(thread: OrchestrationV2ThreadShell): number {
 
 export function projectLabel(project: OrchestrationProjectShell | undefined): string {
   if (!project) return "";
-  return project.title || project.workspaceRoot.split("/").filter(Boolean).pop() || project.workspaceRoot;
+  return project.title || project.workspaceRoot.split(/[\\/]/).filter(Boolean).pop() || project.workspaceRoot;
 }
 
 /** Matches a thread by id, id prefix, or a case-insensitive title substring. */

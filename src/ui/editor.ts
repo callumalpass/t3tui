@@ -29,7 +29,8 @@ export function windowsWords(command: string): string[] {
 export function windowsCommand(command: string, which: (program: string) => string | null = Bun.which): string[] {
   const [program = "", ...args] = windowsWords(command);
   const found = which(program) ?? program;
-  return [...(/\.(?:cmd|bat)$/i.test(found) ? ["cmd.exe", "/c"] : []), found, ...args];
+  // `call` keeps the line from starting with a quote, which cmd would strip along with the last one.
+  return [...(/\.(?:cmd|bat)$/i.test(found) ? ["cmd.exe", "/c", "call"] : []), found, ...args];
 }
 
 /** Whether this program, by name or path, is Neovim. */
@@ -52,7 +53,8 @@ export function nvimSocket(): { readonly path: string; readonly remove: () => vo
  */
 export async function nvimRemote(socket: string, args: readonly string[]): Promise<string | null> {
   const command = WINDOWS ? [...windowsCommand(`"${editorProgram()}"`), "--server", socket, ...args] : [shell(), "-c", `${editorProgram()} --server "$@"`, "sh", socket, ...args];
-  const child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  // windowsHide gives it a console of its own, as Neovim on Windows prints results to the console, not stdout.
+  const child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "ignore", windowsHide: true });
   const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
   return code === 0 ? output : null;
 }
@@ -63,9 +65,21 @@ export const nvimOpen = (socket: string, file: string) => nvimRemote(socket, ["-
 export const nvimQuit = (socket: string) => nvimRemote(socket, ["--remote-send", "<C-\\><C-N>:confirm qa<CR>"]);
 /** Whether the Neovim on `socket` has unsaved changes; null if it couldn't be reached. */
 export const nvimModified = async (socket: string) => {
-  const count = await nvimRemote(socket, ["--remote-expr", "len(getbufinfo({'bufmodified': 1}))"]);
+  const count = await nvimEval(socket, "len(getbufinfo({'bufmodified': 1}))");
   return count === null ? null : Number.parseInt(count, 10) > 0;
 };
+
+/** What `expr` comes to in the Neovim on `socket`. Windows can't read its output (see nvimRemote), so there it's written to a file. */
+async function nvimEval(socket: string, expr: string): Promise<string | null> {
+  if (!WINDOWS) return nvimRemote(socket, ["--remote-expr", expr]);
+  const file = scratchFile("");
+  try {
+    const sent = await nvimRemote(socket, ["--remote-expr", `writefile([string(${expr})], ${vimString(file.path)})`]);
+    return sent === null ? null : file.read();
+  } finally {
+    file.remove();
+  }
+}
 
 const vimString = (text: string) => `'${text.replaceAll("'", "''")}'`;
 
@@ -74,7 +88,8 @@ export function scratchFile(text: string): { readonly path: string; readonly rea
   const dir = mkdtempSync(join(tmpdir(), "t3tui-"));
   const path = join(dir, "prompt.md");
   writeFileSync(path, text);
-  return { path, read: () => readFileSync(path, "utf8").replace(/\n$/, ""), remove: () => rmSync(dir, { recursive: true, force: true }) };
+  // Windows editors may save CRLF.
+  return { path, read: () => readFileSync(path, "utf8").replaceAll("\r\n", "\n").replace(/\n$/, ""), remove: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 /**
