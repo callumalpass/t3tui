@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { firstLine, truncate } from "../src/ui/text.ts";
+import { firstLine, truncate, truncateNumbered, truncatePath } from "../src/ui/text.ts";
 
 describe("truncate", () => {
   test("collapses whitespace and clips with an ellipsis", () => {
@@ -24,5 +24,25 @@ describe("firstLine", () => {
   test("caps at 100 characters", () => {
     const long = "x".repeat(150);
     expect(firstLine(long)).toBe(`${"x".repeat(99)}…`);
+  });
+});
+
+describe("truncatePath", () => {
+  test("keeps the first folder and the file name, dropping the middle", () => {
+    expect(truncatePath("src/ui/TerminalPane.tsx", 40)).toBe("src/ui/TerminalPane.tsx");
+    expect(truncatePath("src/ui/deep/er/TerminalPane.tsx", 22)).toBe("src/…/TerminalPane.tsx");
+  });
+
+  test("keeps the end of a name too long for that", () => {
+    expect(truncatePath("src/ui/TerminalPane.tsx", 8)).toBe("…ane.tsx");
+    expect(truncatePath("averyveryverylongname.ts", 10)).toBe("…ngname.ts");
+  });
+});
+
+describe("truncateNumbered", () => {
+  test("keeps the number at the end", () => {
+    expect(truncateNumbered("Terminal 12", 20)).toBe("Terminal 12");
+    expect(truncateNumbered("Terminal 2", 7)).toBe("Term… 2");
+    expect(truncateNumbered("Scratch", 4)).toBe("Scr…");
   });
 });
