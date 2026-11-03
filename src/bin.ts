@@ -3,7 +3,7 @@ import type { OrchestrationV2ShellSnapshot, ThreadId } from "@t3tools/contracts"
 
 import { migrateConfigDir } from "./client/auth.ts";
 import { T3Session } from "./client/session.ts";
-import { isCompiled, upgrade, VERSION } from "./upgrade.ts";
+import { isCompiled, removeOldBinaries, upgrade, VERSION } from "./upgrade.ts";
 import { findThread, lastActivity, relativeTime, rowTime, shortId, statusLabel, threadRows } from "./model/threads.ts";
 
 const USAGE = `t3tui: a terminal client for T3 Code
@@ -24,6 +24,7 @@ env:
 
 async function main(argv: string[]) {
   migrateConfigDir();
+  if (process.platform === "win32" && isCompiled()) removeOldBinaries();
   const [command, ...rest] = argv;
   switch (command) {
     case undefined:
@@ -89,6 +90,7 @@ async function list(json: boolean) {
 }
 
 async function tmuxCommand(args: string[]) {
+  if (process.platform === "win32") return fail("t3tui tmux needs tmux, which doesn't run on Windows. Run it inside WSL instead.");
   const { syncTmux } = await import("./mux/tmux.ts");
   const sessionFlag = args.indexOf("--session");
   const name = sessionFlag >= 0 ? args[sessionFlag + 1] : "t3tui";

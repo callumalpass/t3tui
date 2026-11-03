@@ -1,6 +1,5 @@
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import type { ChatAttachment, ModelSelection, OrchestrationMessageContext, OrchestrationProjectShell, OrchestrationV2ShellSnapshot, OrchestrationV2ThreadShell, ServerConfig, ThreadId } from "@t3tools/contracts";
-import { homedir } from "node:os";
 import { useState } from "react";
 
 import type { T3Session } from "../client/session.ts";
@@ -8,6 +7,7 @@ import { RUNTIME_MODE_LABELS } from "../model/details.ts";
 import type { Binding } from "../model/keymap.ts";
 import { draftDefaults, modelSummary, type DraftThread } from "../model/models.ts";
 import type { Picker } from "../model/palette.ts";
+import { tildify } from "../model/paths.ts";
 import type { DraftLine } from "./DraftView.tsx";
 
 type WorkspaceStrategy = { type: "root" } | { type: "existing_worktree"; worktreePath: string } | { type: "worktree"; baseRef: string; startFromOrigin?: boolean };
@@ -64,7 +64,7 @@ export function useDraft(deps: {
           items: projects.map((candidate) => ({
             id: `project:${candidate.id}`,
             title: candidate.title,
-            hint: candidate.id === draft.projectId ? "current" : candidate.workspaceRoot.replace(homedir(), "~"),
+            hint: candidate.id === draft.projectId ? "current" : tildify(candidate.workspaceRoot),
             run: () => setDraft(draftDefaults({ config, project: candidate, currentModel: draft.modelSelection, projectHasThreads: hasThreads(candidate.id) })),
           })),
         },

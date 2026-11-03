@@ -170,16 +170,27 @@ function attachServer(session: T3Session, target: TerminalTarget, term: Embedded
  * stops listening for SIGWINCH and so never sees the pane change size.
  */
 function withoutInBandResize(data: Uint8Array): Uint8Array {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: this matches an escape sequence
   return Buffer.from(Buffer.from(data).toString("latin1").replace(/\x1b\[\?2048;\d\$y/g, "\x1b[?2048;0$y"), "latin1");
 }
 
 /** A program run here on its own pty, answering its terminal queries through the emulator. */
 function spawnLocal(program: Extract<PaneProgram, { kind: "local" }>, term: EmbeddedTerminalRenderable, cols: number, rows: number, close: (message?: string) => void): Link {
   let stopped = false;
-  const child = Bun.spawn([...program.command], {
-    ...(program.cwd ? { cwd: program.cwd } : {}),
-    terminal: { cols, rows, data: (_pty, data) => term.write(data) },
-  });
+  let child: ReturnType<typeof Bun.spawn>;
+  try {
+    child = Bun.spawn([...program.command], {
+      ...(program.cwd ? { cwd: program.cwd } : {}),
+      terminal: { cols, rows, data: (_pty, data) => term.write(data) },
+    });
+  } catch (error) {
+    // A missing program throws here, inside a resize; let the pane say so rather than the render loop.
+    queueMicrotask(() => {
+      program.onExit(127);
+      close(`Couldn't start ${program.command[0]}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    return { send: () => {}, resize: () => {}, stop: () => {} };
+  }
   void child.exited.then((code) => {
     if (stopped) return;
     stopped = true;

@@ -11,6 +11,8 @@ import { clampFileAttachmentUploadBytes, fileAttachmentTooLargeMessage } from "@
 import { homedir } from "node:os";
 import { basename, isAbsolute, resolve } from "node:path";
 
+import { isWindowsAbsolute } from "./paths.ts";
+
 const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   gif: "image/gif",
   jpeg: "image/jpeg",
@@ -28,7 +30,7 @@ export function imageMimeTypeForName(name: string): string | null {
 /** Expands `~` and resolves a relative path against `cwd`, as the attach prompt promises. */
 export function expandAttachmentPath(input: string, cwd: string | null): string {
   const path = input.trim();
-  const expanded = path === "~" ? homedir() : path.startsWith("~/") ? resolve(homedir(), path.slice(2)) : path;
+  const expanded = path === "~" ? homedir() : path.startsWith("~/") || path.startsWith("~\\") ? resolve(homedir(), path.slice(2)) : path;
   return isAbsolute(expanded) ? expanded : resolve(cwd ?? process.cwd(), expanded);
 }
 
@@ -46,8 +48,13 @@ export interface ClipboardImageTool {
   readonly decode?: (stdout: Uint8Array) => Uint8Array | null;
 }
 
+/** Prints the clipboard's image as base64 PNG, and nothing when it holds none. Reading the clipboard needs -STA. */
+const WINDOWS_CLIPBOARD_IMAGE =
+  "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $image = [Windows.Forms.Clipboard]::GetImage(); if ($image) { $stream = New-Object IO.MemoryStream; $image.Save($stream, [Drawing.Imaging.ImageFormat]::Png); [Convert]::ToBase64String($stream.ToArray()) }";
+
 /** The clipboard readers, in order: the platform's usual image grabber first. */
 export function clipboardImageCommands(platform: string): readonly ClipboardImageTool[] {
+  if (platform === "win32") return [{ read: () => ["powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", WINDOWS_CLIPBOARD_IMAGE], mimeType: "image/png", decode: (stdout) => Buffer.from(new TextDecoder().decode(stdout).trim(), "base64") }];
   return platform === "darwin"
     ? [
         { read: () => ["pngpaste", "-"], mimeType: "image/png" },
@@ -90,13 +97,16 @@ export function pastedImagePath(text: string, cwd: string | null): string | null
     try {
       const url = new URL(raw);
       if (url.hostname && url.hostname !== "localhost") return null;
-      path = decodeURIComponent(url.pathname);
+      // `file:///C:/a.png` is a Windows path, whole, after its first slash.
+      path = decodeURIComponent(url.pathname).replace(/^\/(?=[A-Za-z]:\/)/, "");
     } catch {
       return null;
     }
   } else {
-    path = raw.replace(/\\(.)/g, "$1");
+    // A Windows path's backslashes are its folders, not escapes.
+    path = isWindowsAbsolute(raw) ? raw : raw.replace(/\\(.)/g, "$1");
   }
+  if (isWindowsAbsolute(path)) return imageMimeTypeForName(path) ? path : null;
   if (!path.startsWith("/") && !path.startsWith("~") && !path.startsWith(".")) return null;
   return imageMimeTypeForName(path) ? expandAttachmentPath(path, cwd) : null;
 }

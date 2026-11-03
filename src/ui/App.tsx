@@ -4,7 +4,6 @@ import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/compo
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { parseFileUrlHref, resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -73,6 +72,7 @@ import { useThreadLibrary } from "./useThreadLibrary.ts";
 import { usePaletteSearch } from "./usePaletteSearch.ts";
 import { useThreadFind } from "./useThreadFind.ts";
 import { ThreadFindBar } from "./ThreadFindBar.tsx";
+import { tildify } from "../model/paths.ts";
 import { mergeThreadShells, messageMatchGroups } from "../model/search.ts";
 import { useAttachments } from "./useAttachments.ts";
 import { useAutomations } from "./useAutomations.ts";
@@ -1397,7 +1397,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               serverStatus={serverConfig?.status ?? "loading"}
               usage={[...usageInfo.lines, ...usageSummaryLines(usage.summary), ...(usage.failed && !usage.summary ? [{ label: "Last 30 days", value: "could not read usage" }] : [])]}
               selected={settingsIndex}
-              path={configPath().replace(homedir(), "~")}
+              path={tildify(configPath())}
               onCycle={(index) => {
                 setMode("settings");
                 cycleSetting(index);

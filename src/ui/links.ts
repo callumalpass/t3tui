@@ -1,13 +1,15 @@
 import type { CliRenderer } from "@opentui/core";
 
+import { browserCommand } from "../model/links.ts";
+
 /** Opens a web link in the desktop's browser; `fail` hears why it couldn't, as over SSH. */
 export function openInBrowser(url: string, fail: (reason: string) => void): void {
   try {
-    const opener = process.platform === "darwin" ? "open" : "xdg-open";
+    const command = browserCommand(url);
     // The environment as it is now: Bun otherwise looks the opener up on the PATH it started with.
-    const child = Bun.spawn([opener, url], { env: process.env, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    const child = Bun.spawn(command, { env: process.env, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     void child.exited.then((code) => {
-      if (code !== 0) fail(`${opener} exited with ${code}`);
+      if (code !== 0) fail(`${command[0]} exited with ${code}`);
     });
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));

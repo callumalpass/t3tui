@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isWebUrl, pathAt } from "../src/model/links.ts";
+import { browserCommand, isWebUrl, pathAt } from "../src/model/links.ts";
 
 const at = (text: string, word: string) => pathAt(text, text.indexOf(word));
 
@@ -33,4 +33,29 @@ describe("paths in text", () => {
     expect(isWebUrl("file:///tmp/a.ts")).toBe(false);
     expect(isWebUrl("src/ui/App.tsx")).toBe(false);
   });
+});
+
+describe("on Windows", () => {
+  test("finds paths with backslashes and drives", () => {
+    const text = "see src\\ui\\App.tsx:12 and C:\\Users\\me\\notes.md, or ..\\a.ts";
+    expect(pathAt(text, text.indexOf("App"), "win32")).toBe("src\\ui\\App.tsx");
+    expect(pathAt(text, text.indexOf("Users"), "win32")).toBe("C:\\Users\\me\\notes.md");
+    expect(pathAt(text, text.indexOf("a.ts"), "win32")).toBe("..\\a.ts");
+  });
+
+  test("leaves URLs and line numbers alone", () => {
+    expect(pathAt("https://example.com/a", 12, "win32")).toBeNull();
+    expect(pathAt("at a:b/c.ts", 8, "win32")).toBeNull();
+  });
+
+  test("backslashes are not path characters elsewhere", () => {
+    expect(pathAt("src\\ui\\App.tsx", 8, "linux")).toBe("App.tsx");
+  });
+});
+
+test("opens the browser the platform's way, past cmd's reach on Windows", () => {
+  const url = "https://example.com/?a=1&b=2";
+  expect(browserCommand(url, "linux")).toEqual(["xdg-open", url]);
+  expect(browserCommand(url, "darwin")).toEqual(["open", url]);
+  expect(browserCommand(url, "win32")).toEqual(["rundll32.exe", "url.dll,FileProtocolHandler", url]);
 });
