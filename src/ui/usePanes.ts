@@ -14,6 +14,7 @@ const PANE_ORDER: readonly PaneFocus[] = ["message", "drawer", "column"];
 /** How long ctrl+\ waits for the key after it. */
 const PREFIX_MS = 2000;
 const DETAILS = "details";
+const FILES = "files";
 /** The column's tab for the shown terminal, in side placement. */
 const TERMINAL = "terminal";
 type LocalProgram = Extract<PaneProgram, { kind: "local" }>;
@@ -27,16 +28,22 @@ export interface EditorProgram {
 export interface EditorTab extends EditorProgram {
   readonly path: string;
 }
+/** A workspace file shown read-only in a tab of the column: its path relative to `cwd`. */
+export interface PreviewTab {
+  readonly id: string;
+  readonly path: string;
+  readonly cwd: string;
+}
 export interface ColumnTab {
   readonly id: string;
   readonly label: string;
-  readonly kind: "details" | "editor" | "terminal";
+  readonly kind: "details" | "files" | "editor" | "preview" | "terminal";
 }
 
 /**
  * The panes around the conversation: each thread's terminals (in the drawer below it, or as
- * tabs of the right-hand column), files in $EDITOR in the column's tabs, and the message in
- * $EDITOR in the composer's place. Which one has the keys, and the ctrl+\ prefix that moves
+ * tabs of the right-hand column), the Files tab, files in $EDITOR or previewed in the column's
+ * tabs, and the message in $EDITOR in the composer's place. Which one has the keys, and the ctrl+\ prefix that moves
  * them, picks tabs, closes and zooms.
  */
 export function usePanes(deps: {
@@ -67,6 +74,7 @@ export function usePanes(deps: {
   /** Terminals this run has shown, which the strip under the message box names while the drawer is hidden. */
   const [seen, setSeen] = useState<ReadonlySet<string>>(new Set());
   const [editors, setEditors] = useState<readonly EditorTab[]>([]);
+  const [previews, setPreviews] = useState<readonly PreviewTab[]>([]);
   const [message, setMessage] = useState<EditorProgram | null>(null);
   const [tab, setTab] = useState<string>(DETAILS);
   const [target, setTarget] = useState<PaneFocus>("drawer");
@@ -93,19 +101,22 @@ export function usePanes(deps: {
   const terminalTabId = (terminalId: string) => `${TERMINAL}:${terminalId}`;
   const columnTabs: ColumnTab[] = [
     { id: DETAILS, label: "Details", kind: "details" },
+    { id: FILES, label: "Files", kind: "files" },
     ...editors.map((editor): ColumnTab => ({ id: editor.program.id, label: editor.path, kind: "editor" })),
+    ...previews.map((preview): ColumnTab => ({ id: preview.id, label: preview.path, kind: "preview" })),
     ...(side && terminal ? tabs.map((candidate): ColumnTab => ({ id: terminalTabId(candidate.terminalId), label: candidate.label, kind: "terminal" })) : []),
   ];
-  const columnTab = tab === TERMINAL && side && terminal ? terminalTabId(terminal.terminalId) : editors.some((editor) => editor.program.id === tab) ? tab : DETAILS;
+  const columnTab = tab === TERMINAL && side && terminal ? terminalTabId(terminal.terminalId) : tab === FILES || editors.some((editor) => editor.program.id === tab) || previews.some((preview) => preview.id === tab) ? tab : DETAILS;
   const activeColumnTab = columnTabs.find((candidate) => candidate.id === columnTab)!;
-  const programTabs = columnTabs.filter((candidate) => candidate.kind !== "details");
+  /** The tabs that hold something of their own: programs and previews. */
+  const programTabs = columnTabs.filter((candidate) => candidate.kind !== "details" && candidate.kind !== "files");
   const shown: Record<PaneFocus, boolean> = {
     message: message !== null,
     drawer: terminal !== null && !side,
     column: column && columnTab !== DETAILS,
   };
-  /** What focus can move to: open panes, and the column while it holds a program, even hidden. */
-  const open: Record<PaneFocus, boolean> = { ...shown, column: programTabs.length > 0 };
+  /** What focus can move to: open panes, and the column while it shows Files or holds a program, even hidden. */
+  const open: Record<PaneFocus, boolean> = { ...shown, column: shown.column || programTabs.length > 0 };
   const available = PANE_ORDER.filter((pane) => open[pane]);
   const focusedPane = focused && shown[target] ? target : null;
   const zoomShown = zoomed !== null && (zoomed === "column" ? column : shown[zoomed]);
@@ -130,12 +141,12 @@ export function usePanes(deps: {
     };
   }, [column, sockets]);
 
-  /** Gives a pane the keys; the column on `tab`, or the program tab it showed last. */
+  /** Gives a pane the keys; the column on `tab`, or the tab it showed last, or Files. */
   const enter = (pane: PaneFocus, tab?: string) => {
     if (pane === "column" && tab) showColumnTab(tab);
     else if (pane === "column" && columnTab === DETAILS) {
-      const next = programTabs.find((candidate) => candidate.id === lastProgramTab.current || (lastProgramTab.current === TERMINAL && candidate.kind === "terminal")) ?? programTabs[0];
-      if (next) showColumnTab(next.id);
+      const next = columnTabs.find((candidate) => candidate.id === lastProgramTab.current || (lastProgramTab.current === TERMINAL && candidate.kind === "terminal")) ?? programTabs[0];
+      showColumnTab(next?.id ?? FILES);
     } else if (pane === "column") showColumnTab(columnTab);
     setTarget(pane);
     deps.focus(true);
@@ -177,7 +188,7 @@ export function usePanes(deps: {
   const hideTerminal = () => {
     if (!threadId || !drawer) return;
     setDrawer(threadId, { ...drawer, open: false });
-    if (side) tabGone(editors.length > 0);
+    if (side) tabGone(editors.length + previews.length > 0);
   };
   const terminalShown = terminal !== null && (!side || (column && activeColumnTab.kind === "terminal"));
   /** ctrl+j: hides the terminal when it shows, or shows the last one, or finds one. */
@@ -201,7 +212,7 @@ export function usePanes(deps: {
         rest.delete(gone.threadId);
         return rest;
       });
-      if (side && gone.threadId === threadId) tabGone(editors.length > 0);
+      if (side && gone.threadId === threadId) tabGone(editors.length + previews.length > 0);
     }
     if (note) say(note);
   };
@@ -222,8 +233,19 @@ export function usePanes(deps: {
   };
   const editorClosed = (id: string, note?: string) => {
     setEditors((previous) => previous.filter((editor) => editor.program.id !== id));
-    tabGone(editors.length > 1 || (side && terminal !== null));
+    tabGone(editors.length > 1 || previews.length > 0 || (side && terminal !== null));
     if (note) say(note);
+  };
+  /** A file read-only in a tab of its own in the column, with the keys. */
+  const openPreview = (path: string, cwd: string) => {
+    const id = `preview:${cwd}:${path}`;
+    setPreviews((previous) => (previous.some((preview) => preview.id === id) ? previous : [...previous, { id, path, cwd }]));
+    enter("column", id);
+  };
+  /** A preview closes back to Files, which it was opened from. */
+  const closePreview = (id: string) => {
+    setPreviews((previous) => previous.filter((preview) => preview.id !== id));
+    if (columnTab === id) setTab(FILES);
   };
   /** The message in $EDITOR, in the composer's place. */
   const openMessage = (next: EditorProgram) => {
@@ -243,10 +265,12 @@ export function usePanes(deps: {
     const terminalTab = tabs.find((candidate) => candidate.terminalId === id || terminalTabId(candidate.terminalId) === id);
     if (terminalTab) return deps.closeTerminal(terminalTab);
     const editor = editors.find((candidate) => candidate.program.id === id);
-    if (editor) quitEditor(editor, basename(editor.path), "column");
+    if (editor) return quitEditor(editor, basename(editor.path), "column");
+    if (previews.some((preview) => preview.id === id)) closePreview(id);
   };
   const closeFocused = () => {
     if (focusedPane === "drawer" && terminal) return closeTab(terminal.terminalId);
+    if (focusedPane === "column" && columnTab === FILES) return say("Files stays; d hides the column.", true);
     if (focusedPane === "column") return closeTab(columnTab);
     if (focusedPane === "message" && message) return quitEditor(message, "the message", "message");
     say(deps.detailsFocused ? "Details stays; d hides the column." : "No pane has the keys; ctrl+\\ tab moves them to one.", true);
@@ -270,7 +294,7 @@ export function usePanes(deps: {
     if (terminal) return side ? enter("column") : enter("drawer");
     toggleTerminal();
   };
-  const focusColumn = () => (open.column ? enter("column") : say("Nothing runs in the column; o on a changed file opens one.", true));
+  const focusColumn = () => enter("column");
   /** 1…9: a tab of the focused strip, the column's or else the drawer's. */
   const pickTab = (index: number) => {
     if (focusedPane !== "column" && !deps.detailsFocused) return selectTab(index);
@@ -315,7 +339,7 @@ export function usePanes(deps: {
     { keys: ["esc"], run: () => {}, hint: "cancel" },
   );
   /** Where the keys are, by name. */
-  const focusedName = focusedPane === "message" ? "message" : focusedPane === "drawer" ? terminal?.label : focusedPane === "column" ? (activeColumnTab.kind === "editor" ? basename(activeColumnTab.label) : activeColumnTab.label) : undefined;
+  const focusedName = focusedPane === "message" ? "message" : focusedPane === "drawer" ? terminal?.label : focusedPane === "column" ? (activeColumnTab.kind === "editor" || activeColumnTab.kind === "preview" ? basename(activeColumnTab.label) : activeColumnTab.label) : undefined;
   /** The hint bar while a pane has the keys. */
   const focusedKeys: Binding[] = focusedName
     ? [
@@ -337,10 +361,13 @@ export function usePanes(deps: {
     /** Terminals this run showed that still run, while the terminal is hidden. */
     running: terminal ? [] : tabs.filter((candidate) => seen.has(key(candidate))),
     editors,
+    previews,
     modified,
     message,
     columnTabs,
     columnTab,
+    /** What the column's shown tab is. */
+    columnKind: activeColumnTab.kind,
     showColumnTab,
     focusedPane,
     /** Whether a terminal has the keys, in the drawer or the column. */
@@ -358,6 +385,9 @@ export function usePanes(deps: {
     openEditor,
     editorOpened,
     editorClosed,
+    openPreview,
+    /** Shows Files and gives it the keys. */
+    showFiles: () => enter("column", FILES),
     openMessage,
     messageClosed: () => setMessage(null),
     keys: { prefix: prefixKey, afterPrefix: prefixKeys, focused: focusedKeys, commands },

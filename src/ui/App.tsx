@@ -5,7 +5,7 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContex
 import type { OrchestrationV2ThreadShell, ProviderApprovalDecision, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { parseFileUrlHref, resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -29,9 +29,12 @@ import { ComposerMenu } from "./ComposerMenu.tsx";
 import { ConfirmBar, type Confirmation } from "./ConfirmBar.tsx";
 import { DetailsPanel } from "./DetailsPanel.tsx";
 import { DiffView, type DiffState } from "./DiffView.tsx";
+import { FilePreview } from "./FilePreview.tsx";
+import { FilesPanel } from "./FilesPanel.tsx";
 import { DraftView } from "./DraftView.tsx";
 import { useComposerMenu } from "./useComposerMenu.ts";
 import { useDetails } from "./useDetails.ts";
+import { useFiles } from "./useFiles.ts";
 import { useDraft } from "./useDraft.ts";
 import { useModelPicker } from "./useModelPicker.ts";
 import { useQuestion } from "./useQuestion.ts";
@@ -587,6 +590,25 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   useEffect(() => {
     if (mode === "details") panes.showColumnTab("details");
   }, [mode]);
+  const files = useFiles({
+    session,
+    live,
+    cwd: draft ? null : panel.cwd,
+    visible: panel.show && panes.columnKind === "files",
+    changes: panel.details?.changes?.files ?? [],
+    working,
+    ignoredListing: providerConfig?.environment.capabilities.ignoredFileListing === true,
+    open: (path) => openFile(path),
+    preview: (path) => panel.cwd && panes.openPreview(path, panel.cwd),
+    mention: (path, kind) => {
+      if (composerMenu.mention({ path, kind })) say(`Added @${path}${kind === "directory" ? "/" : ""}`);
+      else say("There's no message box to mention it in.", true);
+    },
+    copy: (path) => copy(path, path),
+    leave: () => setMode("nav"),
+    say,
+  });
+  const previewScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
   /** The composer's text in $EDITOR, in the composer's place; what's saved comes back when it exits. */
   const openEditor = () => {
@@ -637,6 +659,14 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
       socket: socket?.path ?? null,
       program: { kind: "local", id: `edit:${file}`, title: path, command: editorCommand(file, socket?.path), cwd: cwd ?? undefined, onExit: () => socket?.remove() },
     });
+  };
+
+  /** A file from the Files tab: in $EDITOR when it's on this machine, else read-only in a preview tab. */
+  const openFile = (path: string) => {
+    const cwd = panel.cwd;
+    if (!cwd) return;
+    if (existsSync(join(cwd, path))) editFile(path, cwd);
+    else panes.openPreview(path, cwd);
   };
 
   /** A click on a link opens it in the browser; on a path to a workspace file, in the column's editor. A drag doesn't. */
@@ -909,6 +939,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     library.commands(threadId).map((command) => fromCommand(command)),
     workspace.commands.map((command) => fromCommand(command)),
     threadId && !draft && { keys: ["f"], run: openFind, command: { id: "find", title: "Find in thread", keywords: ["search", "messages", "plans"] } },
+    threadId && !draft && { keys: ["F"], run: panes.showFiles, command: { id: "files", title: "Files: show", keywords: ["explorer", "tree", "browse", "project", "workspace"] } },
     // Only P is a navigation key; the rest are the PR view's own (below).
     pullRequests.commands.filter((command) => command.id === "pull-requests").map((command) => fromCommand(command)),
     { keys: ["j", "↓"], label: "j/k", run: () => (attached ? scrollBy(1) : move(1)), hint: attached ? "scroll" : "threads" },
@@ -1007,6 +1038,16 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     { keys: ["G"], run: () => scrollToEnd(scrollRef.current) },
     pullRequests.viewKeys,
   );
+  const previewKeys = keys(
+    { keys: ["j", "↓"], label: "j/k", run: () => previewScrollRef.current?.scrollBy(1), hint: "scroll" },
+    { keys: ["k", "↑"], run: () => previewScrollRef.current?.scrollBy(-1) },
+    { keys: ["space", "pagedown"], run: () => previewScrollRef.current?.scrollBy(Math.max(1, height - 10)) },
+    { keys: ["pageup"], run: () => previewScrollRef.current?.scrollBy(-Math.max(1, height - 10)) },
+    { keys: ["g"], run: () => previewScrollRef.current?.scrollTo(0) },
+    { keys: ["G"], run: () => scrollToEnd(previewScrollRef.current) },
+    { keys: [], label: "ctrl+\\ x", run: () => panes.closeTab(panes.columnTab), hint: "close" },
+    { keys: ["esc"], run: () => setMode("nav"), hint: "back" },
+  );
   const findKeys = keys(
     find.bindings,
     { keys: ["esc"], run: () => setMode("nav"), hint: "close find" },
@@ -1044,7 +1085,9 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
     }
     // After ctrl+\, the next key is the prefix's; handleKey takes it.
     if (panes.prefix) return { layers: [], hints: panes.keys.afterPrefix };
-    // In a terminal, ctrl+j hides it again, as it leaves a terminal attached full screen.
+    // Files and previews take their own keys; a terminal takes all but ctrl+\, and ctrl+j hides it again.
+    if (mode === "pane" && panes.focusedPane === "column" && panes.columnKind === "files") return { layers: [files.keys, globalKeys], hints: [...files.keys, prefixKey] };
+    if (mode === "pane" && panes.focusedPane === "column" && panes.columnKind === "preview") return { layers: [previewKeys, globalKeys], hints: [...previewKeys, prefixKey] };
     if (mode === "pane") return { layers: [keys(prefixKey, panes.terminalFocused && terminalKey)], hints: panes.keys.focused };
     // The secret field takes every key while it's focused.
     if (secret.focused) return { layers: [secret.bindings, [prefixKey, quitKey]], hints: secret.bindings };
@@ -1099,21 +1142,24 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const groups = useMemo(() => (mode === "palette" ? messageMatchGroups(paletteGroups({ query: paletteQuery, commands, snapshot: paletteSnapshot, now }), paletteSearch.result, paletteSnapshot, paletteQuery, now) : []), [mode, paletteQuery, commandKey, paletteSnapshot, paletteSearch.result]);
   const entries = paletteEntries(groups);
 
-  // The mouse in the conversation: stable callbacks, since its rows are memoized.
-  const conversationMouse: ConversationMouse = {
-    selectTurn: useEvent((messageId: string) => turns.select(messageId)),
-    toggleFold: useEvent((id: string) =>
-      setExpandedIds((previous) => {
-        const next = new Set(previous);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      }),
-    ),
-    loadEarlier: useEvent(() => loadEarlier()),
-    menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
-    openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
-    click: useEvent((x: number, y: number) => openAt(x, y)),
-  };
+  // The mouse in the conversation: stable callbacks in a stable object, since its rows are memoized.
+  // A new object each render re-rendered every row, and every reply's markdown, each second.
+  const selectTurn = useEvent((messageId: string) => turns.select(messageId));
+  const toggleFold = useEvent((id: string) =>
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    }),
+  );
+  const loadEarlierClick = useEvent(() => loadEarlier());
+  const openMenu = useEvent((target: ConversationTarget) => openConversationMenu(target));
+  const openTurnDiff = useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount));
+  const click = useEvent((x: number, y: number) => openAt(x, y));
+  const conversationMouse = useMemo<ConversationMouse>(
+    () => ({ selectTurn, toggleFold, loadEarlier: loadEarlierClick, menu: openMenu, openTurnDiff, click }),
+    [selectTurn, toggleFold, loadEarlierClick, openMenu, openTurnDiff, click],
+  );
   const copy = (label: string, text: string) => {
     void clipboard.copy(text);
     say(`Copied ${label}`);
@@ -1578,7 +1624,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             {panes.columnTabs.length > 1 ? (
               <box flexDirection="row" height={1} flexShrink={0} paddingLeft={1} paddingRight={1} backgroundColor={panes.focusedPane === "column" ? colors.element : colors.panel}>
                 <Tabs
-                  tabs={panes.columnTabs.map((tab) => ({ id: tab.id, label: tab.label, closable: tab.kind !== "details", shorten: (room: number) => (tab.kind === "editor" ? truncatePath(tab.label, room) : truncateNumbered(tab.label, room)) }))}
+                  tabs={panes.columnTabs.map((tab) => ({ id: tab.id, label: tab.label, closable: tab.kind !== "details" && tab.kind !== "files", shorten: (room: number) => (tab.kind === "editor" || tab.kind === "preview" ? truncatePath(tab.label, room) : truncateNumbered(tab.label, room)) }))}
                   active={panes.columnTab}
                   focused={panes.focusedPane === "column"}
                   width={columnWidth - 2 - (placement === "side" && panes.terminal ? NEW_TAB_WIDTH : 0)}
@@ -1590,6 +1636,31 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               </box>
             ) : null}
             {panes.columnTab === "details" ? detailsPanel(columnFills) : null}
+            {panes.columnKind === "files" ? (
+              <FilesPanel
+                root={draft ? null : panel.cwd}
+                rows={files.rows}
+                selected={files.selected}
+                search={files.search}
+                width={columnWidth}
+                focused={panes.focusedPane === "column"}
+                loading={files.loadingRoot}
+                error={files.error}
+                onClick={(path) => {
+                  panes.showFiles();
+                  files.click(path);
+                }}
+                onQuery={files.onQuery}
+                onSubmit={files.submit}
+                onClickResult={(index) => {
+                  panes.showFiles();
+                  files.clickResult(index);
+                }}
+              />
+            ) : null}
+            {panes.previews.filter((preview) => preview.id === panes.columnTab).map((preview) => (
+              <FilePreview key={preview.id} session={session} threadId={threadId} cwd={preview.cwd} path={preview.path} width={columnWidth} focused={panes.focusedPane === "column"} scrollRef={previewScrollRef} />
+            ))}
             {panes.editors.map((editor) => (
               <box key={editor.program.id} flexDirection="column" flexGrow={1} minHeight={0} visible={panes.columnTab === editor.program.id}>
                 <TerminalPane

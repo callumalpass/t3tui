@@ -32,7 +32,7 @@ export interface Call {
 /**
  * A session that serves fixed state and records every other call. Watchers get one live
  * value straight away; anything not listed resolves to undefined, or rejects with its
- * `failures` message.
+ * `failures` message. A result given as a function answers from the call's arguments.
  */
 export function fakeSession(
   state: {
@@ -41,7 +41,7 @@ export function fakeSession(
     readonly status?: ConnectionStatus;
     /** Git status for every folder; loading by default. */
     readonly vcs?: unknown;
-    readonly results?: Record<string, unknown>;
+    readonly results?: Record<string, unknown | ((...args: never[]) => unknown)>;
     /** The thread's terminals on the server, and what attaching to one streams. */
     readonly terminals?: readonly unknown[];
     readonly terminalEvents?: readonly unknown[];
@@ -86,7 +86,9 @@ export function fakeSession(
         calls.push({ method: name, args });
         if (name.startsWith("watch") || name.startsWith("on")) return () => {};
         const failure = state.failures?.[name];
-        return failure ? Promise.reject(new Error(failure)) : Promise.resolve(state.results?.[name]);
+        const result = state.results?.[name];
+        if (failure) return Promise.reject(new Error(failure));
+        return typeof result === "function" ? Promise.resolve().then(() => result(...args)) : Promise.resolve(result);
       };
     },
   }) as unknown as T3Session;
