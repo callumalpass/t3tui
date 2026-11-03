@@ -17,7 +17,7 @@ import { BAR } from "./edges.ts";
 import type { T3Session, ThreadHistory } from "../client/session.ts";
 import { liveWorkEntryLabel, workEntryDisplayLabel, type MessagesTimelineRow, type Timeline, type WorkLogEntry } from "../model/timeline.ts";
 import { blockFor } from "../model/transcript.ts";
-import { firstLine, truncate } from "./text.ts";
+import { firstLine } from "./text.ts";
 import { colors, scrollbarOptions, toneColor, useMarkdownStyle } from "./theme.ts";
 
 /** What a right-click in the conversation was on. */
@@ -38,9 +38,6 @@ export interface ConversationMouse {
   /** A click in a reply's text, at its screen position, for the link or path under it. */
   readonly click: (x: number, y: number) => void;
 }
-
-/** Prose stops at this width on wide terminals, left-aligned. */
-const CONTENT_WIDTH = 100;
 
 /** The conversation, row for row as the web app derives it (MessagesTimeline.logic). */
 export function ThreadView(props: {
@@ -75,8 +72,7 @@ export function ThreadView(props: {
       ) : null}
       {props.error ? <text fg={colors.bad} flexShrink={0}>{props.error}</text> : null}
       <scrollbox ref={props.scrollRef} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom" scrollbarOptions={scrollbarOptions()}>
-        {/* Prose stops at reading width on wide terminals; the composer below stays full width. */}
-        <box flexDirection="column" maxWidth={CONTENT_WIDTH}>
+        <box flexDirection="column">
         {props.loading && !timeline ? <text fg={colors.muted}>Loading…</text> : null}
         {history?.hasMore || history?.error ? <LoadEarlier history={history} onLoad={props.mouse.loadEarlier} /> : null}
         {timeline?.rows.filter((row) => !isPendingApprovalRow(row, pendingIds)).map((row) => (
@@ -284,10 +280,9 @@ function ChangedFiles({ summary, onOpenTurnDiff }: { readonly summary: ThreadChe
 
 function ChangedFile({ path, additions, deletions, onPress }: { readonly path: string; readonly additions: number; readonly deletions: number; readonly onPress: () => void }) {
   const [hover, hoverProps] = useHover();
-  const counts = (additions > 0 ? `+${additions}`.length : 0) + (deletions > 0 ? `−${deletions}`.length : 0) + (additions > 0 && deletions > 0 ? 1 : 0);
   return (
     <box flexDirection="row" {...hoverProps} onMouseDown={(event: MouseEvent) => isLeftClick(event) && onPress()}>
-      <text fg={hover ? colors.text : colors.muted} selectable={false} wrapMode="none">{truncate(path, CONTENT_WIDTH - 2 - (counts ? counts + 2 : 0))}</text>
+      <text fg={hover ? colors.text : colors.muted} flexShrink={1} selectable={false} wrapMode="none" truncate>{path}</text>
       <box flexGrow={1} />
       <DiffCounts additions={additions} deletions={deletions} />
     </box>
@@ -326,13 +321,14 @@ function UserMessage({ session, text, attachments, messageId, selected, onSelect
   );
 }
 
+const IMAGE_COLUMNS = 100;
 const IMAGE_ROWS = 12;
 
 /** A sent image, shown in the terminal's best image protocol; its name alone until it loads, or if it can't. */
 function MessageImage({ session, attachment }: { readonly session: T3Session; readonly attachment: ChatAttachment }) {
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
   const [failed, setFailed] = useState(false);
-  const [size, setSize] = useState({ width: CONTENT_WIDTH, height: IMAGE_ROWS });
+  const [size, setSize] = useState({ width: IMAGE_COLUMNS, height: IMAGE_ROWS });
   const image = useRef<ImageRenderable | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -356,7 +352,7 @@ function MessageImage({ session, attachment }: { readonly session: T3Session; re
         width={size.width}
         maxWidth="100%"
         height={size.height}
-        onLoad={() => image.current && setSize(image.current.getFittedSize(CONTENT_WIDTH, IMAGE_ROWS))}
+        onLoad={() => image.current && setSize(image.current.getFittedSize(IMAGE_COLUMNS, IMAGE_ROWS))}
         onError={() => setFailed(true)}
       />
       {name}
@@ -388,12 +384,10 @@ function OmittedOutput({ session, source }: { readonly session: T3Session; reado
 
 /** One work/tool line, everywhere the same: glyph, label, result details right-aligned. */
 function WorkLine(props: { readonly glyph: string; readonly glyphColor: string; readonly label: string; readonly labelColor: string; readonly detail?: string; readonly selectable?: boolean }) {
-  // The label gives up whatever the right-hand details take, within the reading width.
-  const label = truncate(props.label, CONTENT_WIDTH - 2 - (props.detail ? props.detail.length + 2 : 0));
   return (
     <box flexDirection="row" width="100%">
       <text fg={props.glyphColor} flexShrink={0} selectable={false}>{`${props.glyph} `}</text>
-      <text fg={props.labelColor} flexShrink={1} wrapMode="none" selectable={props.selectable ?? false}>{label}</text>
+      <text fg={props.labelColor} flexShrink={1} wrapMode="none" truncate selectable={props.selectable ?? false}>{props.label.replace(/\s+/g, " ")}</text>
       {props.detail ? (
         <>
           <box flexGrow={1} />
