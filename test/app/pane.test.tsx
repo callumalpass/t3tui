@@ -371,6 +371,16 @@ describe("terminal drawer", () => {
     expect(zoomed).toBeGreaterThan(rows);
     expect(app.frame()).toContain(`bottom ${zoomed} `);
   });
+
+  test("$EDITOR is told in-band resize isn't available, since no reports would come and it would miss the pane's size changing", async () => {
+    // It asks about mode 2048, as Neovim does, and shows the answer without its escape.
+    setEditor(`stty raw -echo; printf '\\033[?2048$p'; head -c 11 | tr -d '\\033'; sleep 5 #`);
+    const app = await open();
+    await app.press("i");
+    await app.press("g", { ctrl: true });
+    await waitFor(() => app.frame().includes("?2048;"));
+    expect(app.frame()).toContain("[?2048;0$y");
+  });
 });
 
 describe("the panes together", () => {

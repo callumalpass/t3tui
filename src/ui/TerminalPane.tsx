@@ -164,6 +164,15 @@ function attachServer(session: T3Session, target: TerminalTarget, term: Embedded
   };
 }
 
+/**
+ * The emulator's answers, except that it doesn't know in-band resize (mode 2048). It says it
+ * does, but never sends the reports, and a program that takes it at its word, like Neovim,
+ * stops listening for SIGWINCH and so never sees the pane change size.
+ */
+function withoutInBandResize(data: Uint8Array): Uint8Array {
+  return Buffer.from(Buffer.from(data).toString("latin1").replace(/\x1b\[\?2048;\d\$y/g, "\x1b[?2048;0$y"), "latin1");
+}
+
 /** A program run here on its own pty, answering its terminal queries through the emulator. */
 function spawnLocal(program: Extract<PaneProgram, { kind: "local" }>, term: EmbeddedTerminalRenderable, cols: number, rows: number, close: (message?: string) => void): Link {
   let stopped = false;
@@ -178,7 +187,7 @@ function spawnLocal(program: Extract<PaneProgram, { kind: "local" }>, term: Embe
     close();
   });
   return {
-    send: (data) => void child.terminal?.write(data),
+    send: (data, source) => void child.terminal?.write(source === "response" ? withoutInBandResize(data) : data),
     resize: (next, height) => child.terminal?.resize(next, height),
     stop: () => {
       if (stopped) return;
