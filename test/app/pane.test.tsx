@@ -19,17 +19,16 @@ const snapshot = { type: "snapshot", threadId: v2ThreadId, terminalId: "term-1",
 const withTerminal = (events: readonly unknown[] = [snapshot]) => fakeSession({ terminals: [terminal], terminalEvents: events, projection: withReply("The reply above the drawer.", false) });
 
 describe("terminal drawer", () => {
-  test("ctrl+j opens the thread's terminal in a drawer below the conversation, with its scrollback, and it takes every key", async () => {
+  test("ctrl+j opens the thread's terminal in a drawer below the composer, with its scrollback, and it takes every key", async () => {
     const app = await open({ session: withTerminal() });
     await app.press("j", { ctrl: true });
     expect(app.frame()).toContain("Terminal 1  +");
     expect(app.frame()).toContain("user@host:~$");
     expect(app.calls("attachTerminal")).toHaveLength(1);
     expect(app.hints()).toBe("ctrl+\\ leave pane");
-    // Between the conversation and the composer, the conversation's full width.
+    // Under the composer, the conversation's full width.
     const tab = app.find("Terminal 1  +");
-    expect(tab.y).toBeGreaterThan(app.find("The reply above").y);
-    expect(tab.y).toBeLessThan(app.find("Press i to type").y);
+    expect(tab.y).toBeGreaterThan(app.find("Press i to type").y);
     expect(tab.x).toBeLessThan(app.find("Press i to type").x);
     await app.press("q");
     await app.press("escape");

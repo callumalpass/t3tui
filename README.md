@@ -58,7 +58,7 @@ The keys you'll use most:
 | `c` | new thread |
 | `m` | model, reasoning and access mode |
 | `.` | thread actions: pin, snooze, rename, archive… |
-| `ctrl+j` | the thread's terminals on the server, in a drawer below the conversation (`alt+1`–`9` switch tabs) |
+| `ctrl+j` | the thread's terminals on the server, in a drawer below the message box (`alt+1`–`9` switch tabs) |
 | `ctrl+\` | move the keys between the terminal or editor and the conversation |
 | `ctrl+g` | write the message in `$EDITOR`, in the message box's place |
 | `d`, `{` / `}` | show or hide the right-hand column; switch its tabs (details, an open editor, terminals placed at the side) |

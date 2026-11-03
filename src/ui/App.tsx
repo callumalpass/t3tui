@@ -162,7 +162,10 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const [diff, setDiff] = useState<DiffState | null>(null);
   /** The conversation's height, for the column when it takes that place; and the conversation's and drawer's together. */
   const [contentHeight, setContentHeight] = useState(0);
-  const [areaHeight, setAreaHeight] = useState(0);
+  const [columnHeight, setColumnHeight] = useState(0);
+  const [belowHeight, setBelowHeight] = useState(0);
+  /** The conversation's rows with no drawer open: the column less the composer and what sits with it. */
+  const areaHeight = columnHeight - belowHeight;
   const [config, setConfig] = useState(props.config);
   const [settingsIndex, setSettingsIndex] = useState<number | null>(null);
   const [serverConfig, setServerConfig] = useState<ServerConfigState | null>(null);
@@ -1276,8 +1279,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
               setListWidthPref(null);
               saveLayoutNow({ listWidth: null });
             }} />}
-        <box flexDirection="column" flexGrow={1} minHeight={0}>
-          <box flexDirection="column" flexGrow={1} minHeight={0} onSizeChange={function (this: { height: number }) { setAreaHeight(this.height); }}>
+        <box flexDirection="column" flexGrow={1} minHeight={0} onSizeChange={function (this: { height: number }) { setColumnHeight(this.height); }}>
+          <box flexDirection="column" flexGrow={1} minHeight={0} visible={!drawerInPlace}>
           <box flexDirection="column" flexGrow={1} minHeight={0} visible={!drawerInPlace} onMouseDown={focusConversation} onSizeChange={function (this: { height: number }) { setContentHeight(this.height); }}>
           {conversationHidden ? null : settingsIndex !== null ? (
             <SettingsView
@@ -1324,28 +1327,8 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
             </box>
           )}
           </box>
-          {drawer ? (
-            <>
-              {drawerInPlace ? null : (
-                <ResizeHandle
-                  horizontal
-                  active={resizing === "drawer"}
-                  onStart={(event) => {
-                    drawerDrag.current = { y: event.y, height: drawerHeight };
-                    setResizing("drawer");
-                  }}
-                  onReset={() => {
-                    setDrawerHeightPref(null);
-                    saveLayoutNow({ drawerHeight: null });
-                  }}
-                />
-              )}
-              <box flexDirection="column" minHeight={0} {...(drawerInPlace ? { flexGrow: 1, flexShrink: 1 } : { height: drawerHeight, flexShrink: 0 })}>
-                {terminalPane}
-              </box>
-            </>
-          ) : null}
           </box>
+          <box flexDirection="column" flexShrink={0} onSizeChange={function (this: { height: number }) { setBelowHeight(this.height); }}>
           {workspace.note ? <text fg={workspace.setupFailed ? colors.bad : colors.muted}>{workspace.note}</text> : null}
           {find.open ? <ThreadFindBar query={find.query} focused={mode === "find"} data={find.data} pending={find.pending} error={find.error} onQuery={find.onQuery} onStep={find.step} onClose={() => setMode("nav")} /> : null}
           {mode !== "confirm" && secret.request ? <SecretPanel request={secret.request} value={secret.value} error={secret.error} busy={secret.busy} actions={secret.actions} /> : null}
@@ -1475,6 +1458,28 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                 <box height={1} border={["bottom"]} borderColor={colors.element} customBorderChars={{ ...NO_BORDER, horizontal: "▀" }} />
               </box>
             </box>
+          ) : null}
+          </box>
+          {drawer ? (
+            <>
+              {drawerInPlace ? null : (
+                <ResizeHandle
+                  horizontal
+                  active={resizing === "drawer"}
+                  onStart={(event) => {
+                    drawerDrag.current = { y: event.y, height: drawerHeight };
+                    setResizing("drawer");
+                  }}
+                  onReset={() => {
+                    setDrawerHeightPref(null);
+                    saveLayoutNow({ drawerHeight: null });
+                  }}
+                />
+              )}
+              <box flexDirection="column" minHeight={0} {...(drawerInPlace ? { flexGrow: 1, flexShrink: 1 } : { height: drawerHeight, flexShrink: 0 })}>
+                {terminalPane}
+              </box>
+            </>
           ) : null}
         </box>
         {rightColumn ? (

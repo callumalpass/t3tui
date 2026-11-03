@@ -159,7 +159,7 @@ Limits: GIF, JPEG, PNG and WebP images up to 10 MB each and 80 MB in all, other 
 
 ## Terminals
 
-`ctrl+j` opens the thread's terminal on the T3 server in a drawer between the conversation and the message box, as the app's terminal drawer does; `ctrl+j` again hides it. If the thread has none, it starts one in the thread's worktree or project folder. The drawer takes 40% of the conversation's height at first; drag its top edge to resize it (the height is kept for the next run) and right-click the edge to reset it. On a window too short to leave the conversation 10 rows, the drawer takes the conversation's place.
+`ctrl+j` opens the thread's terminal on the T3 server in a drawer below the message box; `ctrl+j` again hides it. If the thread has none, it starts one in the thread's worktree or project folder. The drawer takes 40% of the conversation's height at first; drag its top edge to resize it (the height is kept for the next run) and right-click the edge to reset it. On a window too short to leave the conversation 10 rows, the drawer takes the conversation's place.
 
 Each of the thread's terminals has a tab at the top of the drawer: click one, or press `alt+1`–`alt+9` while the drawer shows, to switch; `+` starts another. A terminal that closes or exits takes its tab away, and the last one the drawer. Each thread keeps its own drawer, so another thread shows its own terminals, and `ctrl+j` brings back the one you last had.
 
