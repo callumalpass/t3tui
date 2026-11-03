@@ -1539,7 +1539,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
           </box>
           {drawer ? (
             <>
-              {drawerInPlace ? null : (
+              {drawerInPlace || zoom === "message" ? null : (
                 <ResizeHandle
                   horizontal
                   active={resizing === "drawer"}
@@ -1553,7 +1553,7 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
                   }}
                 />
               )}
-              <box flexDirection="column" minHeight={0} {...(drawerInPlace ? { flexGrow: 1, flexShrink: 1 } : { height: drawerHeight, flexShrink: 0 })}>
+              <box flexDirection="column" minHeight={0} visible={zoom !== "message"} {...(drawerInPlace ? { flexGrow: 1, flexShrink: 1 } : { height: drawerHeight, flexShrink: 0 })}>
                 {terminalPane}
               </box>
             </>

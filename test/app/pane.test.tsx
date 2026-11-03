@@ -334,7 +334,7 @@ describe("terminal drawer", () => {
 
   test("ctrl+g writes the message in $EDITOR in the composer's place, and what's saved comes back", async () => {
     // This one waits a moment, overwrites the file and exits.
-    setEditor("sleep 0.5; printf 'from the editor' >");
+    setEditor("sleep 0.8; printf 'from the editor' >");
     const app = await open();
     await app.press("i");
     await app.type("draft");
@@ -344,6 +344,11 @@ describe("terminal drawer", () => {
     expect(app.frame()).not.toContain("draft");
     expect(app.find("Message · save and quit").x).toBeLessThan(composer.x);
     expect(app.hints()).toBe(keysOn("message"));
+    // Zoomed, it takes the conversation's place too.
+    const top = app.find("Message · save and quit").y;
+    await prefix(app, "z");
+    expect(app.find("Message · save and quit").y).toBeLessThan(top);
+    expect(app.frame()).not.toContain("Do the thing");
     await waitFor(() => !app.frame().includes("Message · save and quit"));
     expect(app.frame()).not.toContain("Message · save and quit");
     expect(app.frame()).toContain("from the editor");
