@@ -88,6 +88,8 @@ export function TerminalPane(props: {
       <embeddedTerminal
         ref={terminal}
         flexGrow={1}
+        // Without a height of its own it starts at 24 rows, which can't shrink: a shorter box would clip it, and the program would draw rows nobody sees.
+        flexShrink={1}
         minHeight={0}
         width="100%"
         onTerminalResize={function (this: EmbeddedTerminalRenderable, cols: number, rows: number) {

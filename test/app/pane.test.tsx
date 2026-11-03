@@ -354,6 +354,23 @@ describe("terminal drawer", () => {
     expect(app.frame()).toContain("from the editor");
     expect(app.hints()).toStartWith("enter send");
   });
+
+  test("$EDITOR's terminal is the size of the box it's in, even a box shorter than 24 rows", async () => {
+    // It writes its size on its top and bottom rows, and again when that changes.
+    setEditor(`draw() { printf '\\033[2J\\033[1;1Htop %s\\033[999;1Hbottom %s' "$(stty size)" "$(stty size)"; }; trap draw WINCH; draw; for i in $(seq 50); do sleep 0.1; done #`);
+    const app = await open({ width: 100, height: 20 });
+    await app.press("i");
+    await app.press("g", { ctrl: true });
+    await waitFor(() => app.frame().includes("bottom "));
+    const rows = app.find("bottom ").y - app.find("top ").y + 1;
+    expect(app.frame()).toContain(`bottom ${rows} `);
+    // Zoomed, it gets the taller box.
+    await prefix(app, "z");
+    await waitFor(() => !app.frame().includes(`bottom ${rows} `));
+    const zoomed = app.find("bottom ").y - app.find("top ").y + 1;
+    expect(zoomed).toBeGreaterThan(rows);
+    expect(app.frame()).toContain(`bottom ${zoomed} `);
+  });
 });
 
 describe("the panes together", () => {
