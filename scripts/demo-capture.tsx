@@ -2,16 +2,22 @@
  * Renders the whole app against invented demo data (the interaction-test
  * harness's fake session) and writes the settled frame as an HTML fragment
  * for the landing page: dark, dark in a standalone page, and light; and the
- * same with the terminal drawer open, in both themes.
+ * same with the terminal drawer open, in both themes. Then the panes, one
+ * page each (demo-pane-*.html): the drawer with and without the keys, the
+ * ctrl+\ prefix waiting, zoom, the strip of running programs, side
+ * placement's one strip, two files in one Neovim, and the palette.
  *
  * Run with `bun run scripts/demo-capture.tsx`.
  */
+import { mkdtempSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type CapturedFrame, type RGBA, TextAttributes } from "@opentui/core";
 import type { OrchestrationV2ShellSnapshot, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { DEFAULT_LAYOUT, type Layout } from "../src/layout.ts";
 import { applyTheme, colors } from "../src/ui/theme.ts";
 import { fakeSession, renderApp } from "../test/app/harness.tsx";
 import { v2Project, v2Projection, v2ThreadShell } from "../vendor/t3code/packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
@@ -405,5 +411,98 @@ for (const mode of ["dark", "light"] as const) {
   const file = join(OUT_DIR, mode === "dark" ? "demo-drawer-page.html" : "demo-drawer-light-page.html");
   await writeFile(file, standalonePage(frameToHtml(drawer.frame, drawer.baseBg), mode === "dark" ? "#161616" : "#e8e8e8"));
   console.log(`wrote ${file}`);
+}
+
+// --- The panes -------------------------------------------------------------------
+
+type DemoApp = Awaited<ReturnType<typeof renderApp>>;
+/** ctrl+\, then a key. */
+const prefix = async (app: DemoApp, key: string, modifiers?: Parameters<DemoApp["press"]>[1]) => {
+  await app.press("\\", { ctrl: true });
+  await app.press(key, modifiers);
+};
+
+/** The demo project's files, on this machine, for the editor to open: two changed files under Changes. */
+const workspaceRoot = mkdtempSync(join(tmpdir(), "t3tui-demo-"));
+const changed = { "scripts/build.ts": 'import { $ } from "bun";\n\nawait $`rm -rf dist`;\nawait Bun.build({ entrypoints: ["src/bin.ts"], outdir: "dist", target: "bun" });\n', "package.json": '{\n  "name": "t3tui",\n  "scripts": { "build": "bun run scripts/build.ts" }\n}\n' };
+for (const [path, text] of Object.entries(changed)) await Bun.write(join(workspaceRoot, path), text);
+const localSnapshot = { ...snapshot, projects: snapshot.projects.map((entry) => (entry.id === "project-t3tui" ? { ...entry, workspaceRoot } : entry)) } as OrchestrationV2ShellSnapshot;
+const vcs = {
+  status: "live",
+  local: { isRepo: true, hasPrimaryRemote: true, isDefaultRef: true, refName: "main", hasWorkingTreeChanges: true, workingTree: { files: Object.keys(changed).map((path) => ({ path, insertions: 4, deletions: 1 })), insertions: 8, deletions: 2 } },
+  remote: { hasUpstream: true, aheadCount: 0, behindCount: 0, pr: null },
+};
+// Neovim without the user's own setup, so every capture looks the same.
+process.env.VISUAL = "nvim --clean -n";
+
+/** o on each changed file under Changes, from the details panel. */
+const editBoth = async (app: DemoApp) => {
+  await app.press("l");
+  for (let tries = 0; tries < 12 && !app.hints().includes("o edit file"); tries++) await app.press("j");
+  await app.press("o");
+  await app.settle(600);
+  await prefix(app, "k");
+  await app.press("l");
+  for (let tries = 0; tries < 12 && !app.hints().includes("o edit file"); tries++) await app.press("j");
+  await app.press("j");
+  await app.press("o");
+  await app.settle(600);
+};
+
+const scenes: readonly { readonly name: string; readonly layout?: Layout; readonly steps: (app: DemoApp) => Promise<void> }[] = [
+  { name: "drawer-focused", steps: (app) => app.press("j", { ctrl: true }) },
+  { name: "drawer-unfocused", steps: async (app) => {
+    await app.press("j", { ctrl: true });
+    await prefix(app, "k");
+  } },
+  { name: "prefix", steps: async (app) => {
+    await app.press("j", { ctrl: true });
+    await app.press("\\", { ctrl: true });
+  } },
+  { name: "zoom", steps: async (app) => {
+    await app.press("j", { ctrl: true });
+    await prefix(app, "z");
+  } },
+  { name: "running", steps: async (app) => {
+    await app.press("j", { ctrl: true });
+    await prefix(app, "2");
+    await app.press("j", { ctrl: true });
+    await editBoth(app);
+    await prefix(app, "k");
+    await app.press("d");
+    await app.settle(400);
+  } },
+  { name: "side", layout: { ...DEFAULT_LAYOUT, detailsWidth: 60, terminalPlacement: "side" }, steps: async (app) => {
+    await app.press("j", { ctrl: true });
+  } },
+  { name: "nvim", steps: async (app) => {
+    await editBoth(app);
+    // Neovim lists both files: one instance has them.
+    await app.type(":ls");
+    await app.press("return");
+    await app.settle(300);
+  } },
+  { name: "palette", steps: async (app) => {
+    await app.press("j", { ctrl: true });
+    await prefix(app, "k");
+    await app.press("k", { ctrl: true });
+    await app.type("terminal");
+  } },
+];
+
+applyTheme("dark");
+for (const scene of scenes) {
+  const terminalEvents = [{ type: "snapshot", threadId: OPEN_THREAD, terminalId: "term-1", createdAt: new Date(NOW).toISOString(), snapshot: { history: terminalHistory } }];
+  const app = await renderApp({ session: fakeSession({ snapshot: localSnapshot, projection, terminals, terminalEvents, vcs }), width: 190, height: 50, ...(scene.layout ? { layout: scene.layout } : {}) });
+  try {
+    await scene.steps(app);
+    await app.settle(120);
+    await app.renderOnce();
+    const file = join(OUT_DIR, `demo-pane-${scene.name}.html`);
+    await writeFile(file, standalonePage(frameToHtml(app.captureSpans(), colors.bg), "#161616"));
+    console.log(`wrote ${file}`);
+  } finally {
+    app.destroy();
+  }
 }
 process.exit(0);
