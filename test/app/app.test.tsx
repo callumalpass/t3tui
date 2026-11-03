@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
-import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion, withWorking } from "./fixtures.ts";
+import { omittedCommand, withApproval, withCompletedTurn, withOmittedOutput, withQuestion, withReply, withWorking } from "./fixtures.ts";
 import { loadLayout } from "../../src/layout.ts";
 import { fakeSession, renderApp, v2Projection, v2ThreadId } from "./harness.tsx";
 
@@ -151,6 +151,13 @@ describe("palette and pickers", () => {
 });
 
 describe("a finished turn", () => {
+  test("the conversation uses the whole width of a wide window", async () => {
+    const reply = Array.from({ length: 20 }, (_, index) => `word${index}`).join(" ");
+    const app = await open({ width: 240, height: 30, session: fakeSession({ projection: withReply(reply, false) }) });
+    const line = app.frame().split("\n").find((text) => text.includes("word0 "))!;
+    expect(line).toContain("word19");
+  });
+
   test("its changed files fold out under the reply, and a file opens the turn's diff", async () => {
     const patch = "diff --git a/src/index.ts b/src/index.ts\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-old\n+new\n";
     const app = await open({ session: fakeSession({ projection: withCompletedTurn(), results: { turnDiff: { diff: patch } } }) });
