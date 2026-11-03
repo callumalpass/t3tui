@@ -1142,21 +1142,24 @@ export function App(props: { readonly session: T3Session; readonly config: T3tui
   const groups = useMemo(() => (mode === "palette" ? messageMatchGroups(paletteGroups({ query: paletteQuery, commands, snapshot: paletteSnapshot, now }), paletteSearch.result, paletteSnapshot, paletteQuery, now) : []), [mode, paletteQuery, commandKey, paletteSnapshot, paletteSearch.result]);
   const entries = paletteEntries(groups);
 
-  // The mouse in the conversation: stable callbacks, since its rows are memoized.
-  const conversationMouse: ConversationMouse = {
-    selectTurn: useEvent((messageId: string) => turns.select(messageId)),
-    toggleFold: useEvent((id: string) =>
-      setExpandedIds((previous) => {
-        const next = new Set(previous);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      }),
-    ),
-    loadEarlier: useEvent(() => loadEarlier()),
-    menu: useEvent((target: ConversationTarget) => openConversationMenu(target)),
-    openTurnDiff: useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount)),
-    click: useEvent((x: number, y: number) => openAt(x, y)),
-  };
+  // The mouse in the conversation: stable callbacks in a stable object, since its rows are memoized.
+  // A new object each render re-rendered every row, and every reply's markdown, each second.
+  const selectTurn = useEvent((messageId: string) => turns.select(messageId));
+  const toggleFold = useEvent((id: string) =>
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    }),
+  );
+  const loadEarlierClick = useEvent(() => loadEarlier());
+  const openMenu = useEvent((target: ConversationTarget) => openConversationMenu(target));
+  const openTurnDiff = useEvent((checkpointTurnCount: number) => turns.openTurnDiff(checkpointTurnCount));
+  const click = useEvent((x: number, y: number) => openAt(x, y));
+  const conversationMouse = useMemo<ConversationMouse>(
+    () => ({ selectTurn, toggleFold, loadEarlier: loadEarlierClick, menu: openMenu, openTurnDiff, click }),
+    [selectTurn, toggleFold, loadEarlierClick, openMenu, openTurnDiff, click],
+  );
   const copy = (label: string, text: string) => {
     void clipboard.copy(text);
     say(`Copied ${label}`);
