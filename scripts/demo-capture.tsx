@@ -5,11 +5,13 @@
  * same with the terminal drawer open, in both themes. Then the panes, one
  * page each (demo-pane-*.html): the drawer with and without the keys, the
  * ctrl+\ prefix waiting, zoom, the strip of running programs, side
- * placement's one strip, two files in one Neovim, and the palette.
+ * placement's one strip, two files in one Neovim, and the palette. Then the Files
+ * tab: the tree with git's marks and ignored entries, a search, and previews of
+ * code and markdown.
  *
  * Run with `bun run scripts/demo-capture.tsx`.
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -449,7 +451,32 @@ const editBoth = async (app: DemoApp) => {
   await app.settle(600);
 };
 
-const scenes: readonly { readonly name: string; readonly layout?: Layout; readonly steps: (app: DemoApp) => Promise<void> }[] = [
+/** The demo project as the server lists it, a folder at a time, with a few changes and what git ignores. */
+const entry = (path: string, kind: "file" | "directory" = "file", ignored = false) => ({ path, kind, ...(ignored ? { ignored } : {}) });
+const folders: Record<string, readonly unknown[]> = {
+  "": [entry(".github", "directory"), entry("dist", "directory", true), entry("node_modules", "directory", true), entry("scripts", "directory"), entry("src", "directory"), entry("test", "directory"), entry(".gitignore"), entry("bun.lock"), entry("debug.log", "file", true), entry("package.json"), entry("README.md"), entry("tsconfig.json")],
+  scripts: [entry("scripts/build.ts"), entry("scripts/compile.ts"), entry("scripts/demo-capture.tsx")],
+  src: [entry("src/client", "directory"), entry("src/model", "directory"), entry("src/ui", "directory"), entry("src/bin.ts"), entry("src/config.ts"), entry("src/layout.ts")],
+  "src/ui": ["App.tsx", "Button.tsx", "DetailsPanel.tsx", "FilePreview.tsx", "FilesPanel.tsx", "TerminalPane.tsx", "text.ts", "theme.ts", "useFiles.ts", "usePanes.ts"].map((name) => entry(`src/ui/${name}`)),
+};
+const filesVcs = { ...vcs, local: { ...vcs.local, workingTree: { files: [...vcs.local.workingTree.files, { path: "src/ui/usePanes.ts", insertions: 12, deletions: 3 }, { path: "src/ui/FilesPanel.tsx", insertions: 0, deletions: 0 }], insertions: 20, deletions: 5 } } };
+const repoRoot = join(import.meta.dir, "..");
+const filesResults = {
+  listEntries: (_cwd: string, path: string) => folders[path] ?? [],
+  searchEntries: () => ["src/ui/TerminalPane.tsx", "src/ui/usePanes.ts", "src/ui/FilePreview.tsx", "src/ui/FilesPanel.tsx", "test/app/pane.test.tsx"].map((path) => entry(path)),
+  // This repository's own files stand in for the demo project's.
+  readFile: (_cwd: string, path: string) => {
+    const contents = readFileSync(join(repoRoot, path), "utf8");
+    return { relativePath: path, contents, byteLength: contents.length, truncated: false };
+  },
+};
+/** Down the Files tab to `name`, or until it stops moving. */
+const selectFile = async (app: DemoApp, name: string) => {
+  const row = new RegExp(`▌[ ▸▾]*${name.replace(".", "\\.")}(\\s|$)`);
+  for (let tries = 0; tries < 30 && !row.test(app.frame()); tries++) await app.press("j");
+};
+
+const scenes: readonly { readonly name: string; readonly layout?: Layout; readonly files?: boolean; readonly steps: (app: DemoApp) => Promise<void> }[] = [
   { name: "drawer-focused", steps: (app) => app.press("j", { ctrl: true }) },
   { name: "drawer-unfocused", steps: async (app) => {
     await app.press("j", { ctrl: true });
@@ -488,12 +515,44 @@ const scenes: readonly { readonly name: string; readonly layout?: Layout; readon
     await app.press("k", { ctrl: true });
     await app.type("terminal");
   } },
+  { name: "files-tree", layout: { ...DEFAULT_LAYOUT, detailsWidth: 46 }, files: true, steps: async (app) => {
+    await app.press("F");
+    await selectFile(app, "src");
+    await app.press("l");
+    await selectFile(app, "ui");
+    await app.press("l");
+    await selectFile(app, "usePanes.ts");
+  } },
+  { name: "files-search", layout: { ...DEFAULT_LAYOUT, detailsWidth: 46 }, files: true, steps: async (app) => {
+    await app.press("F");
+    await app.press("/");
+    await app.type("pane");
+    await app.settle(300);
+    await app.press("down");
+  } },
+  { name: "files-preview-code", layout: { ...DEFAULT_LAYOUT, detailsWidth: 70 }, files: true, steps: async (app) => {
+    await app.press("F");
+    await selectFile(app, "src");
+    await app.press("l");
+    await selectFile(app, "ui");
+    await app.press("l");
+    await selectFile(app, "text.ts");
+    await app.press("p");
+    await app.settle(500);
+  } },
+  { name: "files-preview-markdown", layout: { ...DEFAULT_LAYOUT, detailsWidth: 70 }, files: true, steps: async (app) => {
+    await app.press("F");
+    await selectFile(app, "README.md");
+    await app.press("p");
+    await app.settle(500);
+  } },
 ];
 
 applyTheme("dark");
 for (const scene of scenes) {
   const terminalEvents = [{ type: "snapshot", threadId: OPEN_THREAD, terminalId: "term-1", createdAt: new Date(NOW).toISOString(), snapshot: { history: terminalHistory } }];
-  const app = await renderApp({ session: fakeSession({ snapshot: localSnapshot, projection, terminals, terminalEvents, vcs }), width: 190, height: 50, ...(scene.layout ? { layout: scene.layout } : {}) });
+  const session = scene.files ? fakeSession({ snapshot: localSnapshot, projection, vcs: filesVcs, results: filesResults }) : fakeSession({ snapshot: localSnapshot, projection, terminals, terminalEvents, vcs });
+  const app = await renderApp({ session, width: 190, height: 50, ...(scene.layout ? { layout: scene.layout } : {}) });
   try {
     await scene.steps(app);
     await app.settle(120);
