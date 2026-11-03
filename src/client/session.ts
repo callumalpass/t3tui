@@ -42,6 +42,8 @@ import {
   type ModelSelection,
   type OrchestrationMessageContext,
   type ProjectEntry,
+  type ProjectIgnoredFile,
+  type ProjectReadFileResult,
   type RuntimeMode,
   type TerminalAttachStreamEvent,
   type TerminalSummary,
@@ -781,6 +783,32 @@ export class T3Session {
   async searchEntries(cwd: string, query: string, limit: number): Promise<readonly ProjectEntry[]> {
     const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.projectsSearchEntries]({ cwd, query, limit }));
     return result.entries;
+  }
+
+  /** One folder of `cwd` (its root for ""), as the web's file explorer lists it a folder at a time. */
+  async listEntries(cwd: string, directoryPath: string): Promise<readonly ProjectEntry[]> {
+    const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.projectsListEntries]({ cwd, directoryPath }));
+    return result.entries;
+  }
+
+  /** Untracked files git ignores under `cwd`; wholly ignored folders are left out. */
+  async listIgnoredFiles(cwd: string): Promise<readonly ProjectIgnoredFile[]> {
+    const result = await Effect.runPromise(this.requireConnection().rpc[WS_METHODS.projectsListIgnoredFiles]({ cwd }));
+    return result.files;
+  }
+
+  /** A workspace file's text; binary files fail with failure `binary_file`. */
+  readFile(cwd: string, relativePath: string): Promise<ProjectReadFileResult> {
+    return Effect.runPromise(this.requireConnection().rpc[WS_METHODS.projectsReadFile]({ cwd, relativePath }));
+  }
+
+  /** A workspace file from the server, through an asset URL as the web's previews fetch it: its bytes, or only its size from the headers. */
+  async fetchWorkspaceFile(threadId: ThreadId, path: string): Promise<Response> {
+    const { rpc, target } = this.requireConnection();
+    const minted = await Effect.runPromise(rpc[WS_METHODS.assetsCreateUrl]({ resource: { _tag: "workspace-file", threadId, path } }));
+    const response = await fetch(new URL(minted.relativeUrl, target.httpBaseUrl));
+    if (!response.ok) throw new Error(`File request failed (${response.status})`);
+    return response;
   }
 
   /** Pull requests for a scope, as the web's list and the composer's `#` menu read them. */
