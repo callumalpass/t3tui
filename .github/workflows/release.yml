@@ -17,9 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
-          # Saving them walks vendor/t3code's own submodules, one of which upstream leaves undefined.
           persist-credentials: false
+      # Not checkout's `submodules`: it walks them recursively, and vendor/t3code has gitlinks with no .gitmodules.
+      - run: git submodule update --init --depth=1 vendor/t3code
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
