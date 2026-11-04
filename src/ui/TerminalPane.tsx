@@ -3,8 +3,9 @@ import { extend } from "@opentui/react";
 import { useEffect, useRef, type ReactNode } from "react";
 
 import type { T3Session } from "../client/session.ts";
+import { isWindowsAbsolute } from "../model/paths.ts";
 import { BAR } from "./edges.ts";
-import type { TerminalTarget } from "./terminalAttach.ts";
+import { keepConptyWrap, type TerminalTarget } from "./terminalAttach.ts";
 import { colors } from "./theme.ts";
 import { useEvent } from "./useEvent.ts";
 
@@ -114,6 +115,7 @@ function paint(term: EmbeddedTerminalRenderable): void {
 function attachServer(session: T3Session, target: TerminalTarget, term: EmbeddedTerminalRenderable, cols: number, rows: number, close: (message?: string) => void): Link {
   const { threadId, terminalId } = target;
   const decoder = new TextDecoder();
+  const output = isWindowsAbsolute(target.cwd) ? keepConptyWrap : (data: string) => data;
   let stopped = false;
   let detach = () => {};
   const end = (message?: string) => {
@@ -131,10 +133,10 @@ function attachServer(session: T3Session, target: TerminalTarget, term: Embedded
         case "restarted":
           term.write("\x1bc");
           paint(term);
-          term.write(event.snapshot.history);
+          term.write(output(event.snapshot.history));
           return;
         case "output":
-          term.write(event.data);
+          term.write(output(event.data));
           return;
         case "cleared":
           term.write("\x1b[H\x1b[2J");
@@ -176,12 +178,13 @@ function withoutInBandResize(data: Uint8Array): Uint8Array {
 
 /** A program run here on its own pty, answering its terminal queries through the emulator. */
 function spawnLocal(program: Extract<PaneProgram, { kind: "local" }>, term: EmbeddedTerminalRenderable, cols: number, rows: number, close: (message?: string) => void): Link {
+  const output = process.platform === "win32" ? (data: Uint8Array) => Buffer.from(keepConptyWrap(Buffer.from(data).toString("latin1")), "latin1") : (data: Uint8Array) => data;
   let stopped = false;
   let child: ReturnType<typeof Bun.spawn>;
   try {
     child = Bun.spawn([...program.command], {
       ...(program.cwd ? { cwd: program.cwd } : {}),
-      terminal: { cols, rows, data: (_pty, data) => term.write(data) },
+      terminal: { cols, rows, data: (_pty, data) => term.write(output(data)) },
     });
   } catch (error) {
     // A missing program throws here, inside a resize; let the pane say so rather than the render loop.

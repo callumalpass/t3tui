@@ -209,7 +209,7 @@ A key after the prefix never reaches the program, and a program can't receive `c
 | `r` | list everything again |
 | `esc` | back to the conversation |
 
-Results take the same keys (`j`/`k`, `enter`, `m`, `y`, `p`). A preview is a tab of its own, titled with the path: code is highlighted by its extension, markdown is rendered, images are drawn, and other binary files show their size. `j`/`k` scroll it, `space`/`pgdn` and `pgup` page, `g`/`G` go to the ends, and `ctrl+\ x` or the tab's ✕ closes it and returns to Files. Files are read through the server, so previews work over SSH too. The Files tab can't be closed; `d` hides the column. Creating, renaming or deleting files is left to the agent or your editor.
+Results take the same keys (`j`/`k`, `enter`, `m`, `y`, `p`). A preview is a tab of its own, titled with the path: code is highlighted by its extension, markdown is rendered, images are drawn, and other binary files show their size. `j`/`k` scroll it, `space`/`pgdn` and `pgup` page, `g`/`G` go to the ends, and `ctrl+\ x` or the tab's ✕ closes it and returns to Files. Files are read through the server, so previews work over SSH too. The Files tab can't be closed; `d` hides the column. Creating, renaming or deleting files is left to the agent or your editor. On a Windows server, search and the `@` menu need the Microsoft Visual C++ Redistributable; without it they fail with `Failed to search workspace entries`, until it's installed and the server restarted.
 
 ## Workspace
 
