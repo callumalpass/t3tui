@@ -83,15 +83,23 @@ async function writeCredential(credential: StoredCredential): Promise<void> {
   await chmod(path, 0o600);
 }
 
+/** The `t3` CLI: the desktop app's copy, or the one on the PATH, or where the Windows installer puts it. A .cmd only runs through cmd. */
+export function t3Command(exists: (path: string) => boolean = existsSync, which: (program: string) => string | null = Bun.which): string[] {
+  const t3 =
+    process.env.T3TUI_T3_BIN ??
+    [join(t3Home(), "bin", "t3"), which("t3"), join(homedir(), ".local", "bin", "t3.cmd")].find((path): path is string => path !== null && exists(path)) ??
+    "t3";
+  return /\.(?:cmd|bat)$/i.test(t3) ? ["cmd.exe", "/c", "call", t3] : [t3];
+}
+
 /**
  * Issues a scoped bearer session through the local `t3` CLI, which can mint one
  * because it shares the server's data directory. Remote servers need T3TUI_TOKEN.
  */
 export async function issueLocalCredential(target: ServerTarget): Promise<StoredCredential> {
-  const t3 = process.env.T3TUI_T3_BIN ?? join(t3Home(), "bin", "t3");
   const args = ["auth", "session", "issue", "--label", "t3tui", "--token-only"];
   for (const scope of T3TUI_SCOPES) args.push("--scope", scope);
-  const proc = Bun.spawn([t3, ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([...t3Command(), ...args], { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

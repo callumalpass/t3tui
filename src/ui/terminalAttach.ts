@@ -2,6 +2,7 @@ import type { CliRenderer } from "@opentui/core";
 import type { ThreadId } from "@t3tools/contracts";
 
 import type { T3Session } from "../client/session.ts";
+import { isWindowsAbsolute } from "../model/paths.ts";
 
 /** Ctrl+J (LF), Ctrl+] and Ctrl+J under the kitty keyboard protocol leave the terminal. */
 const DETACH_KEYS = new Set(["\n", "\x1d", "\x1b[106;5u"]);
@@ -18,6 +19,17 @@ export interface TerminalTarget {
 }
 
 /**
+ * ConPTY's output, for terminals that aren't Windows Terminal. ConPTY fills a row and goes on to
+ * the next by writing, relying on the wrap staying pending through a `\\x1b[K` in between; other
+ * terminals drop it there, as xterm does, and the next row's text lands on the last column. It
+ * only erases and writes on without moving when the row is full, so that erase has nothing to do.
+ */
+export function keepConptyWrap(data: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: this matches escape sequences
+  return data.replace(/\x1b\[K(?=(?:\x1b\[\??[\d;]*[mhl])*[^\x00-\x1f\x7f])/g, "");
+}
+
+/**
  * Gives the whole screen to one of T3's terminals: its scrollback, then live output, with
  * keystrokes sent to it. Ctrl+J comes back. The terminal keeps running on the server.
  * Note that a terminal's size is shared by everyone attached, so attaching resizes it.
@@ -26,6 +38,7 @@ export async function attachTerminal(renderer: CliRenderer, session: T3Session, 
   const stdin = process.stdin;
   const stdout = process.stdout;
   const size = () => ({ cols: stdout.columns || 80, rows: stdout.rows || 24 });
+  const output = isWindowsAbsolute(target.cwd) ? keepConptyWrap : (data: string) => data;
   let finished = false;
 
   await renderer.suspend();
@@ -50,10 +63,10 @@ export async function attachTerminal(renderer: CliRenderer, session: T3Session, 
         case "snapshot":
         case "restarted":
           stdout.write("\x1b[H\x1b[2J");
-          stdout.write(event.snapshot.history);
+          stdout.write(output(event.snapshot.history));
           return;
         case "output":
-          stdout.write(event.data);
+          stdout.write(output(event.data));
           return;
         case "cleared":
           stdout.write("\x1b[H\x1b[2J");
